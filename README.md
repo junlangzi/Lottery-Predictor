@@ -1,4 +1,4 @@
-# Lottery-Predictor - Trình tính toán dự đoán xổ số
+# Lottery-Predictor - Chương trình tính toán - dự đoán kết quả xổ số
 
 Chương trình được phát triển trên code **Python**.
 
