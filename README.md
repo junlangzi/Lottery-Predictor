@@ -2,6 +2,8 @@
 
 Chương trình được phát triển trên code **Python**.
 
+Lịch sử Update của chương trình: [Xem ở đây - Update](https://github.com/junlangzi/Lottery-Predictor/blob/main/UPDATE.md)
+
 Để chạy chương trình cần cài đặt Python và các gói bổ sung sau:
 
 ```
