@@ -750,7 +750,7 @@ class TrainingApp(QMainWindow):
         self.train_resume_button.clicked.connect(self.resume_exploration_session)
         self.train_resume_button.setEnabled(False)
         control_layout.addWidget(self.train_resume_button)
-        self.train_pause_button = QPushButton("⏸ Tạm dừng"); self.train_pause_button.setObjectName("WarningButton"); self.train_pause_button.setEnabled(False)
+        self.train_pause_button = QPushButton("⏸Tạm dừng"); self.train_pause_button.setObjectName("WarningButton"); self.train_pause_button.setEnabled(False)
         control_layout.addWidget(self.train_pause_button)
         self.train_stop_button = QPushButton("⏹Dừng Hẳn"); self.train_stop_button.setObjectName("DangerButton"); self.train_stop_button.clicked.connect(self.stop_optimization)
         self.train_stop_button.setEnabled(False)
@@ -1719,7 +1719,7 @@ class TrainingApp(QMainWindow):
 
         verb = "Tiếp tục (Explore)" if is_resuming_explore else "Bắt đầu"
         status_extra = " (Đang tạo bộ tham số...)" if optimization_mode == "GenerateSets" else ""
-        self.update_status(f"Trainer: {verb} tối ưu: {algo_data['class_name']}...{status_extra}")
+        self.update_status(f"Tìm chuỗi ngày {verb} tối ưu: {algo_data['class_name']}...{status_extra}")
 
     def _get_fixed_max_stall_cycles(self) -> int:
         """
@@ -2208,13 +2208,13 @@ class TrainingApp(QMainWindow):
 
     def update_training_ui_state(self):
         """Updates the enable/disable state of optimization UI elements."""
-        start_enabled, resume_enabled, pause_enabled, stop_enabled = False, False, False, False; pause_text = "Tạm dừng"; pause_callback = self.pause_optimization; pause_style_obj_name = "WarningButton"
+        start_enabled, resume_enabled, pause_enabled, stop_enabled = False, False, False, False; pause_text = "⏸Tạm dừng"; pause_callback = self.pause_optimization; pause_style_obj_name = "WarningButton"
         is_generate_mode = False;
         if hasattr(self, 'param_gen_enable_checkbox'): is_generate_mode = self.param_gen_enable_checkbox.isChecked()
         if self.training_running:
             start_enabled = False; resume_enabled = False; stop_enabled = True
-            if self.training_paused: pause_enabled = True; pause_text = "Tiếp tục"; pause_callback = self.resume_optimization; pause_style_obj_name = "AccentButton"
-            else: pause_enabled = True; pause_text = "Tạm dừng"; pause_callback = self.pause_optimization; pause_style_obj_name = "WarningButton"
+            if self.training_paused: pause_enabled = True; pause_text = "⏯Tiếp tục"; pause_callback = self.resume_optimization; pause_style_obj_name = "AccentButton"
+            else: pause_enabled = True; pause_text = "⏸Tạm dừng"; pause_callback = self.pause_optimization; pause_style_obj_name = "WarningButton"
         else:
             start_enabled = (self.selected_algorithm_for_train is not None); resume_enabled = self.can_resume_explore; stop_enabled = False; pause_enabled = False; pause_text = "Tạm dừng"; pause_callback = self.pause_optimization; pause_style_obj_name = "WarningButton"
             if hasattr(self,'train_status_label'): self.train_status_label.setText("Trạng thái: Chờ"); self.train_status_label.setStyleSheet("color: #6c757d;")
