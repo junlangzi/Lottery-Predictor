@@ -2,7 +2,8 @@
 
 Chương trình được phát triển trên code **Python**.
 
-Lịch sử Update của chương trình: [Xem ở đây - Update](https://github.com/junlangzi/Lottery-Predictor/blob/main/UPDATE.md)
+Lịch sử Update của chương trình: [Xem ở đây - Update](https://github.com/junlangzi/Lottery-Predictor/blob/main/UPDATE.md)  <br>
+Cách để viết các thuật toán ở đây: [ALGORITHMS](https://github.com/junlangzi/Lottery-Predictor/blob/main/ALGORITHMS.md)
 
 Để chạy chương trình cần cài đặt Python và các gói bổ sung sau:
 
@@ -10,8 +11,7 @@ Lịch sử Update của chương trình: [Xem ở đây - Update](https://gi
 pip install PyQt5 requests astor
 ```
 
-
-Tại thư mục chương trình, chạy file **app.py**
+Tại thư mục chương trình, chạy file **main.py**
 
 **Chương trình có các tính năng như sau:**
 
@@ -32,7 +32,16 @@ Dựa vào các thuật toán cung cấp trong thư mục algorithms, và
 
 (data xsmb-2-digits.json sử dụng của [Khiemdoan.](https://github.com/khiemdoan/vietnam-lottery-xsmb-analysis))
 
-1 số hình ảnh của chương trình:
+**Update:**
+
+Thêm chương trình tối ưu chuỗi ngày: **date-optimize-v1.5.py**
+
+Chương trình sẽ tối ưu thuật toán, sao cho ra chuỗi ngày có kết quả top 3 trùng với kết quả ngày hôm sau tuỳ theo cài đặt yêu cầu ( chạy gần tương tự như tối ưu thuật toán ) 
+Data thuật toán sẽ được lưu ở trong thư mục Training
+
+<br><br>
+
+**1 số hình ảnh của chương trình:**
 
 **Màn hình chính**
 
