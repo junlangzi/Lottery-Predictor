@@ -1721,6 +1721,16 @@ class TrainingApp(QMainWindow):
         status_extra = " (Đang tạo bộ tham số...)" if optimization_mode == "GenerateSets" else ""
         self.update_status(f"Trainer: {verb} tối ưu: {algo_data['class_name']}...{status_extra}")
 
+    def _get_fixed_max_stall_cycles(self) -> int:
+        """
+        Trả về giá trị cố định được sử dụng cho MAX_STALL_CYCLES trong chế độ Explore.
+        Hàm này đảm bảo giá trị được kiểm soát tập trung.
+        """
+        FIXED_VALUE = 20  # <<<====== ĐẶT GIÁ TRỊ CỐ ĐỊNH MONG MUỐN Ở ĐÂY (Ví dụ: 10)
+        trainer_logger.debug(f"Providing fixed MAX_STALL_CYCLES value: {FIXED_VALUE}")
+        return FIXED_VALUE
+
+    # <<< HÀM _optimization_worker ĐÃ ĐƯỢC CHỈNH SỬA >>>
     def _optimization_worker(self, target_display_name, start_date, time_limit_sec, streak_limit,
                              optimization_mode, initial_param_sets_list, custom_steps_config,
                              generation_config, combination_algo_names,
@@ -1731,6 +1741,7 @@ class TrainingApp(QMainWindow):
         if optimization_mode == "Explore": worker_logger.info(f"Initial Best Streak: {initial_best_streak}, Params: {initial_base_params}")
         elif optimization_mode == "GenerateSets": worker_logger.info(f"GenerateSets mode configured with: {generation_config}")
 
+        # --- Queue Helper Functions ---
         def queue_log(level, text, tag=None):
             self.training_queue.put({"type": "log", "payload": {"level": level, "text": text, "tag": tag}})
         def queue_status(text):
@@ -1746,15 +1757,19 @@ class TrainingApp(QMainWindow):
              self.training_queue.put({"type": "finished", "payload": payload})
         def queue_error(text):
             self.training_queue.put({"type": "error", "payload": text})
+        # --- End Queue Helper Functions ---
 
         finish_reason = "completed"; current_best_params_worker = copy.deepcopy(initial_base_params); current_best_streak_worker = initial_best_streak
         param_sets_to_test_in_worker = []; total_sets_tested_count = 0
 
         try:
+            # --- Algorithm and Data Setup ---
             if target_display_name not in self.loaded_algorithms: raise RuntimeError(f"Target algorithm '{target_display_name}' not found.")
             target_data = self.loaded_algorithms[target_display_name]; orig_path = target_data['path']; cls_name = target_data['class_name']
-            orig_params_config = target_data['config'].get('parameters', {}); numeric_param_keys = {k for k, v in orig_params_config.items() if isinstance(v, (int, float))}
+            orig_params_config = target_data['config'].get('parameters', {});
+            numeric_param_keys = {k for k, v in orig_params_config.items() if isinstance(v, (int, float))}
             params_order = sorted(list(numeric_param_keys))
+            worker_logger.debug(f"Numeric parameter keys for exploration order: {params_order}")
             try: src_code = orig_path.read_text(encoding='utf-8')
             except Exception as e: raise RuntimeError(f"Failed to read source code {orig_path}: {e}")
             target_dir = self.current_training_target_dir
@@ -1765,18 +1780,23 @@ class TrainingApp(QMainWindow):
             if start_date not in hist_cache:
                  if start_date == min_date: raise RuntimeError(f"Start date {start_date:%d/%m/%Y} is first date, cannot use for prediction.")
                  else: raise RuntimeError(f"Internal Error: History cache missing for start date {start_date:%d/%m/%Y}.")
+            # --- End Algorithm and Data Setup ---
 
+            # --- Parameter Set Preparation ---
             if optimization_mode == "GenerateSets":
-                queue_status("Đang tạo bộ tham số..."); queue_log("INFO", "Bắt đầu tạo bộ tham số...", tag="GENERATE")
-                n_val = generation_config.get('n_values'); gen_mode = generation_config.get('mode')
-                if n_val is None or gen_mode is None: raise ValueError("Missing N or Mode in generation config.")
-                try: generated_sets = self._generate_parameter_sets(initial_base_params, n_val, gen_mode)
-                except (ValueError, MemoryError) as gen_err: worker_logger.error(f"Param gen failed: {gen_err}"); queue_log("ERROR", f"Lỗi tạo bộ: {gen_err}", tag="ERROR"); queue_finished(f"Lỗi tạo bộ: {gen_err}", success=False, reason="generation_error"); return
-                except Exception as gen_e: worker_logger.error(f"Unexpected error generating params: {gen_e}", exc_info=True); queue_log("ERROR", f"Lỗi không mong muốn tạo bộ: {gen_e}", tag="ERROR"); queue_finished(f"Lỗi không mong muốn tạo bộ: {gen_e}", success=False, reason="generation_error"); return
-                if not generated_sets: worker_logger.warning("Param generation yielded no sets."); queue_log("WARNING", "Không tạo được bộ tham số.", tag="WARNING"); queue_finished("Không tạo được bộ tham số.", success=False, reason="generation_error"); return
-                queue_log("INFO", f"Đã tạo {len(generated_sets)} bộ tham số.", tag="GENERATE"); param_sets_to_test_in_worker = generated_sets; queue_status(f"Chuẩn bị kiểm tra {len(param_sets_to_test_in_worker)} bộ...")
-            else: param_sets_to_test_in_worker = initial_param_sets_list
+                 queue_status("Đang tạo bộ tham số..."); queue_log("INFO", "Bắt đầu tạo bộ tham số...", tag="GENERATE")
+                 n_val = generation_config.get('n_values'); gen_mode = generation_config.get('mode')
+                 if n_val is None or gen_mode is None: raise ValueError("Missing N or Mode in generation config.")
+                 try: generated_sets = self._generate_parameter_sets(initial_base_params, n_val, gen_mode)
+                 except (ValueError, MemoryError) as gen_err: worker_logger.error(f"Param gen failed: {gen_err}"); queue_log("ERROR", f"Lỗi tạo bộ: {gen_err}", tag="ERROR"); queue_finished(f"Lỗi tạo bộ: {gen_err}", success=False, reason="generation_error"); return
+                 except Exception as gen_e: worker_logger.error(f"Unexpected error generating params: {gen_e}", exc_info=True); queue_log("ERROR", f"Lỗi không mong muốn tạo bộ: {gen_e}", tag="ERROR"); queue_finished(f"Lỗi không mong muốn tạo bộ: {gen_e}", success=False, reason="generation_error"); return
+                 if not generated_sets: worker_logger.warning("Param generation yielded no sets."); queue_log("WARNING", "Không tạo được bộ tham số.", tag="WARNING"); queue_finished("Không tạo được bộ tham số.", success=False, reason="generation_error"); return
+                 queue_log("INFO", f"Đã tạo {len(generated_sets)} bộ tham số.", tag="GENERATE"); param_sets_to_test_in_worker = generated_sets; queue_status(f"Chuẩn bị kiểm tra {len(param_sets_to_test_in_worker)} bộ...")
+            else: # Explore mode
+                param_sets_to_test_in_worker = initial_param_sets_list
+            # --- End Parameter Set Preparation ---
 
+            # --- Simulation and Prediction Helpers ---
             def simulate_streak(params_to_test, simulation_start_date, history_lookup, results_lookup, max_results_date):
                 current_streak = 0; last_successful_date = None; simulation_current_date = simulation_start_date; day_index = 0
                 while True:
@@ -1789,12 +1809,11 @@ class TrainingApp(QMainWindow):
                     predict_for_date = simulation_current_date; check_results_date = predict_for_date + datetime.timedelta(days=1)
                     historical_data_slice = history_lookup.get(predict_for_date); actual_result_dict = results_lookup.get(check_results_date)
                     if historical_data_slice is None: return current_streak, "missing_history", predict_for_date
-                    if actual_result_dict is None: return current_streak, "end_of_data", predict_for_date
-                    if check_results_date > max_results_date: return current_streak, "end_of_data", predict_for_date
+                    if actual_result_dict is None or check_results_date > max_results_date: return current_streak, "end_of_data", predict_for_date
                     top3_predicted_numbers = get_combined_top3_prediction(params_to_test, predict_for_date, historical_data_slice)
                     if top3_predicted_numbers is None: return current_streak, "prediction_error", predict_for_date
                     actual_winning_numbers = self.extract_numbers_from_result_dict(actual_result_dict)
-                    if not actual_winning_numbers: queue_log("WARNING", f"Không tìm thấy số kết quả cho ngày {check_results_date:%Y-%m-%d}.", tag="WARNING"); simulation_current_date += datetime.timedelta(days=1); continue
+                    if not actual_winning_numbers: simulation_current_date += datetime.timedelta(days=1); continue
                     hit = bool(top3_predicted_numbers.intersection(actual_winning_numbers))
                     if hit:
                         current_streak += 1; last_successful_date = simulation_current_date
@@ -1814,21 +1833,28 @@ class TrainingApp(QMainWindow):
                     temp_module_name = f"training.{target_dir.name}.{temp_filename[:-3]}"
                     temp_instance = self._import_and_instantiate_temp_algo(temp_filepath, temp_module_name, cls_name)
                     if not temp_instance: raise RuntimeError("Failed to import/instantiate temp algo.")
-                    day_results = {}; history_copy = copy.deepcopy(historical_data)
-                    try: pred_target = temp_instance.predict(prediction_date, history_copy); day_results[target_display_name] = pred_target if isinstance(pred_target, dict) else {}
-                    except Exception as e: worker_logger.error(f"ERROR predicting TEMP {target_display_name}: {e}", exc_info=False); day_results[target_display_name] = {}
-                    for combo_name in combination_algo_names:
-                        if combo_name in self.loaded_algorithms:
-                            try: history_copy_combo = copy.deepcopy(historical_data); pred_combo = self.loaded_algorithms[combo_name]['instance'].predict(prediction_date, history_copy_combo); day_results[combo_name] = pred_combo if isinstance(pred_combo, dict) else {}
-                            except Exception as e: worker_logger.error(f"ERROR predicting COMBO {combo_name}: {e}", exc_info=False); day_results[combo_name] = {}
-                        else: worker_logger.warning(f"Combo algo '{combo_name}' not found.")
+                except Exception as setup_err: worker_logger.error(f"Error setting up temp algo: {setup_err}", exc_info=True); return None
+                day_results = {}; history_copy = copy.deepcopy(historical_data)
+                try:
+                    pred_target = temp_instance.predict(prediction_date, history_copy)
+                    day_results[target_display_name] = pred_target if isinstance(pred_target, dict) else {}
+                except Exception as e: worker_logger.error(f"ERROR predicting TEMP {target_display_name}: {e}", exc_info=False); day_results[target_display_name] = {}
+                for combo_name in combination_algo_names:
+                    if combo_name in self.loaded_algorithms:
+                        try:
+                            history_copy_combo = copy.deepcopy(historical_data)
+                            pred_combo = self.loaded_algorithms[combo_name]['instance'].predict(prediction_date, history_copy_combo)
+                            day_results[combo_name] = pred_combo if isinstance(pred_combo, dict) else {}
+                        except Exception as e: worker_logger.error(f"ERROR predicting COMBO {combo_name}: {e}", exc_info=False); day_results[combo_name] = {}
+                    else: worker_logger.warning(f"Combo algo '{combo_name}' not found.")
+                try:
                     combined_scores = self.combine_algorithm_scores(day_results); scores_list = []
                     for num_str, score in combined_scores.items():
                          if isinstance(num_str, str) and len(num_str) == 2 and num_str.isdigit() and isinstance(score, (int, float)):
                               try: scores_list.append((int(num_str), float(score)))
                               except (ValueError, TypeError): pass
                     scores_list.sort(key=lambda x: x[1], reverse=True); top3_numbers = {item[0] for item in scores_list[:3]}; return top3_numbers
-                except Exception as pred_err: worker_logger.error(f"!!! Critical error in get_combined_top3_prediction for {prediction_date}: {pred_err}", exc_info=True); return None
+                except Exception as combine_err: worker_logger.error(f"Error combining scores: {combine_err}", exc_info=True); return None
                 finally:
                     if temp_instance: temp_instance = None
                     if temp_module_name and temp_module_name in sys.modules:
@@ -1837,8 +1863,14 @@ class TrainingApp(QMainWindow):
                     if temp_filepath and temp_filepath.exists():
                         try: temp_filepath.unlink()
                         except OSError as e: worker_logger.warning(f"Could not delete temp file {temp_filepath}: {e}")
+            # --- End Simulation and Prediction Helpers ---
+
+            # ==============================================
+            # ===== MAIN OPTIMIZATION LOOP BY MODE =========
+            # ==============================================
 
             if optimization_mode == "GenerateSets":
+                # --- GenerateSets Mode Logic (Không thay đổi) ---
                 worker_logger.info(f"Starting GenerateSets loop for {len(param_sets_to_test_in_worker)} sets.")
                 total_sets_to_test = len(param_sets_to_test_in_worker)
                 for idx, current_params_set in enumerate(param_sets_to_test_in_worker):
@@ -1854,72 +1886,201 @@ class TrainingApp(QMainWindow):
                     set_streak, sim_reason, _ = simulate_streak(current_params_set, start_date, hist_cache, res_map, max_date)
                     if sim_reason == "stopped": finish_reason = "stopped"; break
                     if sim_reason == "time_limit": finish_reason = "time_limit"; break
-                    queue_log("INFO", f"--- Kết thúc bộ #{set_number}: Chuỗi = {set_streak} (Lý do: {sim_reason})", tag="PARAM_SET")
+                    if sim_reason == "prediction_error": queue_log("ERROR", f"Lỗi dự đoán khi kiểm tra bộ #{set_number}. Chuỗi cuối cùng: {max(0, set_streak)}", tag="ERROR")
+                    elif sim_reason == "missing_history": queue_log("ERROR", f"Lỗi thiếu dữ liệu lịch sử khi kiểm tra bộ #{set_number}. Chuỗi cuối cùng: {max(0, set_streak)}", tag="ERROR")
+                    queue_log("INFO", f"--- Kết thúc bộ #{set_number}: Chuỗi = {max(0, set_streak)} (Lý do: {sim_reason})", tag="PARAM_SET")
                     if set_streak > current_best_streak_worker:
                         current_best_streak_worker = set_streak; current_best_params_worker = copy.deepcopy(current_params_set)
                         queue_log("BEST", f"*** New Best Streak: {current_best_streak_worker}! (Set #{set_number}) Params: {params_str_short}", tag="BEST")
-                        queue_best_update(current_best_params_worker, current_best_streak_worker); self._save_training_state(reason="new_best_streak")
-                    queue_progress({"current_set_idx": set_number, "total_sets": total_sets_to_test, "current_streak": set_streak, "best_streak": current_best_streak_worker})
-                    if streak_limit > 0 and current_best_streak_worker >= streak_limit: worker_logger.info(f"Best streak ({current_best_streak_worker}) meets target ({streak_limit}). Stopping."); finish_reason = "streak_limit_reached"; break
+                        queue_best_update(current_best_params_worker, current_best_streak_worker);
+                        self._save_training_state(reason="new_best_streak")
+                    queue_progress({"current_set_idx": set_number, "total_sets": total_sets_to_test, "current_streak": max(0, set_streak), "best_streak": current_best_streak_worker})
+                    if streak_limit > 0 and current_best_streak_worker >= streak_limit:
+                        worker_logger.info(f"Best streak ({current_best_streak_worker}) meets target ({streak_limit}). Stopping GenerateSets.")
+                        finish_reason = "streak_limit_reached"; break
                 if finish_reason == "completed": finish_reason = "all_sets_tested"
 
+
             elif optimization_mode == "Explore":
-                worker_logger.info("Starting Explore mode loop."); params_q = queue.Queue();
+                # --- Explore Mode Logic ---
+                worker_logger.info("Starting Explore mode loop.");
+                params_q = queue.Queue();
                 for p in param_sets_to_test_in_worker: params_q.put(p);
-                visited_params = {repr(p) for p in param_sets_to_test_in_worker}; MAX_NEIGHBORS_PER_CYCLE = 30; MAX_STALL_CYCLES = 10; stall_cycle_count = 0; exploration_cycle = 0; total_tests_count = 0
-                while True:
+
+                visited_params = {repr(p) for p in param_sets_to_test_in_worker};
+                MAX_NEIGHBORS_PER_CYCLE = 1000; # Giữ nguyên hoặc thay đổi nếu muốn
+
+                MAX_STALL_CYCLES = self._get_fixed_max_stall_cycles() # Lấy giá trị cố định
+
+                stall_cycle_count = 0;
+                exploration_cycle = 0;
+                total_tests_count = 0
+                current_params_explore = None # Khởi tạo
+
+                while True: # Main Explore loop
+                    # --- Check Stop Conditions ---
                     if self.training_stop_event.is_set(): finish_reason = "stopped"; break
                     while self.training_pause_event.is_set():
                         if self.training_stop_event.is_set(): finish_reason = "stopped"; break; queue_status(f"Tạm dừng (Explore Cycle {exploration_cycle})"); time.sleep(0.5)
                     if finish_reason == "stopped": break
                     elapsed_time_total = time.time() - start_time;
                     if time_limit_sec > 0 and elapsed_time_total >= time_limit_sec: finish_reason = "time_limit"; break
+                    # --- End Check Stop Conditions ---
 
-                    if not params_q.empty(): current_params_explore = params_q.get(); total_tests_count += 1; stall_cycle_count = 0
+                    # --- Get Params or Generate Neighbors ---
+                    if not params_q.empty():
+                        current_params_explore = params_q.get() # Lấy từ hàng đợi
+                        total_tests_count += 1
                     else:
-                        if stall_cycle_count >= MAX_STALL_CYCLES: worker_logger.info(f"Stopping Explore: Max stall cycles ({MAX_STALL_CYCLES})."); finish_reason = "no_improvement"; break
-                        exploration_cycle += 1; stall_cycle_count += 1; worker_logger.info(f"Explore Cycle {exploration_cycle}: Queue empty. Generating neighbors (Best: {current_best_streak_worker}). Stall: {stall_cycle_count}"); queue_status(f"Explore Cycle {exploration_cycle}: Tạo hàng xóm...")
-                        neighbors = []; params_to_explore_from = current_best_params_worker; neighbors_added_this_cycle = 0; shuffled_param_order = random.sample(params_order, len(params_order))
+                        # Hàng đợi trống, thử tạo hàng xóm
+                        # <<< CHỈ KIỂM TRA ĐIỀU KIỆN DỪNG stall_cycle_count >= MAX_STALL_CYCLES >>>
+                        if stall_cycle_count >= MAX_STALL_CYCLES:
+                            worker_logger.info(f"Stopping Explore: Max stall cycles ({MAX_STALL_CYCLES}) reached without improvement.")
+                            finish_reason = "no_improvement"; break
+
+                        exploration_cycle += 1
+                        stall_cycle_count += 1 # Tăng stall count vì phải tạo hàng xóm
+                        queue_status(f"Explore Cycle {exploration_cycle}: Tạo hàng xóm (Best: {current_best_streak_worker}, Stall: {stall_cycle_count}/{MAX_STALL_CYCLES})...")
+
+                        # --- START: Neighbor Generation Logic (Đã sửa lỗi kiểu dữ liệu và có logging) ---
+                        worker_logger.info(f"Explore Cycle {exploration_cycle}: Starting neighbor generation from best params: {current_best_params_worker}")
+                        neighbors = []
+                        params_to_explore_from = current_best_params_worker
+                        neighbors_added_this_cycle = 0
+                        shuffled_param_order = random.sample(params_order, len(params_order))
+
                         for p_name in shuffled_param_order:
-                             if neighbors_added_this_cycle >= MAX_NEIGHBORS_PER_CYCLE: break
-                             param_custom_config = custom_steps_config.get(p_name, {'mode': 'Auto', 'steps': []}); current_value = params_to_explore_from[p_name]; is_float = isinstance(current_value, float); steps_to_try = []
-                             if param_custom_config['mode'] == 'Custom' and param_custom_config['steps']: steps_to_try = param_custom_config['steps']
-                             else:
+                             if neighbors_added_this_cycle >= MAX_NEIGHBORS_PER_CYCLE:
+                                 worker_logger.debug(f"[{p_name}] Reached MAX_NEIGHBORS_PER_CYCLE ({MAX_NEIGHBORS_PER_CYCLE}). Stopping generation for this cycle.")
+                                 break
+                             worker_logger.debug(f"--- Generating for param: '{p_name}' ---")
+                             param_custom_config = custom_steps_config.get(p_name, {'mode': 'Auto', 'steps': []})
+                             current_value = params_to_explore_from.get(p_name, None)
+                             if current_value is None:
+                                 worker_logger.warning(f"Param '{p_name}' not found in current best params. Skipping.")
+                                 continue
+                             worker_logger.debug(f"[{p_name}] Base value: {current_value} (Type: {type(current_value)}), Mode: {param_custom_config['mode']}")
+                             steps_to_try = []
+                             final_type_is_float = False
+
+                             if param_custom_config['mode'] == 'Custom' and param_custom_config['steps']:
+                                 steps_to_try = param_custom_config['steps']
+                                 original_is_float = isinstance(current_value, float); original_is_string = isinstance(current_value, str)
+                                 if original_is_string:
+                                     try: float(current_value); final_type_is_float = True
+                                     except ValueError: final_type_is_float = False
+                                 else: final_type_is_float = original_is_float
+                                 worker_logger.debug(f"[{p_name}] Using custom steps: {steps_to_try} (Final type intent: {'float' if final_type_is_float else 'int'})")
+                             else: # Auto mode
                                  base_step_factor = 0.05; min_float_step = 1e-6
-                                 if is_float: step = abs(current_value) * base_step_factor;
-                                 if step < min_float_step: step = 0.01 if abs(current_value) < 1 else 0.1
-                                 else: step = max(1, int(round(abs(current_value) * base_step_factor)))
+                                 calc_value = current_value; original_is_float = isinstance(current_value, float); original_is_string = isinstance(current_value, str)
+                                 if original_is_string:
+                                     try: calc_value = float(current_value)
+                                     except ValueError: worker_logger.warning(f"[{p_name}] Cannot convert string value '{current_value}' to float. Skipping this param."); continue
+                                 calc_is_float = isinstance(calc_value, float); step = None
+                                 if calc_is_float:
+                                     step_calc = abs(calc_value) * base_step_factor
+                                     if step_calc < min_float_step: step = 0.01 if abs(calc_value) < 1 else 0.1
+                                     else: step = step_calc
+                                 elif isinstance(calc_value, int): step = max(1, int(round(abs(calc_value) * base_step_factor)))
+                                 else: worker_logger.error(f"[{p_name}] Unexpected type '{type(calc_value)}' after conversion. Skipping."); continue
+                                 if step is None: worker_logger.error(f"[{p_name}] Step calculation failed. Skipping."); continue
                                  auto_steps_raw = [step * 0.5, step, step * 2.0]
-                                 if not is_float: steps_to_try = sorted(list({max(1, int(round(s))) for s in auto_steps_raw if max(1, int(round(s))) != 0}))
-                                 else: steps_to_try = sorted(list({s for s in auto_steps_raw if abs(s) > min_float_step}))
+                                 final_type_is_float = original_is_float or (original_is_string and isinstance(calc_value, float))
+                                 if not final_type_is_float: steps_to_try = sorted(list({max(1, int(round(s))) for s in auto_steps_raw if max(1, int(round(s))) != 0}))
+                                 else: steps_to_try = sorted(list({s for s in auto_steps_raw if abs(s) > min_float_step / 10.0}))
+                                 worker_logger.debug(f"[{p_name}] Calculated base step: {step}. Auto steps to try: {steps_to_try} (Final type intent: {'float' if final_type_is_float else 'int'})")
+
+                             if not steps_to_try: worker_logger.debug(f"[{p_name}] No valid steps generated. Moving to next param."); continue
+
                              for step_val in steps_to_try:
                                  if neighbors_added_this_cycle >= MAX_NEIGHBORS_PER_CYCLE: break
                                  for direction in [1, -1]:
                                      if neighbors_added_this_cycle >= MAX_NEIGHBORS_PER_CYCLE: break
-                                     neighbor_params = params_to_explore_from.copy(); new_raw_value = current_value + (direction * step_val)
-                                     neighbor_params[p_name] = int(round(new_raw_value)) if not is_float else float(f"{new_raw_value:.6g}")
-                                     neighbor_repr = repr(neighbor_params)
-                                     if neighbor_repr not in visited_params: neighbors.append(neighbor_params); visited_params.add(neighbor_repr); neighbors_added_this_cycle += 1
+                                     neighbor_params = params_to_explore_from.copy(); new_raw_value = None
+                                     try:
+                                         if 'calc_value' not in locals(): worker_logger.error(f"[{p_name}] Internal error: calc_value not defined. Skipping step."); continue
+                                         new_raw_value = calc_value + (direction * step_val)
+                                     except TypeError as e: worker_logger.error(f"[{p_name}] TypeError calculating new value: calc={calc_value}({type(calc_value)}), step={step_val}({type(step_val)}). Error: {e}. Skipping step."); continue
+                                     if final_type_is_float: neighbor_params[p_name] = float(f"{new_raw_value:.6g}")
+                                     else: neighbor_params[p_name] = int(round(new_raw_value))
+                                     neighbor_repr = repr(neighbor_params); is_visited = neighbor_repr in visited_params
+                                     worker_logger.debug(f"[{p_name}] Trying Step: {direction*step_val:+.4g} -> NewVal: {neighbor_params[p_name]} | Visited: {is_visited}")
+                                     if not is_visited:
+                                         neighbors.append(neighbor_params); visited_params.add(neighbor_repr); neighbors_added_this_cycle += 1
+                                         worker_logger.debug(f"[{p_name}] --> Added neighbor {neighbor_params}. Count this cycle: {neighbors_added_this_cycle}")
+                                         if neighbors_added_this_cycle >= MAX_NEIGHBORS_PER_CYCLE: break
+                             if neighbors_added_this_cycle >= MAX_NEIGHBORS_PER_CYCLE: break
+                        worker_logger.info(f"Explore Cycle {exploration_cycle}: Finished neighbor generation attempts. Total *new* neighbors added this cycle: {neighbors_added_this_cycle}")
+                        # --- END: Neighbor Generation Logic ---
+
+                        # --- Handle Neighbor Generation Results ---
                         if neighbors:
-                            worker_logger.info(f"Explore Cycle {exploration_cycle}: Added {len(neighbors)} neighbors.");
-                            for p in neighbors: params_q.put(p);
-                            current_params_explore = params_q.get(); total_tests_count += 1; stall_cycle_count = 0
+                            worker_logger.info(f"Explore Cycle {exploration_cycle}: Added {len(neighbors)} new neighbors to queue.")
+                            for p in neighbors: params_q.put(p)
+                            # Lấy hàng xóm ĐẦU TIÊN ra để kiểm tra NGAY trong vòng lặp này
+                            current_params_explore = params_q.get()
+                            total_tests_count += 1 # Tăng bộ đếm vì sắp kiểm tra hàng xóm đầu tiên này
                         else:
-                            worker_logger.info(f"Explore Cycle {exploration_cycle}: No new neighbors.");
-                            if params_q.empty(): finish_reason = "no_improvement"; break
+                            worker_logger.warning(f"Explore Cycle {exploration_cycle}: Failed to generate any *new* neighbors.")
+                            # <<<====== ĐÃ LOẠI BỎ ĐIỀU KIỆN DỪNG SỚM Ở ĐÂY ======>>>
+                            # Không còn break; nếu không tạo được hàng xóm mới.
+                            # Vòng lặp sẽ tiếp tục, stall_cycle_count sẽ tăng ở lần lặp sau,
+                            # và cuối cùng sẽ dừng bởi check stall_cycle_count >= MAX_STALL_CYCLES
+                            # Đặt current_params_explore thành None để bỏ qua phần kiểm tra ở dưới cho vòng lặp này
+                            current_params_explore = None
+                        # --- End Handle Neighbor Generation Results ---
+                    # --- End Get Params or Generate Neighbors ---
+
+
+                    # --- Test the Current Parameter Set ---
+                    # Bỏ qua kiểm tra nếu không có tham số nào được lấy ra (ví dụ: khi không tạo được neighbor)
+                    if current_params_explore is None:
+                         worker_logger.debug(f"Skipping simulation for iteration as no new params were dequeued or generated.")
+                         continue # Chuyển sang vòng lặp tiếp theo để tăng stall_cycle_count
 
                     params_str_short_explore = {k: f'{v:.3g}' if isinstance(v,float) else v for k, v in current_params_explore.items() if k in numeric_param_keys}
-                    queue_status(f"Explore Cycle {exploration_cycle}: Thử nghiệm #{total_tests_count}..."); worker_logger.debug(f"Testing Explore set #{total_tests_count}: {params_str_short_explore}")
+                    queue_status(f"Explore Cycle {exploration_cycle}: Thử nghiệm #{total_tests_count} (Stall: {stall_cycle_count}/{MAX_STALL_CYCLES})...")
+                    worker_logger.debug(f"Testing Explore set #{total_tests_count}: {params_str_short_explore}")
+
                     explore_streak, sim_reason_explore, _ = simulate_streak(current_params_explore, start_date, hist_cache, res_map, max_date)
+
                     if sim_reason_explore == "stopped": finish_reason = "stopped"; break
                     if sim_reason_explore == "time_limit": finish_reason = "time_limit"; break
-                    if explore_streak > current_best_streak_worker:
-                        current_best_streak_worker = explore_streak; current_best_params_worker = copy.deepcopy(current_params_explore)
-                        queue_log("BEST", f"*** New Best Streak: {current_best_streak_worker}! (Explore #{total_tests_count}) Params: {params_str_short_explore}", tag="BEST")
-                        queue_best_update(current_best_params_worker, current_best_streak_worker); stall_cycle_count = 0; worker_logger.info(f"Reset stall count due to new best streak: {current_best_streak_worker}"); self._save_training_state(reason="new_best_streak")
-                    queue_progress({"current_streak": explore_streak, "best_streak": current_best_streak_worker})
-                    if streak_limit > 0 and current_best_streak_worker >= streak_limit: worker_logger.info(f"Best streak ({current_best_streak_worker}) meets target ({streak_limit}). Stopping Explore."); finish_reason = "streak_limit_reached"; break
+                    if sim_reason_explore == "prediction_error": queue_log("ERROR", f"Lỗi dự đoán khi kiểm tra bộ #{total_tests_count}. Chuỗi cuối cùng: {max(0, explore_streak)}", tag="ERROR")
+                    elif sim_reason_explore == "missing_history": queue_log("ERROR", f"Lỗi thiếu lịch sử khi kiểm tra bộ #{total_tests_count}. Chuỗi cuối cùng: {max(0, explore_streak)}", tag="ERROR")
 
+                    # --- Update Best Results ---
+                    if explore_streak > current_best_streak_worker:
+                        previous_best = current_best_streak_worker
+                        current_best_streak_worker = explore_streak
+                        current_best_params_worker = copy.deepcopy(current_params_explore)
+                        queue_log("BEST", f"*** New Best Streak: {current_best_streak_worker}! (Explore #{total_tests_count}, Prev Best: {previous_best}) Params: {params_str_short_explore}", tag="BEST")
+                        queue_best_update(current_best_params_worker, current_best_streak_worker)
+                        worker_logger.info(f"Reset stall count from {stall_cycle_count} to 0 due to new best streak: {current_best_streak_worker}")
+                        stall_cycle_count = 0 # Reset stall count on improvement!
+                        self._save_training_state(reason="new_best_streak")
+                    # --- End Update Best Results ---
+
+                    queue_progress({"current_streak": max(0, explore_streak), "best_streak": current_best_streak_worker})
+
+                    # --- Check Streak Limit ---
+                    if streak_limit > 0 and current_best_streak_worker >= streak_limit:
+                        worker_logger.info(f"Best streak ({current_best_streak_worker}) meets target ({streak_limit}). Stopping Explore.")
+                        finish_reason = "streak_limit_reached"; break
+                    # --- End Check Streak Limit ---
+
+                    current_params_explore = None # Reset cho vòng lặp tiếp theo
+
+                # --- End Main Explore Loop ---
+            # --- End Explore Mode Logic ---
+
+            # =========================================
+            # ===== END OPTIMIZATION LOOP BY MODE =====
+            # =========================================
+
+            # --- Final Logging and Cleanup ---
+            # ... (Giữ nguyên như phiên bản trước) ...
             worker_logger.info(f"Worker loop finished. Reason: {finish_reason}")
             final_msg = ""; succ_flag = (current_best_streak_worker > 0)
             if finish_reason == "completed": final_msg = "Hoàn tất tối ưu."
@@ -1931,30 +2092,39 @@ class TrainingApp(QMainWindow):
             elif finish_reason == "no_params": final_msg = "Thuật toán không có tham số số học."; succ_flag = False
             elif finish_reason == "generation_error": final_msg = "Lỗi tạo bộ tham số."; succ_flag = False
             elif finish_reason == "critical_error": final_msg = "Lỗi nghiêm trọng worker."; succ_flag = False
-            else: final_msg = f"Kết thúc với lý do: {finish_reason}"
-
+            else: final_msg = f"Kết thúc với lý do không xác định: {finish_reason}"
             if current_best_streak_worker > 0 and current_best_params_worker:
-                 if finish_reason not in ["no_params", "resume_error", "initial_test_error", "load_error", "critical_error", "generation_error"]:
+                 if finish_reason not in ["no_params", "generation_error", "critical_error"]:
                       final_msg += f" Chuỗi tốt nhất: {current_best_streak_worker} ngày."
                       params_str_final = {k: f'{v:.4g}' if isinstance(v,float) else v for k, v in current_best_params_worker.items() if k in numeric_param_keys}
-                      queue_log("BEST", f"={'='*10} TỐI ƯU KẾT THÚC ({optimization_mode}) {'='*10}", tag="BEST"); queue_log("BEST", f"Lý do: {finish_reason}", tag="BEST"); queue_log("BEST", f"Chuỗi dài nhất: {current_best_streak_worker}", tag="BEST"); queue_log("BEST", f"Với tham số: {params_str_final}", tag="BEST"); succ_flag = True
+                      queue_log("BEST", f"={'='*10} TỐI ƯU KẾT THÚC ({optimization_mode}) {'='*10}", tag="BEST")
+                      queue_log("BEST", f"Lý do: {finish_reason}", tag="BEST")
+                      queue_log("BEST", f"Chuỗi dài nhất: {current_best_streak_worker}", tag="BEST")
+                      queue_log("BEST", f"Với tham số: {params_str_final}", tag="BEST")
+                      succ_flag = True
                       try:
-                          final_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S"); success_dir = target_dir / "success"; success_dir.mkdir(parents=True, exist_ok=True)
+                          final_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                          success_dir = target_dir / "success"; success_dir.mkdir(parents=True, exist_ok=True)
                           py_filename = f"trained_{target_data['path'].stem}_streak{current_best_streak_worker}_{final_timestamp}.py"; py_filepath = success_dir / py_filename
                           final_source_code = self._modify_algorithm_source_ast(src_code, cls_name, current_best_params_worker)
-                          if final_source_code: py_filepath.write_text(final_source_code, encoding='utf-8'); queue_log("BEST", f"Lưu file thuật toán: {py_filepath.name}", tag="BEST")
-                          else: queue_log("ERROR", "Lỗi tạo source code cuối cùng.", tag="ERROR")
-                      except Exception as save_e: queue_log("ERROR", f"Lỗi lưu file .py: {save_e}", tag="ERROR"); worker_logger.error(f"Error saving best python file: {save_e}", exc_info=True)
-            elif not succ_flag: final_msg += " Không tìm thấy chuỗi nào."; queue_log("INFO", "Không tìm thấy chuỗi nào.")
-
+                          if final_source_code:
+                              py_filepath.write_text(final_source_code, encoding='utf-8')
+                              queue_log("BEST", f"Lưu file thuật toán: {py_filepath.name}", tag="BEST")
+                          else: queue_log("ERROR", "Lỗi tạo source code cuối cùng để lưu.", tag="ERROR")
+                      except Exception as save_e:
+                          queue_log("ERROR", f"Lỗi lưu file .py cuối cùng: {save_e}", tag="ERROR")
+                          worker_logger.error(f"Error saving best python file: {save_e}", exc_info=True)
+            elif not succ_flag:
+                 final_msg += " Không tìm thấy chuỗi nào."; queue_log("INFO", "Không tìm thấy chuỗi trúng nào trong quá trình tối ưu.")
             finish_payload_sets_tested = total_sets_tested_count if optimization_mode == "GenerateSets" else None
             queue_finished(final_msg, success=succ_flag, reason=finish_reason, sets_tested=finish_payload_sets_tested)
 
         except Exception as worker_err:
+            # --- Global Error Handling for Worker ---
             finish_reason = "critical_error"
             worker_logger.critical(f"Unhandled exception in worker thread ({optimization_mode}): {worker_err}", exc_info=True)
             queue_error(f"Lỗi worker ({optimization_mode}): {worker_err}")
-            queue_finished(f"Lỗi nghiêm trọng: {worker_err}", success=False, reason=finish_reason)
+            queue_finished(f"Lỗi nghiêm trọng worker: {worker_err}", success=False, reason=finish_reason)
 
     def _validate_training_settings(self):
         """Validates start date and optimization limits."""
