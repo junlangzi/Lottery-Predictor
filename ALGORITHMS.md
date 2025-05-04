@@ -1,9 +1,13 @@
 # Nguyên tắc viết thuật toán cho chương trình
 
+
+***(update 04/05/2025 - chạy file algorithms.py để viết thuật toán)***  <br><br>
+
 **Quy trình Viết Thuật Toán Mới**
 
-<br>
-**Bước 1: Tạo File Thuật Toán**
+<br> <br><br>
+**Bước 1: Tạo File Thuật Toán** 
+
 
 1. **Vị trí:** Tạo một file Python mới (đuôi .py) bên trong thư mục algorithms/ của dự án.
 2. **Tên File:** Đặt tên file một cách gợi nhớ, sử dụng chữ thường và dấu gạch dưới nếu cần (ví dụ: trend\_following.py, gan\_based\_predictor.py). **Tránh đặt tên là \_\_init\_\_.py hoặc base.py.**
