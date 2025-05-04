@@ -39,6 +39,9 @@ Thêm chương trình tối ưu chuỗi ngày: **date-optimize-v1.5.py**
 Chương trình sẽ tối ưu thuật toán, sao cho ra chuỗi ngày có kết quả top 3 trùng với kết quả ngày hôm sau tuỳ theo cài đặt yêu cầu ( chạy gần tương tự như tối ưu thuật toán ) 
 Data thuật toán sẽ được lưu ở trong thư mục Training
 
+Thêm chương trình **algorithms.py** để hỗ trợ viết thuật toán bằng API GEMINI
+Các bạn chỉ cần chạy chương trình, điền API GEMINI vào mục cài đặt, sau đó điền các thông tin cần thiết và mô tả chi tiết thuật toán mà mình muốn viết, code sẽ được tạo ra một cách vô cùng nhanh chóng.
+
 <br><br>
 
 **1 số hình ảnh của chương trình:**
