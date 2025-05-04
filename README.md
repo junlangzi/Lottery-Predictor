@@ -3,12 +3,12 @@
 Chương trình được phát triển trên code **Python**.
 
 Lịch sử Update của chương trình: [Xem ở đây - Update](https://github.com/junlangzi/Lottery-Predictor/blob/main/UPDATE.md)  <br>
-Cách để viết các thuật toán ở đây: [ALGORITHMS](https://github.com/junlangzi/Lottery-Predictor/blob/main/ALGORITHMS.md)
+Cách để viết các thuật toán ở đây: [ALGORITHMS](https://github.com/junlangzi/Lottery-Predictor/blob/main/ALGORITHMS.md)  ***  (update 04/05/2025 - chạy file algorithms.py để viết thuật toán)
 
 Để chạy chương trình cần cài đặt Python và các gói bổ sung sau:
 
 ```
-pip install PyQt5 requests astor
+pip install PyQt5 requests astor google-generativeai
 ```
 
 Tại thư mục chương trình, chạy file **main.py**
