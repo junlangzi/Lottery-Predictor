@@ -30,7 +30,7 @@ jobs:
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
           # Thông điệp commit
-          commit_message: "chore: Auto sync KQXS data (xsmb-2-digits.json)"
+          commit_message: "Đồng bộ dữ liệu KQXS mới nhất"
           # Chỉ định file cần theo dõi thay đổi và commit
           file_pattern: data/xsmb-2-digits.json
           # Bạn có thể tùy chỉnh tên và email của người commit nếu muốn
