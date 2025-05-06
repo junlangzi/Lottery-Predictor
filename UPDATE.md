@@ -1,5 +1,15 @@
 # Update list
 
+
+### 04/05/2025
+
+**Update algorithms.py**
+
+Chương trình sử dụng API GEMINI hỗ trợ viết thuật toán bằng cách mô tả, chỉ cần mô tả cách thức hoạt động của thuật toán, chương trình sẽ trả về toàn bộ code thuật toán để sử dụng một cách nhanh chóng
+
+<br><br>
+
+
 ### 03/05/2025
 
 **Update V4.1**
