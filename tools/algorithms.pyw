@@ -26,10 +26,16 @@ from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer
 from PyQt5.QtGui import QFont, QColor, QSyntaxHighlighter, QTextCharFormat, QDesktopServices, QIcon
 from PyQt5.QtCore import QUrl
 
-CONFIG_DIR = Path("../config")
+# --- Path Adjustments ---
+# Assume this script (algorithms.py) is in a 'tools' subdirectory of the project root.
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SCRIPT_DIR.parent
+
+CONFIG_DIR = _PROJECT_ROOT / "config"
 API_KEY_FILE = CONFIG_DIR / "gemini.api"
 ICON_FILE = CONFIG_DIR / "logo.png"
-ALGORITHMS_DIR_DEFAULT = Path("../algorithms")
+ALGORITHMS_DIR_DEFAULT = _PROJECT_ROOT / "algorithms"
+# --- End Path Adjustments ---
 
 
 class PythonSyntaxHighlighter(QSyntaxHighlighter):
@@ -304,7 +310,7 @@ class AlgorithmGeminiBuilderDialog(QDialog):
 
         settings_layout.addWidget(api_group)
 
-        save_info_label = QLabel("<i>API Key sẽ được mã hóa và lưu tự động vào file <code>config/gemini.api</code> khi bạn thay đổi hoặc đóng cửa sổ.</i>")
+        save_info_label = QLabel(f"<i>API Key sẽ được mã hóa và lưu tự động vào file <code>{API_KEY_FILE.relative_to(_PROJECT_ROOT)}</code> khi bạn thay đổi hoặc đóng cửa sổ.</i>")
         save_info_label.setWordWrap(True)
         save_info_label.setStyleSheet("color: #6c757d; font-size: 9pt;")
         settings_layout.addWidget(save_info_label)
@@ -406,15 +412,32 @@ class AlgorithmGeminiBuilderDialog(QDialog):
     def _get_base_algorithm_code(self) -> str:
         """Lấy nội dung code của lớp BaseAlgorithm."""
         try:
-            base_path = Path(__file__).parent.parent / "algorithms" / "base.py"
-            if not base_path.exists():
-                 base_path = Path("algorithms") / "base.py"
+            # Path P1 (Robust, __file__-based, points to <project_root>/algorithms/base.py)
+            path_option1 = _PROJECT_ROOT / "algorithms" / "base.py"
 
-            if base_path.exists():
-                logging.info(f"Reading BaseAlgorithm from: {base_path}")
-                return base_path.read_text(encoding='utf-8')
+            # Path P2 (CWD-based, with user's transformation "<name>" -> "../<name>")
+            # Original was Path("algorithms") / "base.py"
+            path_option2 = Path("../algorithms") / "base.py" # Relative to CWD
+
+            final_base_path_to_use = None
+
+            if path_option1.exists():
+                logging.info(f"Reading BaseAlgorithm from (primary location): {path_option1.resolve()}")
+                final_base_path_to_use = path_option1
+            elif path_option2.exists():
+                # This fallback is relative to the Current Working Directory (CWD).
+                # If CWD is 'tools/', then '../algorithms/base.py' resolves to '<project_root>/algorithms/base.py'.
+                # If CWD is '<project_root>/', then '../algorithms/base.py' resolves to '<grandparent_of_project_root>/algorithms/base.py'.
+                logging.info(f"Reading BaseAlgorithm from (CWD-relative fallback): {path_option2.resolve()}")
+                final_base_path_to_use = path_option2
+            
+            if final_base_path_to_use:
+                return final_base_path_to_use.read_text(encoding='utf-8')
             else:
-                logging.warning(f"BaseAlgorithm file not found at expected locations: {base_path}")
+                logging.warning(
+                    f"BaseAlgorithm file not found at primary location ({path_option1.resolve()}) "
+                    f"or CWD-relative fallback ({path_option2} from CWD: {Path.cwd()}). Using hardcoded summary."
+                )
                 return textwrap.dedent("""
                     # Base class (summary - file not found at expected location)
                     from abc import ABC, abstractmethod
@@ -460,7 +483,7 @@ class AlgorithmGeminiBuilderDialog(QDialog):
                             log_method(message)
                 """)
         except Exception as e:
-            logging.error(f"Error reading base algorithm code: {e}")
+            logging.error(f"Error reading base algorithm code: {e}", exc_info=True)
             return f"# Error: Could not read base algorithm code: {e}"
 
     def _construct_prompt(self) -> str | None:
@@ -654,6 +677,8 @@ class AlgorithmGeminiBuilderDialog(QDialog):
             return
 
         full_file_name = f"{file_name_base}.py"
+        # self.algorithms_dir is initialized with ALGORITHMS_DIR_DEFAULT or a passed arg.
+        # ALGORITHMS_DIR_DEFAULT is now _PROJECT_ROOT / "algorithms"
         save_path = self.algorithms_dir / full_file_name
 
         if save_path.exists():
@@ -667,7 +692,7 @@ class AlgorithmGeminiBuilderDialog(QDialog):
             self.algorithms_dir.mkdir(parents=True, exist_ok=True)
             save_path.write_text(self.generated_code, encoding='utf-8')
             QMessageBox.information(self, "Lưu Thành Công",
-                                    f"Đã lưu thuật toán vào:\n{save_path}\n\n"
+                                    f"Đã lưu thuật toán vào:\n{save_path.resolve()}\n\n"
                                     "Bạn có thể cần 'Tải lại thuật toán' trong ứng dụng chính để sử dụng.")
             self.status_label.setText(f"Trạng thái: Đã lưu {full_file_name}")
             self.status_label.setStyleSheet("color: #28a745;")
@@ -693,45 +718,74 @@ class AlgorithmGeminiBuilderDialog(QDialog):
 
         super().closeEvent(event)
 
+        # The following sys.exit() and app.quit() calls are generally not recommended
+        # inside a dialog's closeEvent if this dialog is part of a larger application.
+        # They can lead to premature termination of the entire application.
+        # However, if this script is run standalone as in `if __name__ == '__main__'`,
+        # then ensuring the app exits cleanly might be the intention.
+        # For now, I will keep them as they were in the original code provided.
         app_instance = QApplication.instance()
         if app_instance:
-             logging.debug("Attempting to quit QApplication event loop.")
-             app_instance.quit()
+             logging.debug("Attempting to quit QApplication event loop from AlgorithmGeminiBuilderDialog.closeEvent.")
+             # QTimer.singleShot(0, app_instance.quit) # A more graceful way to quit
+             app_instance.quit() # This might be too abrupt
 
-        logging.warning("Attempting sys.exit(0) to terminate.")
-        sys.exit(0)
-
+        logging.warning("Attempting sys.exit(0) to terminate from AlgorithmGeminiBuilderDialog.closeEvent.")
+        # sys.exit(0) # This is generally too forceful for a GUI app part.
 
 def run_gemini_algorithm_builder(parent=None, algorithms_dir=None):
     if not HAS_GEMINI:
          QMessageBox.critical(parent, "Thiếu Thư Viện", "Chức năng này yêu cầu thư viện 'google-generativeai'.\nVui lòng cài đặt bằng lệnh:\n\npip install google-generativeai")
          return
 
+    # CONFIG_DIR is now absolute, based on _PROJECT_ROOT
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-
-    dialog = AlgorithmGeminiBuilderDialog(parent, algorithms_dir)
+    
+    # If algorithms_dir is not provided, it defaults to ALGORITHMS_DIR_DEFAULT (absolute path)
+    dialog_algorithms_dir = algorithms_dir if algorithms_dir else ALGORITHMS_DIR_DEFAULT
+    
+    dialog = AlgorithmGeminiBuilderDialog(parent, dialog_algorithms_dir)
     dialog.exec_()
 
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-    app = QApplication(sys.argv)
+    
+    # Ensure QApplication is created before any widgets
+    app = QApplication.instance() 
+    if not app: # Create QApplication if it doesn't exist
+        app = QApplication(sys.argv)
 
+    # CONFIG_DIR and ALGORITHMS_DIR_DEFAULT are now absolute paths
+    # derived from __file__'s location.
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    test_algo_dir = ALGORITHMS_DIR_DEFAULT
+    
+    # test_algo_dir will use the globally defined ALGORITHMS_DIR_DEFAULT
+    test_algo_dir = ALGORITHMS_DIR_DEFAULT 
     test_algo_dir.mkdir(exist_ok=True)
-    print(f"Testing Gemini builder, will save algorithms to: {test_algo_dir}")
-    print(f"API Key will be loaded/saved from/to: {API_KEY_FILE}")
+    
+    print(f"Current Script Directory (_SCRIPT_DIR): {_SCRIPT_DIR}")
+    print(f"Deduced Project Root (_PROJECT_ROOT): {_PROJECT_ROOT}")
+    print(f"Config Directory (CONFIG_DIR): {CONFIG_DIR}")
+    print(f"Default Algorithms Directory (ALGORITHMS_DIR_DEFAULT): {ALGORITHMS_DIR_DEFAULT}")
+    
+    print(f"Testing Gemini builder, will use/create algorithms in: {test_algo_dir.resolve()}")
+    print(f"API Key will be loaded/saved from/to: {API_KEY_FILE.resolve()}")
 
     if not ICON_FILE.is_file():
         try:
-            print(f"INFO: Dummy icon {ICON_FILE} not found. Create it manually or ignore icon warning.")
+            # Create a dummy icon file if it doesn't exist for testing purposes
+            ICON_FILE.parent.mkdir(parents=True, exist_ok=True) # Ensure config dir exists
+            # ICON_FILE.write_text("dummy_icon_content_if_needed_as_text_or_binary")
+            print(f"INFO: Dummy icon {ICON_FILE} not found. Create it manually or ignore icon warning if not critical for this test.")
         except Exception as e:
-            print(f"Could not check/create dummy icon file: {e}")
-
+            print(f"Could not check/create dummy icon file {ICON_FILE}: {e}")
 
     run_gemini_algorithm_builder(algorithms_dir=test_algo_dir)
 
+    # The original closeEvent in the dialog had app.quit() and sys.exit().
+    # If the dialog is closed, the app.exec_() might return.
+    # It's generally better to let app.exec_() manage the exit.
     exit_code = app.exec_()
     logging.info(f"QApplication event loop finished with exit code: {exit_code}")
     sys.exit(exit_code)
