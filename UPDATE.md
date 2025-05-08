@@ -1,6 +1,17 @@
 # Update list
 
 
+### 08/05/2025
+
+**Update ver 4.2**
+
+
+Thêm tab công cụ để bổ sung các tính năng mới, chuyển các chương trình tạo thuật toán, tối ưu chuỗi ngày vào trong folder tools
+
+
+<br><br>
+
+
 ### 04/05/2025
 
 **Update  [algorithms.py](https://github.com/junlangzi/Lottery-Predictor/blob/main/algorithms.py "algorithms.py")**
