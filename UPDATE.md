@@ -1,6 +1,16 @@
 # Update list
 
 
+### 09/05/2025
+
+**Update ver 4.3**
+
+
+Update thêm tab thuật toán, có thể check tải về các thuật toán online, đồng thời xoá, update các thuật toán cũ trên máy
+
+<br><br>
+
+
 ### 08/05/2025
 
 **Update ver 4.2**
