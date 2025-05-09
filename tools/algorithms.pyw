@@ -533,6 +533,7 @@ class AlgorithmGeminiBuilderDialog(QDialog):
             *   Nên có log debug ở đầu hàm (`self._log('debug', f"Predicting for {{date_to_predict}}")`) và log info ở cuối (`self._log('info', f"Prediction finished for {{date_to_predict}}. Generated {{len(scores)}} scores.")`).
             *   Xử lý các trường hợp ngoại lệ (ví dụ: không đủ dữ liệu `historical_results`, lỗi tính toán) một cách hợp lý. Nếu không thể tính toán, trả về dict `scores` với tất cả điểm là 0.0.
             *   Đảm bảo code trong `predict` hiệu quả, tránh lặp lại tính toán không cần thiết nếu có thể.
+        5.  Hãy viết chi tiết các tham số, để sau này người dùng còn có thể sử dụng công cụ để tinh chỉnh, tối ưu từng tham số cụ thể để tăng tính chính xác khi chạy thuật toán.
 
         **Định dạng Output:**
         Chỉ cung cấp phần code Python hoàn chỉnh cho file `{full_file_name}`.
