@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import os
 import sys
 import logging
@@ -23,7 +22,7 @@ from importlib import reload, util
 from abc import ABC, abstractmethod
 import re
 import textwrap
-import itertools  # Added for combination generation
+import itertools
 
 try:
     from PyQt5 import QtWidgets, QtCore, QtGui
@@ -205,7 +204,7 @@ class OptimizerEmbedded(QWidget):
         self.weight_validator = QDoubleValidator()
         self.dimension_validator = QIntValidator(1, 9999)
 
-        self.current_optimization_mode = 'auto_hill_climb' # 'auto_hill_climb' or 'generated_combinations'
+        self.current_optimization_mode = 'auto_hill_climb'
 
         self.setup_ui()
         self.load_data()
@@ -391,19 +390,16 @@ class OptimizerEmbedded(QWidget):
         layout.addWidget(button_frame)
 
     def setup_optimize_tab(self):
-        # Layout chính cho tab Tối ưu hóa
         layout = QVBoxLayout(self.tab_optimize)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
-        # === Phần Widget trên cùng (Thông tin thuật toán) ===
         top_widget = QWidget()
         top_layout = QVBoxLayout(top_widget)
         top_layout.setContentsMargins(0,0,0,0)
         top_layout.setSpacing(8)
-        layout.addWidget(top_widget, 0) # Thêm widget này vào layout chính của tab
+        layout.addWidget(top_widget, 0)
 
-        # Khung chứa tên thuật toán đang tối ưu
         info_frame = QWidget()
         info_h_layout = QHBoxLayout(info_frame)
         info_h_layout.setContentsMargins(0,0,0,0)
@@ -412,21 +408,19 @@ class OptimizerEmbedded(QWidget):
         self.opt_algo_name_label.setStyleSheet(f"font-weight: bold; color: #28a745; font-size: {self.main_app.get_font_size('title')}pt;")
         info_h_layout.addWidget(self.opt_algo_name_label)
         info_h_layout.addStretch(1)
-        top_layout.addWidget(info_frame) # Thêm vào layout trên cùng
+        top_layout.addWidget(info_frame)
 
-        # === Phần Layout Ngang chứa các GroupBox cài đặt ===
         self.settings_container = QWidget()
         settings_h_layout = QHBoxLayout(self.settings_container)
         settings_h_layout.setContentsMargins(0, 0, 0, 0)
         settings_h_layout.setSpacing(10)
-        top_layout.addWidget(self.settings_container) # Thêm layout ngang này vào layout trên cùng
+        top_layout.addWidget(self.settings_container)
 
-        # === GroupBox 1: Cài Đặt Cơ Bản (Ngày tháng, thời gian) ===
         settings_groupbox = QGroupBox("Cài Đặt Cơ Bản")
         settings_layout = QGridLayout(settings_groupbox)
         settings_layout.setContentsMargins(10, 15, 10, 10)
         settings_layout.setVerticalSpacing(8)
-        settings_layout.setHorizontalSpacing(0) # Giảm khoảng cách ngang nếu muốn
+        settings_layout.setHorizontalSpacing(0)
 
         settings_layout.addWidget(QLabel("Chọn khoảng thời gian tối ưu:"), 0, 0, 1, 4, Qt.AlignLeft)
 
@@ -471,22 +465,19 @@ class OptimizerEmbedded(QWidget):
         self.opt_time_limit_spinbox.setToolTip("Giới hạn thời gian chạy tối đa cho một lần tối ưu.")
         settings_layout.addWidget(self.opt_time_limit_spinbox, 4, 1, Qt.AlignLeft)
 
-        settings_layout.setColumnStretch(0, 0) # Cột label
-        settings_layout.setColumnStretch(1, 0) # Cột input date/spinbox
-        settings_layout.setColumnStretch(2, 0) # Cột button lịch
-        settings_layout.setColumnStretch(3, 1) # Cột co giãn cuối
-        settings_layout.setRowStretch(5, 1) # Đẩy các widget lên trên
+        settings_layout.setColumnStretch(0, 0)
+        settings_layout.setColumnStretch(1, 0)
+        settings_layout.setColumnStretch(2, 0)
+        settings_layout.setColumnStretch(3, 1)
+        settings_layout.setRowStretch(5, 1)
 
-        # Thêm GroupBox Cài đặt cơ bản vào layout ngang
-        settings_h_layout.addWidget(settings_groupbox, 1) # Stretch factor 1
+        settings_h_layout.addWidget(settings_groupbox, 1)
 
-        # === GroupBox 2: Chế Độ Tối Ưu (MỚI) ===
         self.optimization_mode_groupbox = QGroupBox("Chế Độ Tối Ưu")
         mode_outer_layout = QVBoxLayout(self.optimization_mode_groupbox)
         mode_outer_layout.setContentsMargins(10, 15, 10, 10)
         mode_outer_layout.setSpacing(8)
 
-        # Radio buttons chọn chế độ
         self.opt_mode_group = QButtonGroup(self)
         self.opt_mode_auto_radio = QRadioButton("Tối ưu Tự động (Hill Climb / Custom)")
         self.opt_mode_auto_radio.setChecked(True)
@@ -499,10 +490,9 @@ class OptimizerEmbedded(QWidget):
         self.opt_mode_group.addButton(self.opt_mode_combo_radio)
         mode_outer_layout.addWidget(self.opt_mode_combo_radio)
 
-        # Widget cài đặt cho Tạo Bộ Tham Số
         self.combo_gen_settings_widget = QWidget()
         combo_gen_layout = QHBoxLayout(self.combo_gen_settings_widget)
-        combo_gen_layout.setContentsMargins(20, 5, 0, 0) # Thụt vào + top margin
+        combo_gen_layout.setContentsMargins(20, 5, 0, 0)
         combo_gen_layout.setSpacing(8)
         combo_gen_layout.addWidget(QLabel("Số giá trị/tham số:"))
         self.combo_num_values_spinbox = QSpinBox()
@@ -516,27 +506,24 @@ class OptimizerEmbedded(QWidget):
         combo_gen_layout.addWidget(self.combo_method_random_radio)
         combo_gen_layout.addWidget(self.combo_method_adjacent_radio)
         combo_gen_layout.addStretch(1)
-        mode_outer_layout.addWidget(self.combo_gen_settings_widget) # Thêm vào groupbox chế độ
-        self.combo_gen_settings_widget.setEnabled(False) # Ban đầu tắt
+        mode_outer_layout.addWidget(self.combo_gen_settings_widget)
+        self.combo_gen_settings_widget.setEnabled(False)
 
-        mode_outer_layout.addStretch(1) # Đẩy các control lên trên
+        mode_outer_layout.addStretch(1)
 
-        # Thêm GroupBox Chế độ tối ưu vào layout ngang
-        settings_h_layout.addWidget(self.optimization_mode_groupbox, 1) # Stretch factor 1
+        settings_h_layout.addWidget(self.optimization_mode_groupbox, 1)
 
-        # === GroupBox 3: Chi Tiết Tham Số (Đã sửa) ===
         self.custom_steps_groupbox = QGroupBox("Tùy Chỉnh tham số tối ưu (bước nhảy)")
         steps_outer_layout = QVBoxLayout(self.custom_steps_groupbox)
         steps_outer_layout.setContentsMargins(5, 10, 5, 5)
         steps_outer_layout.setSpacing(6)
 
-        # Container và Scroll Area cho danh sách tham số
         self.param_scroll_widget_container = QWidget()
         param_scroll_layout = QVBoxLayout(self.param_scroll_widget_container)
         param_scroll_layout.setContentsMargins(0, 5, 0, 0)
         param_scroll_layout.setSpacing(4)
 
-        adv_scroll_area = QScrollArea() # Giữ nguyên tên biến hoặc đổi nếu muốn
+        adv_scroll_area = QScrollArea()
         adv_scroll_area.setWidgetResizable(True)
         adv_scroll_area.setStyleSheet("QScrollArea { background-color: #FFFFFF; border: none; }")
         self.advanced_opt_params_widget = QWidget()
@@ -548,15 +535,12 @@ class OptimizerEmbedded(QWidget):
         self.initial_adv_label.setStyleSheet("font-style: italic; color: #6c757d;")
         self.initial_adv_label.setAlignment(Qt.AlignCenter)
         self.advanced_opt_params_layout.addWidget(self.initial_adv_label)
-        param_scroll_layout.addWidget(adv_scroll_area) # Thêm scroll area vào container
+        param_scroll_layout.addWidget(adv_scroll_area)
 
-        # Thêm container chứa scroll vào layout của groupbox này
         steps_outer_layout.addWidget(self.param_scroll_widget_container)
 
-        # Thêm GroupBox Tham số chi tiết vào layout ngang
-        settings_h_layout.addWidget(self.custom_steps_groupbox, 2) # Stretch factor 2 (rộng hơn)
+        settings_h_layout.addWidget(self.custom_steps_groupbox, 2)
 
-        # === GroupBox 4: Kết hợp với Thuật toán ===
         self.combination_groupbox = QGroupBox("Kết hợp với Thuật toán +")
         combo_outer_layout = QVBoxLayout(self.combination_groupbox)
         combo_outer_layout.setContentsMargins(5, 10, 5, 5)
@@ -576,14 +560,12 @@ class OptimizerEmbedded(QWidget):
         self.combination_layout.addWidget(self.initial_combo_label)
         combo_outer_layout.addWidget(combo_scroll_area)
 
-        # Thêm GroupBox Kết hợp vào layout ngang
-        settings_h_layout.addWidget(self.combination_groupbox, 1) # Stretch factor 1
+        settings_h_layout.addWidget(self.combination_groupbox, 1)
 
-        # === Khung điều khiển (Start, Pause, Stop) ===
         control_frame = QWidget()
         control_layout = QHBoxLayout(control_frame)
-        control_layout.setContentsMargins(0, 5, 0, 5) # Điều chỉnh margins nếu cần
-        control_layout.setSpacing(8) # Tăng khoảng cách nút
+        control_layout.setContentsMargins(0, 5, 0, 5)
+        control_layout.setSpacing(8)
         self.opt_start_button = QPushButton("Bắt đầu Tối ưu")
         self.opt_start_button.setObjectName("AccentButton")
         self.opt_start_button.clicked.connect(self.start_optimization)
@@ -598,7 +580,6 @@ class OptimizerEmbedded(QWidget):
         self.opt_pause_button = QPushButton("Tạm dừng")
         self.opt_pause_button.setObjectName("WarningButton")
         self.opt_pause_button.setEnabled(False)
-        # Callback sẽ được connect trong update_optimizer_ui_state
         control_layout.addWidget(self.opt_pause_button)
 
         self.opt_stop_button = QPushButton("Dừng Hẳn")
@@ -608,10 +589,8 @@ class OptimizerEmbedded(QWidget):
         control_layout.addWidget(self.opt_stop_button)
 
         control_layout.addStretch(1)
-        # Thêm khung điều khiển vào layout trên cùng (top_layout)
         top_layout.addWidget(control_frame)
 
-        # === Khung Tiến trình (Progress Bar, Status, Time) ===
         progress_frame = QWidget()
         progress_layout = QGridLayout(progress_frame)
         progress_layout.setContentsMargins(0, 5, 0, 5)
@@ -619,39 +598,37 @@ class OptimizerEmbedded(QWidget):
         progress_layout.setHorizontalSpacing(8)
         self.opt_progressbar = QProgressBar()
         self.opt_progressbar.setTextVisible(False)
-        self.opt_progressbar.setFixedHeight(22) # Có thể tăng chiều cao nếu muốn
+        self.opt_progressbar.setFixedHeight(22)
         self.opt_progressbar.setRange(0, 100)
         self.opt_progressbar.setObjectName("OptimizeProgressBar")
-        progress_layout.addWidget(self.opt_progressbar, 0, 0, 1, 4) # Span 4 cột
+        progress_layout.addWidget(self.opt_progressbar, 0, 0, 1, 4)
 
         self.opt_status_label = QLabel("Trạng thái: Chờ")
         self.opt_status_label.setStyleSheet("color: #6c757d;")
-        progress_layout.addWidget(self.opt_status_label, 1, 0) # Cột 0
+        progress_layout.addWidget(self.opt_status_label, 1, 0)
 
         self.opt_progress_label = QLabel("0%")
         self.opt_progress_label.setMinimumWidth(40)
         self.opt_progress_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        progress_layout.addWidget(self.opt_progress_label, 1, 1) # Cột 1
+        progress_layout.addWidget(self.opt_progress_label, 1, 1)
 
         self.opt_time_static_label = QLabel("Thời gian còn lại:")
         self.opt_time_static_label.setStyleSheet("color: #6c757d;")
-        progress_layout.addWidget(self.opt_time_static_label, 1, 2, Qt.AlignRight) # Cột 2, căn phải
+        progress_layout.addWidget(self.opt_time_static_label, 1, 2, Qt.AlignRight)
         self.opt_time_static_label.setVisible(False)
 
         self.opt_time_remaining_label = QLabel("--:--:--")
         self.opt_time_remaining_label.setStyleSheet("font-weight: bold;")
         self.opt_time_remaining_label.setMinimumWidth(70)
-        progress_layout.addWidget(self.opt_time_remaining_label, 1, 3, Qt.AlignLeft) # Cột 3, căn trái
+        progress_layout.addWidget(self.opt_time_remaining_label, 1, 3, Qt.AlignLeft)
         self.opt_time_remaining_label.setVisible(False)
 
-        progress_layout.setColumnStretch(0, 1) # Cột status co giãn
-        progress_layout.setColumnStretch(1, 0) # Cột progress label cố định
-        progress_layout.setColumnStretch(2, 0) # Cột time static label cố định
-        progress_layout.setColumnStretch(3, 0) # Cột time remaining cố định
-        # Thêm khung tiến trình vào layout trên cùng (top_layout)
+        progress_layout.setColumnStretch(0, 1)
+        progress_layout.setColumnStretch(1, 0)
+        progress_layout.setColumnStretch(2, 0)
+        progress_layout.setColumnStretch(3, 0)
         top_layout.addWidget(progress_frame)
 
-        # === GroupBox Nhật Ký Tối Ưu Hóa ===
         log_groupbox = QGroupBox("Nhật Ký Tối Ưu Hóa")
         log_outer_layout = QVBoxLayout(log_groupbox)
         log_outer_layout.setContentsMargins(5, 10, 5, 5)
@@ -668,10 +645,9 @@ class OptimizerEmbedded(QWidget):
                 border: 1px solid #CED4DA;
             }
         """)
-        self._setup_log_formats() # Gọi hàm thiết lập format màu
-        log_outer_layout.addWidget(self.opt_log_text, 1) # Tham số 1 để text edit co giãn
+        self._setup_log_formats()
+        log_outer_layout.addWidget(self.opt_log_text, 1)
 
-        # Khung chứa nút mở thư mục log
         log_button_frame = QWidget()
         log_button_layout = QHBoxLayout(log_button_frame)
         log_button_layout.setContentsMargins(0, 0, 0, 0)
@@ -681,12 +657,11 @@ class OptimizerEmbedded(QWidget):
         log_button_layout.addWidget(open_folder_button)
         log_outer_layout.addWidget(log_button_frame)
 
-        # Thêm GroupBox log vào layout chính của tab (layout)
-        layout.addWidget(log_groupbox, 1) # Tham số 1 để groupbox này co giãn
+        layout.addWidget(log_groupbox, 1)
 
     def _on_optimization_mode_changed(self, checked):
         if not checked:
-            return # Only react when a button becomes checked
+            return
 
         sender = self.sender()
         if sender == self.opt_mode_auto_radio:
@@ -697,9 +672,9 @@ class OptimizerEmbedded(QWidget):
         elif sender == self.opt_mode_combo_radio:
             self.current_optimization_mode = 'generated_combinations'
             self.combo_gen_settings_widget.setEnabled(True)
-            self.param_scroll_widget_container.setEnabled(False) # Disable custom step area
+            self.param_scroll_widget_container.setEnabled(False)
             optimizer_logger.debug("Switched to Generated Combinations optimization mode.")
-        self._populate_advanced_optimizer_settings() # Re-populate to enable/disable correctly
+        self._populate_advanced_optimizer_settings()
 
 
     def _setup_log_formats(self):
@@ -725,7 +700,7 @@ class OptimizerEmbedded(QWidget):
         self.log_formats["CUSTOM_STEP"] = create_format(base_font, '#6f42c1')
         self.log_formats["RESUME"] = create_format(bold_font, '#17a2b8')
         self.log_formats["COMBINE"] = create_format(base_font, "#fd7e14")
-        self.log_formats["GEN_COMBO"] = create_format(base_font, "#E83E8C") # Pinkish for combo generation
+        self.log_formats["GEN_COMBO"] = create_format(base_font, "#E83E8C")
 
 
     def browse_data_file(self):
@@ -1473,7 +1448,6 @@ class OptimizerEmbedded(QWidget):
         header_layout.addWidget(QLabel("Bước (+/-) cách bởi dấu phẩy"), 3)
         container_layout.addWidget(header_frame)
 
-        # Only show custom step controls if in 'auto_hill_climb' mode
         is_auto_mode = (self.current_optimization_mode == 'auto_hill_climb')
         header_frame.setVisible(is_auto_mode)
 
@@ -1515,7 +1489,6 @@ class OptimizerEmbedded(QWidget):
             container_layout.addWidget(param_frame)
             self.advanced_opt_widgets[name] = {'mode_combo': mode_combo, 'steps_entry': steps_entry}
 
-            # Hide the frame if not in auto mode
             param_frame.setVisible(is_auto_mode)
 
 
@@ -1658,40 +1631,31 @@ class OptimizerEmbedded(QWidget):
         original_params = algo_data['config'].get('parameters', {})
         numeric_params_check = {k: v for k, v in original_params.items() if isinstance(v, (int, float))}
 
-        # Check if there are numeric params only if NOT generating combinations
-        # (Generating combinations might work even without optimizable params in the target,
-        # though less useful, but we allow it structurally).
         if not numeric_params_check and self.current_optimization_mode != 'generated_combinations':
             QMessageBox.information(main_window, "Thông Báo", "Thuật toán này không có tham số số học để tối ưu (ở chế độ Auto/Custom).")
-            # Allow proceeding if generating combinations, as it tests discrete sets.
-            # return # Removed return to allow proceeding in combo mode
 
         if is_resuming and initial_combination_algos is not None:
             combination_algos_to_use = initial_combination_algos
         else:
             combination_algos_to_use = self._get_selected_combination_algos()
 
-        # --- Lấy cài đặt chung ---
         start_d, end_d, time_limit_min = self._validate_common_opt_settings_qt()
-        if start_d is None: # Validation failed
+        if start_d is None:
             return
 
         final_custom_steps_config = {}
-        generation_params_for_worker = None # Dùng cho mode combo
-        mode_to_run = self.current_optimization_mode # Lưu lại mode hiện tại
+        generation_params_for_worker = None
+        mode_to_run = self.current_optimization_mode
 
         if mode_to_run == 'auto_hill_climb':
             final_custom_steps_config, has_invalid_custom_steps = self._finalize_custom_steps_config_qt(original_params)
-            if not numeric_params_check and not final_custom_steps_config: # Double check if absolutely nothing to optimize
+            if not numeric_params_check and not final_custom_steps_config:
                  QMessageBox.information(main_window, "Thông Báo", "Thuật toán không có tham số số học và không có bước tùy chỉnh nào được định nghĩa.")
                  return
-            # Cho phép chạy ngay cả khi có invalid steps, chúng sẽ chạy ở chế độ Auto
 
         elif mode_to_run == 'generated_combinations':
-            # --- THU THẬP THÔNG TIN CHO GENERATION (Không tạo ở đây) ---
             num_values_per_param = self.combo_num_values_spinbox.value()
             generation_method = "random" if self.combo_method_random_radio.isChecked() else "adjacent"
-            # Tạo dict chứa các thông tin cần thiết để worker tạo combinations
             generation_params_for_worker = {
                 'original_params': original_params,
                 'num_values': num_values_per_param,
@@ -1699,26 +1663,24 @@ class OptimizerEmbedded(QWidget):
             }
             optimizer_logger.info(f"Preparing to generate {num_values_per_param} values per param using '{generation_method}' method IN WORKER.")
 
-            # Ước tính số lượng để cảnh báo người dùng nếu cần
             estimated_total = 1
             numeric_params_count = sum(1 for v in original_params.values() if isinstance(v, (int, float)))
             if numeric_params_count > 0:
                 try:
-                    # Sử dụng lũy thừa cẩn thận để tránh tràn số
                     if num_values_per_param > 0 and numeric_params_count > 0:
                          if num_values_per_param == 1:
                               estimated_total = 1
-                         elif numeric_params_count * math.log(num_values_per_param) < math.log(sys.maxsize): # Check approx magnitude
+                         elif numeric_params_count * math.log(num_values_per_param) < math.log(sys.maxsize):
                               estimated_total = num_values_per_param ** numeric_params_count
                          else:
-                              estimated_total = float('inf') # Indicate potentially huge number
+                              estimated_total = float('inf')
                 except OverflowError:
-                     estimated_total = float('inf') # Huge number if direct calculation overflows
+                     estimated_total = float('inf')
                 except Exception as est_err:
                      optimizer_logger.error(f"Error estimating combination count: {est_err}")
-                     estimated_total = -1 # Indicate error in estimation
+                     estimated_total = -1
 
-            if estimated_total == float('inf') or estimated_total > 100000: # Tăng ngưỡng cảnh báo
+            if estimated_total == float('inf') or estimated_total > 100000:
                 display_estimate = "rất lớn (>100,000)" if estimated_total == float('inf') else f"khoảng {estimated_total}"
                 reply = QMessageBox.question(main_window, "Số Lượng Lớn (Ước Tính)",
                                                 f"Việc tạo và kiểm tra {display_estimate} bộ tham số có thể rất lâu và tốn nhiều bộ nhớ.\n\nBạn có muốn tiếp tục không?",
@@ -1727,25 +1689,23 @@ class OptimizerEmbedded(QWidget):
                       return
             elif estimated_total == -1:
                  optimizer_logger.warning("Could not reliably estimate combination count, proceeding without warning.")
-            # --- KẾT THÚC THU THẬP THÔNG TIN ---
 
         else:
              QMessageBox.critical(main_window, "Lỗi Chế Độ", f"Chế độ tối ưu không xác định: {mode_to_run}")
              return
 
-        # Gọi hàm bắt đầu luồng worker với thông tin đã chuẩn bị
         self._start_optimization_worker_thread(
             display_name=display_name,
             start_date=start_d,
             end_date=end_d,
             time_limit_min=time_limit_min,
-            custom_steps_config=final_custom_steps_config, # Dùng cho mode auto/custom
-            generation_params=generation_params_for_worker, # Dùng cho mode combo
+            custom_steps_config=final_custom_steps_config,
+            generation_params=generation_params_for_worker,
             combination_algos=combination_algos_to_use,
             initial_params=initial_params,
             initial_score_tuple=initial_score_tuple,
             is_resuming=is_resuming,
-            mode=mode_to_run # Truyền mode đã xác định
+            mode=mode_to_run
         )
 
     def resume_optimization_session(self):
@@ -1776,7 +1736,6 @@ class OptimizerEmbedded(QWidget):
 
         try:
 
-            # Resume always uses 'auto_hill_climb' mode
             self.opt_mode_auto_radio.setChecked(True)
             self.current_optimization_mode = 'auto_hill_climb'
             self._populate_advanced_optimizer_settings()
@@ -1908,7 +1867,6 @@ class OptimizerEmbedded(QWidget):
 
     def _finalize_custom_steps_config_qt(self, original_params):
 
-        # Only relevant if in auto/custom mode
         if self.current_optimization_mode != 'auto_hill_climb':
             return {}, False
 
@@ -1987,11 +1945,11 @@ class OptimizerEmbedded(QWidget):
         return final_custom_steps_config, has_invalid_custom_steps
 
     def _start_optimization_worker_thread(self, display_name, start_date, end_date, time_limit_min,
-                                          custom_steps_config, # Dùng cho auto/custom mode
-                                          generation_params,   # Dùng cho combo mode
+                                          custom_steps_config,
+                                          generation_params,
                                           combination_algos,
                                           initial_params=None, initial_score_tuple=None, is_resuming=False,
-                                          mode='auto_hill_climb'): # Nhận mode từ start_optimization
+                                          mode='auto_hill_climb'):
         """
         Sets up the environment and starts the appropriate optimization worker thread
         based on the selected mode.
@@ -2001,17 +1959,15 @@ class OptimizerEmbedded(QWidget):
             algo_data = self.loaded_algorithms[display_name]
         except KeyError:
             QMessageBox.critical(main_window, "Lỗi", f"Thuật toán '{display_name}' không tìm thấy khi bắt đầu tối ưu.")
-            self.update_optimizer_ui_state() # Cập nhật UI về trạng thái chờ
+            self.update_optimizer_ui_state()
             return
 
-        # --- Thiết lập thư mục và log ---
         self.current_optimize_target_dir = self.optimize_dir / algo_data['path'].stem
         self.current_optimize_target_dir.mkdir(parents=True, exist_ok=True)
         success_dir = self.current_optimize_target_dir / "success"
         success_dir.mkdir(parents=True, exist_ok=True)
         self.current_optimization_log_path = self.current_optimize_target_dir / "optimization_qt.log"
 
-        # --- Xóa log cũ và ghi thông tin bắt đầu ---
         if hasattr(self, 'opt_log_text'):
             self.opt_log_text.clear()
             if not is_resuming:
@@ -2025,22 +1981,18 @@ class OptimizerEmbedded(QWidget):
             self._log_to_optimizer_display("INFO", f"Giới hạn thời gian: {time_limit_min} phút", tag="INFO")
 
             if mode == 'generated_combinations':
-                # Lấy thông tin từ generation_params để ghi log chính xác hơn
                 num_vals = generation_params.get('num_values', '?') if generation_params else '?'
                 gen_meth = generation_params.get('method', '?') if generation_params else '?'
                 self._log_to_optimizer_display("INFO", f"Chế độ: Tạo Bộ Tham Số (Worker sẽ tạo ~{num_vals} giá trị/{gen_meth})", tag="GEN_COMBO")
-            else: # mode == 'auto_hill_climb'
+            else:
                 self._log_to_optimizer_display("INFO", "Chế độ: Tối ưu Tự động / Custom", tag="CUSTOM_STEP")
-                # Log thêm chi tiết về custom steps nếu có
                 if custom_steps_config:
                     for pname, pconfig in custom_steps_config.items():
                         if pconfig.get('mode') == 'Custom' and pconfig.get('steps'):
                             self._log_to_optimizer_display("DEBUG", f"  - Tham số '{pname}' (Custom): {pconfig['steps']}", tag="CUSTOM_STEP")
 
-        # --- Xóa cache ---
         self._clear_cache_directory()
 
-        # --- Reset trạng thái tối ưu ---
         self.optimizer_stop_event.clear()
         self.optimizer_pause_event.clear()
         self.optimizer_running = True
@@ -2048,11 +2000,9 @@ class OptimizerEmbedded(QWidget):
         self.current_best_params = initial_params if is_resuming else None
         self.current_best_score_tuple = initial_score_tuple if is_resuming else (-1.0, -1.0, -1.0, -100.0)
         self.current_combination_algos = combination_algos
-        # Lưu lại khoảng ngày dùng cho lần chạy này để lưu state nếu cần
         self.last_opt_range_start_str = start_date.strftime('%Y-%m-%d')
         self.last_opt_range_end_str = end_date.strftime('%Y-%m-%d')
 
-        # --- Thiết lập thời gian và cập nhật UI ---
         self.opt_start_time = time.time()
         self.opt_time_limit_sec = time_limit_min * 60
 
@@ -2064,48 +2014,44 @@ class OptimizerEmbedded(QWidget):
             initial_time_str = time.strftime('%H:%M:%S' if self.opt_time_limit_sec >= 3600 else '%M:%S', time.gmtime(self.opt_time_limit_sec)) if self.opt_time_limit_sec >= 0 else "--:--:--"
             self.opt_time_remaining_label.setText(initial_time_str)
 
-        self.update_optimizer_ui_state() # Cập nhật trạng thái các nút bấm, input fields
+        self.update_optimizer_ui_state()
 
-        # --- Chọn và chuẩn bị args cho luồng worker dựa trên mode ---
         optimizer_logger.info(f"Preparing worker thread for mode: {mode}")
         worker_target = None
-        worker_args = () # Tuple trống mặc định
+        worker_args = ()
 
         if mode == 'auto_hill_climb':
             worker_target = self._optimization_worker
-            # Args cho worker auto/custom: config steps tùy chỉnh được truyền vào
             worker_args = (
                 display_name, start_date, end_date, self.opt_time_limit_sec,
-                custom_steps_config, # Chứa thông tin mode (Auto/Custom) và steps cho từng param
+                custom_steps_config,
                 combination_algos,
-                self.current_best_params, # initial_params đã được gán vào đây
-                self.current_best_score_tuple # initial_score_tuple đã được gán vào đây
+                self.current_best_params,
+                self.current_best_score_tuple
             )
             optimizer_logger.debug("Worker target set to _optimization_worker")
         elif mode == 'generated_combinations':
             worker_target = self._combination_optimization_worker
-            # Args cho worker combo: generation_params được truyền vào để worker tự tạo list
             worker_args = (
                 display_name, start_date, end_date, self.opt_time_limit_sec,
-                generation_params, # Chứa original_params, num_values, method
+                generation_params,
                 combination_algos,
-                self.current_best_params, # Vẫn truyền, dù ít khi được dùng ở chế độ này
+                self.current_best_params,
                 self.current_best_score_tuple
             )
             optimizer_logger.debug("Worker target set to _combination_optimization_worker")
         else:
             main_logger.error(f"Invalid optimization mode '{mode}' cannot start worker thread.")
             QMessageBox.critical(main_window, "Lỗi Mode", f"Chế độ tối ưu không hợp lệ: {mode}")
-            self.optimizer_running = False # Đặt lại cờ running
-            self.update_optimizer_ui_state() # Reset UI về trạng thái chờ
+            self.optimizer_running = False
+            self.update_optimizer_ui_state()
             return
 
-        # --- Tạo và khởi chạy luồng worker ---
         try:
             self.optimizer_thread = threading.Thread(
                 target=worker_target,
                 args=worker_args,
-                name=f"Optimizer-{algo_data['path'].stem}-{mode}", # Thêm mode vào tên luồng cho dễ debug
+                name=f"Optimizer-{algo_data['path'].stem}-{mode}",
                 daemon=True
             )
             self.optimizer_thread.start()
@@ -2117,13 +2063,11 @@ class OptimizerEmbedded(QWidget):
              self.update_optimizer_ui_state()
              return
 
-        # --- Khởi động các timer kiểm tra queue và hiển thị thời gian ---
         if not self.optimizer_timer.isActive():
             self.optimizer_timer.start(self.optimizer_timer_interval)
         if not self.display_timer.isActive():
             self.display_timer.start(self.display_timer_interval)
 
-        # --- Cập nhật status cuối cùng trước khi kết thúc hàm ---
         action_verb_status = "Tiếp tục" if is_resuming else "Bắt đầu"
         mode_desc = "Tạo Bộ Tham Số" if mode == 'generated_combinations' else "Tối ưu Tự động/Custom"
         self.update_status(f"Optimizer: {action_verb_status} {mode_desc} cho: {algo_data['class_name']}...")
@@ -2182,7 +2126,7 @@ class OptimizerEmbedded(QWidget):
 
         if self.optimizer_running:
             start_enabled = False
-            resume_enabled = False # Cannot resume while running
+            resume_enabled = False
             stop_enabled = True
             if self.optimizer_paused:
                 pause_enabled = True
@@ -2192,9 +2136,9 @@ class OptimizerEmbedded(QWidget):
                 pause_enabled = True
                 pause_text = "Tạm dừng"
                 pause_callback = self.pause_optimization
-        else: # Not running
+        else:
             start_enabled = (self.selected_algorithm_for_optimize is not None)
-            resume_enabled = self.can_resume # Only enable resume if not running and possible
+            resume_enabled = self.can_resume
             stop_enabled = False
             pause_enabled = False
             pause_text = "Tạm dừng"
@@ -2219,26 +2163,22 @@ class OptimizerEmbedded(QWidget):
             try: self.opt_pause_button.clicked.disconnect()
             except TypeError: pass
             self.opt_pause_button.clicked.connect(pause_callback)
-            self.main_app.apply_stylesheet() # Re-apply stylesheet for object name change
+            self.main_app.apply_stylesheet()
 
         settings_enabled = not self.optimizer_running
 
-        # Enable/disable basic settings
         if hasattr(self, 'opt_start_date_edit'): self.opt_start_date_edit.setReadOnly(not settings_enabled)
         if hasattr(self, 'opt_start_date_button'): self.opt_start_date_button.setEnabled(settings_enabled)
         if hasattr(self, 'opt_end_date_edit'): self.opt_end_date_edit.setReadOnly(not settings_enabled)
         if hasattr(self, 'opt_end_date_button'): self.opt_end_date_button.setEnabled(settings_enabled)
         if hasattr(self, 'opt_time_limit_spinbox'): self.opt_time_limit_spinbox.setEnabled(settings_enabled)
 
-        # Enable/disable optimization mode selection
         if hasattr(self, 'opt_mode_auto_radio'): self.opt_mode_auto_radio.setEnabled(settings_enabled)
         if hasattr(self, 'opt_mode_combo_radio'): self.opt_mode_combo_radio.setEnabled(settings_enabled)
 
-        # Enable/disable combination generation settings (only if that mode is selected AND settings are enabled)
         is_combo_mode_selected = self.current_optimization_mode == 'generated_combinations'
         if hasattr(self, 'combo_gen_settings_widget'): self.combo_gen_settings_widget.setEnabled(settings_enabled and is_combo_mode_selected)
 
-        # Enable/disable custom step parameter controls (only if that mode is selected AND settings are enabled)
         is_auto_mode_selected = self.current_optimization_mode == 'auto_hill_climb'
         if hasattr(self, 'param_scroll_widget_container'): self.param_scroll_widget_container.setEnabled(settings_enabled and is_auto_mode_selected)
         for name, widgets in self.advanced_opt_widgets.items():
@@ -2249,7 +2189,6 @@ class OptimizerEmbedded(QWidget):
                  is_custom_mode_for_param = mode_combo.currentText() == 'Custom' if mode_combo else False
                  steps_entry.setEnabled(settings_enabled and is_auto_mode_selected and is_custom_mode_for_param)
 
-        # Enable/disable combination algorithm selection
         for name, chk in self.combination_selection_checkboxes.items():
             chk.setEnabled(settings_enabled)
 
@@ -2296,19 +2235,19 @@ class OptimizerEmbedded(QWidget):
 
                 elif msg_type == "progress":
                     progress_val = 0.0
-                    max_val = 100 # Default for percentage
+                    max_val = 100
                     text_override = None
-                    if isinstance(payload, dict): # Handle combination mode progress
+                    if isinstance(payload, dict):
                         current = payload.get('current', 0)
                         total = payload.get('total', 1)
                         progress_val = int((current / total * 100) if total > 0 else 0)
                         text_override = f"{progress_val}% ({current}/{total})"
-                    else: # Handle percentage progress
+                    else:
                         try: progress_val = int(float(payload) * 100.0)
                         except (ValueError, TypeError): pass
 
                     if hasattr(self, 'opt_progressbar'):
-                         self.opt_progressbar.setRange(0, 100) # Always 0-100 for progress bar
+                         self.opt_progressbar.setRange(0, 100)
                          self.opt_progressbar.setValue(progress_val)
                     if hasattr(self, 'opt_progress_label'):
                          self.opt_progress_label.setText(text_override if text_override else f"{progress_val}%")
@@ -2433,13 +2372,11 @@ class OptimizerEmbedded(QWidget):
     def _optimization_worker(self, target_display_name, start_date, end_date, time_limit_sec,
                              custom_steps_config, combination_algo_names,
                              initial_best_params=None, initial_best_score_tuple=None):
-        # This worker handles the 'auto_hill_climb' mode (including custom steps)
         start_time = time.time()
         optimizer_worker_logger = logging.getLogger("OptimizerWorker")
         is_resuming = initial_best_params is not None and initial_best_score_tuple is not None
         optimizer_worker_logger.info(f"Starting Auto/Custom optimization worker (Resuming: {is_resuming})...")
 
-        # --- Queue helper functions (same as before) ---
         def queue_log(level, text, tag=None):
             if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                 try: self.optimizer_queue.put({"type": "log", "payload": {"level": level, "text": text, "tag": tag}})
@@ -2448,7 +2385,7 @@ class OptimizerEmbedded(QWidget):
             if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "status", "payload": text})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (status): {q_err}")
-        def queue_progress(value): # Accepts float 0.0 to 1.0
+        def queue_progress(value):
              if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "progress", "payload": min(max(0.0, value), 1.0)})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (progress): {q_err}")
@@ -2464,11 +2401,9 @@ class OptimizerEmbedded(QWidget):
              if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "error", "payload": text})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (error): {q_err}")
-        # --- End Queue helper functions ---
 
         finish_reason = "completed"
         try:
-            # --- Setup: Get algorithm data, source, parameters ---
             if target_display_name not in self.loaded_algorithms:
                  raise ValueError(f"Target algorithm '{target_display_name}' not loaded.")
             target_algo_data = self.loaded_algorithms[target_display_name]
@@ -2487,9 +2422,7 @@ class OptimizerEmbedded(QWidget):
                  queue_log("INFO", "Thuật toán đích không có tham số số học để tối ưu.")
                  queue_finished("Thuật toán đích không có tham số số học.", success=False, reason="no_params")
                  return
-            # --- End Setup ---
 
-            # --- Helper for running performance test ---
             def run_combined_perf_test_wrapper(target_params_test, combo_names, start_dt, end_dt):
                  return self.run_combined_performance_test(
                      target_display_name=target_display_name, target_algo_source=source_code, target_class_name=class_name,
@@ -2502,13 +2435,11 @@ class OptimizerEmbedded(QWidget):
                          perf_dict.get('acc_top_5_pct',0.0),
                          perf_dict.get('acc_top_1_pct',0.0),
                          -perf_dict.get('avg_top10_repetition',100.0))
-            # --- End Performance Test Helper ---
 
             current_best_params = {}
             current_best_perf = None
             current_best_score_tuple = initial_best_score_tuple if initial_best_score_tuple is not None else get_primary_score({})
 
-            # --- Initial Performance Check (Original or Resumed) ---
             if is_resuming:
                 queue_log("INFO", f"Tiếp tục tối ưu với tham số, điểm số đã tải.", tag="RESUME")
                 current_best_params = initial_best_params.copy()
@@ -2555,9 +2486,7 @@ class OptimizerEmbedded(QWidget):
                  current_best_score_tuple = get_primary_score(current_best_perf)
                  queue_log("INFO", f"Hiệu suất gốc: Top3={current_best_perf.get('acc_top_3_pct', 0.0):.2f}%, Top5={current_best_perf.get('acc_top_5_pct', 0.0):.2f}%, Top1={current_best_perf.get('acc_top_1_pct', 0.0):.2f}%, Lặp TB={current_best_perf.get('avg_top10_repetition', 0.0):.2f}")
                  queue_best_update(current_best_params, current_best_score_tuple)
-            # --- End Initial Performance Check ---
 
-            # --- Hill Climbing / Custom Step Optimization Loop ---
             MAX_ITERATIONS_PER_PARAM_AUTO = 10
             STALL_THRESHOLD = 2
             MAX_FULL_CYCLES = 5
@@ -2582,7 +2511,6 @@ class OptimizerEmbedded(QWidget):
                     original_value_for_turn = current_best_params[param_name]
                     is_float = isinstance(original_value_for_turn, float)
 
-                    # -- Custom Step Mode --
                     if mode == 'Custom' and custom_steps:
                         queue_log("INFO", f"Tối ưu {param_name} (Chế độ: Custom, Các bước: {custom_steps})", tag="CUSTOM_STEP")
                         best_value_this_param = current_best_params[param_name]
@@ -2620,10 +2548,8 @@ class OptimizerEmbedded(QWidget):
                                     queue_log("WARNING", f"  -> Lỗi Test {sign_char} custom {param_name}={test_params[param_name]}.", tag="WARNING")
                             if finish_reason in ["stopped", "time_limit"]: break
                         if finish_reason in ["stopped", "time_limit"]: break
-                    # -- End Custom Step Mode --
 
-                    # -- Auto (Hill Climb) Mode --
-                    else: # mode == 'Auto' or (mode == 'Custom' and not custom_steps)
+                    else:
                         step_base = abs(original_value_for_turn) * 0.05
                         if not is_float:
                             step = max(1, int(round(step_base)))
@@ -2685,20 +2611,15 @@ class OptimizerEmbedded(QWidget):
 
                             if finish_reason in ["stopped", "time_limit"]: break
                         if finish_reason in ["stopped", "time_limit"]: break
-                    # -- End Auto Mode --
-                    if finish_reason in ["stopped", "time_limit"]: break # Break from param loop
+                    if finish_reason in ["stopped", "time_limit"]: break
 
-                # Check stop/time limit after each parameter
-                if finish_reason in ["stopped", "time_limit"]: break # Break from cycle loop
+                if finish_reason in ["stopped", "time_limit"]: break
 
-                # Check for stall after a full cycle
                 if not params_changed_in_cycle and cycle > 0:
                     queue_log("INFO", f"Không có cải thiện nào trong chu kỳ {cycle + 1}. Dừng tối ưu.", tag="PROGRESS")
                     finish_reason = "no_improvement"
                     break
-            # --- End Optimization Loop ---
 
-            # --- Final Logging and Saving ---
             queue_progress(1.0)
             final_message = ""
             if finish_reason == "stopped": final_message = "Dừng bởi người dùng."
@@ -2744,7 +2665,7 @@ class OptimizerEmbedded(QWidget):
                     success_filename_json = success_filename_base + ".json"
                     final_json_path = success_dir / success_filename_json
                     final_save_data = {
-                        "optimization_mode": "auto_hill_climb", # Indicate mode
+                        "optimization_mode": "auto_hill_climb",
                         "target_algorithm": target_display_name,
                         "params": current_best_params,
                         "performance": current_best_perf if current_best_perf else "N/A",
@@ -2768,7 +2689,6 @@ class OptimizerEmbedded(QWidget):
             elif not can_log_or_save and finish_reason not in ["no_params", "resume_error", "initial_test_error", "critical_error"]:
                  final_message = "Không tìm thấy tham số nào tốt hơn trạng thái bắt đầu hoặc đã xảy ra lỗi."
                  queue_log("INFO", "Không tìm thấy tham số tốt hơn hoặc đã xảy ra lỗi trong quá trình tối ưu.", tag="INFO")
-            # --- End Final Logging and Saving ---
 
             is_successful_run = finish_reason in ["completed", "time_limit", "no_improvement"] and can_log_or_save
 
@@ -2781,20 +2701,18 @@ class OptimizerEmbedded(QWidget):
             queue_finished(f"Lỗi nghiêm trọng: {worker_err}", success=False, reason=finish_reason)
 
     def _combination_optimization_worker(self, target_display_name, start_date, end_date, time_limit_sec,
-                                         generation_params, # Nhận dict chứa thông tin để tạo combinations
+                                         generation_params,
                                          combination_algo_names,
-                                         initial_best_params=None, # Ít dùng nhưng giữ lại
+                                         initial_best_params=None,
                                          initial_best_score_tuple=None):
         """
         Worker thread for the 'Generated Combinations' optimization mode.
         Generates parameter combinations first, then tests their performance.
         """
         start_time = time.time()
-        # Use a specific logger for this worker for clarity
         optimizer_worker_logger = logging.getLogger("OptimizerWorker.Combo")
         optimizer_worker_logger.info("Starting Generated Combinations optimization worker...")
 
-        # --- Queue helper functions (định nghĩa các hàm nhỏ để gửi tín hiệu lên UI) ---
         def queue_log(level, text, tag=None):
             if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                 try: self.optimizer_queue.put({"type": "log", "payload": {"level": level, "text": text, "tag": tag}})
@@ -2803,7 +2721,7 @@ class OptimizerEmbedded(QWidget):
             if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "status", "payload": text})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (status): {q_err}")
-        def queue_progress(current, total): # Format cho combo mode: gửi cả số hiện tại và tổng
+        def queue_progress(current, total):
              if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "progress", "payload": {"current": current, "total": total}})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (progress): {q_err}")
@@ -2819,48 +2737,39 @@ class OptimizerEmbedded(QWidget):
              if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "error", "payload": text})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (error): {q_err}")
-        # --- End Queue helper functions ---
 
-        finish_reason = "completed" # Lý do kết thúc mặc định
-        generated_combinations = [] # Danh sách combinations sẽ được tạo ở đây
-        total_combinations = 0      # Tổng số combinations sẽ được cập nhật sau khi tạo
-        current_best_params = None # Reset best params cho chế độ này
+        finish_reason = "completed"
+        generated_combinations = []
+        total_combinations = 0
+        current_best_params = None
         current_best_perf = None
-        # Bắt đầu từ điểm rất thấp để bất kỳ kết quả hợp lệ nào cũng tốt hơn
         current_best_score_tuple = (-1.0, -1.0, -1.0, -100.0)
 
         try:
-            # --- Setup: Lấy thông tin thuật toán đích, source code ---
             optimizer_worker_logger.debug(f"Setting up worker for target: {target_display_name}")
             if target_display_name not in self.loaded_algorithms:
-                 # Gửi lỗi nếu thuật toán không tìm thấy (dù đã kiểm tra trước đó)
                  raise ValueError(f"Target algorithm '{target_display_name}' not loaded in worker.")
 
             target_algo_data = self.loaded_algorithms[target_display_name]
             original_path = target_algo_data['path']
             class_name = target_algo_data['class_name']
             try:
-                # Đọc mã nguồn của thuật toán gốc để có thể sửa đổi và chạy các phiên bản tạm thời
                 source_code = original_path.read_text(encoding='utf-8')
                 optimizer_worker_logger.debug(f"Successfully read source code for {original_path.name}")
             except Exception as read_err:
                 raise RuntimeError(f"Worker failed to read source code for {original_path.name}: {read_err}")
 
-            # Lấy đường dẫn thư mục tối ưu đã được tạo trước đó
             if not hasattr(self, 'current_optimize_target_dir') or not self.current_optimize_target_dir:
                  raise RuntimeError("Worker cannot determine optimize target directory.")
             target_dir = self.current_optimize_target_dir
             optimizer_worker_logger.debug(f"Using optimize target directory: {target_dir}")
 
 
-            # === BƯỚC 1: TẠO BỘ THAM SỐ ===
             optimizer_worker_logger.info("Starting parameter combination generation phase...")
             queue_status("Đang tạo bộ tham số...")
             queue_log("INFO", "Bắt đầu tạo các bộ tham số kết hợp...", tag="GEN_COMBO")
-            # Gửi tín hiệu progress ban đầu (0/1) để hiển thị thanh chạy trong lúc tạo
             queue_progress(0, 1)
 
-            # Kiểm tra và lấy thông tin cần thiết để tạo combinations
             if not generation_params or not isinstance(generation_params, dict):
                 raise ValueError("Worker received invalid generation_params.")
             orig_params_for_gen = generation_params.get('original_params')
@@ -2870,7 +2779,6 @@ class OptimizerEmbedded(QWidget):
                  raise ValueError("Worker missing detailed generation parameters (params, num_values, method).")
             optimizer_worker_logger.debug(f"Generation params: num_values={num_values_for_gen}, method='{method_for_gen}'")
 
-            # Gọi hàm tạo combinations (hàm này sẽ chạy trong luồng worker này)
             generation_start_time = time.time()
             generated_combinations = self._generate_parameter_combinations(
                 orig_params_for_gen, num_values_for_gen, method_for_gen
@@ -2878,16 +2786,14 @@ class OptimizerEmbedded(QWidget):
             generation_duration = time.time() - generation_start_time
             optimizer_worker_logger.info(f"Parameter combination generation finished in {generation_duration:.2f} seconds.")
 
-            # Kiểm tra kết quả tạo combinations
             if not generated_combinations:
                 optimizer_worker_logger.error("Parameter generation returned an empty list.")
                 queue_log("ERROR", "Không thể tạo bộ tham số nào (kết quả trống).", tag="ERROR")
                 queue_finished("Tạo bộ tham số thất bại.", success=False, reason="combo_generation_failed")
-                return # Kết thúc worker nếu không tạo được combinations
+                return
 
-            # Cập nhật tổng số combinations và gửi thông báo/status
             total_combinations = len(generated_combinations)
-            if total_combinations == 0: # Kiểm tra lại lần nữa phòng trường hợp logic _generate... có vấn đề
+            if total_combinations == 0:
                  optimizer_worker_logger.error("Generated combinations list is empty after generation.")
                  queue_log("ERROR", "Danh sách bộ tham số rỗng sau khi tạo.", tag="ERROR")
                  queue_finished("Tạo bộ tham số thất bại (danh sách rỗng).", success=False, reason="combo_generation_failed_empty")
@@ -2895,79 +2801,61 @@ class OptimizerEmbedded(QWidget):
 
             queue_status(f"Đã tạo {total_combinations} bộ. Bắt đầu kiểm tra...")
             queue_log("INFO", f"Đã tạo thành công {total_combinations} bộ tham số.", tag="GEN_COMBO")
-            # === KẾT THÚC TẠO BỘ THAM SỐ ===
 
 
-            # --- Helper Functions cho Test Hiệu Suất ---
-            # Định nghĩa hàm wrapper để gọi hàm test hiệu suất chính với các tham số cố định và thay đổi
             def run_combined_perf_test_wrapper(params_to_test_in_wrapper, combo_names_in_wrapper, start_dt_in_wrapper, end_dt_in_wrapper):
                  """Calls the main performance test function with necessary arguments."""
                  optimizer_worker_logger.debug(f"Calling run_combined_performance_test for params: {list(params_to_test_in_wrapper.keys())}")
-                 # Truyền đầy đủ các tham số cần thiết cho hàm gốc
-                 # Các giá trị như target_display_name, source_code, class_name, target_dir
-                 # đã có sẵn trong scope của hàm worker này.
                  return self.run_combined_performance_test(
                      target_display_name=target_display_name,
                      target_algo_source=source_code,
                      target_class_name=class_name,
-                     target_params_to_test=params_to_test_in_wrapper, # Tham số thay đổi
+                     target_params_to_test=params_to_test_in_wrapper,
                      combination_algo_display_names=combo_names_in_wrapper,
                      test_start_date=start_dt_in_wrapper,
                      test_end_date=end_dt_in_wrapper,
                      optimize_target_dir=target_dir
                  )
 
-            # Hàm tính điểm chính dựa trên kết quả performance (không đổi)
             def get_primary_score(perf_dict):
                  """Calculates the primary score tuple from performance dictionary."""
                  if not perf_dict: return (-1.0, -1.0, -1.0, -100.0)
-                 # Ưu tiên Top3, Top5, Top1, sau đó là giảm thiểu lặp lại ở Top 10
                  return (perf_dict.get('acc_top_3_pct',0.0),
                          perf_dict.get('acc_top_5_pct',0.0),
                          perf_dict.get('acc_top_1_pct',0.0),
-                         -perf_dict.get('avg_top10_repetition',100.0)) # Dấu trừ để tối thiểu hóa lặp lại
-            # --- End Performance Test Helper ---
+                         -perf_dict.get('avg_top10_repetition',100.0))
 
 
-            # === BƯỚC 2: KIỂM TRA HIỆU SUẤT TỪNG BỘ ===
             optimizer_worker_logger.info(f"Starting performance testing for {total_combinations} parameter combinations...")
-            # Reset progress bar về 0 cho giai đoạn kiểm tra
             queue_progress(0, total_combinations)
 
-            # Vòng lặp qua từng bộ tham số đã tạo
             for idx, test_params in enumerate(generated_combinations):
-                current_progress_idx = idx + 1 # Bắt đầu từ 1
+                current_progress_idx = idx + 1
 
-                # --- Kiểm tra các tín hiệu điều khiển ---
                 if self.optimizer_stop_event.is_set():
                     finish_reason = "stopped"
                     optimizer_worker_logger.info("Stop event detected during testing loop.")
-                    break # Thoát khỏi vòng lặp for
+                    break
                 while self.optimizer_pause_event.is_set():
-                    # Giữ trạng thái pause nếu đang pause
                     queue_status(f"Đã tạm dừng (đang ở bộ {current_progress_idx}/{total_combinations})")
                     if self.optimizer_stop_event.is_set():
                         finish_reason = "stopped"
                         optimizer_worker_logger.info("Stop event detected during pause.")
-                        break # Thoát khỏi vòng lặp while
-                    time.sleep(0.5) # Ngủ ngắn khi pause
+                        break
+                    time.sleep(0.5)
                 if finish_reason == "stopped":
-                    break # Thoát khỏi vòng lặp for nếu đã stop trong lúc pause
+                    break
 
-                # --- Kiểm tra giới hạn thời gian ---
                 elapsed_time = time.time() - start_time
                 if elapsed_time >= time_limit_sec:
                     finish_reason = "time_limit"
                     optimizer_worker_logger.info("Time limit reached during testing loop.")
-                    break # Thoát khỏi vòng lặp for
+                    break
 
-                # --- Cập nhật trạng thái và tiến trình ---
                 queue_status(f"Kiểm tra bộ {current_progress_idx}/{total_combinations}...")
                 queue_progress(current_progress_idx, total_combinations)
 
-                # --- Thực hiện kiểm tra hiệu suất ---
                 optimizer_worker_logger.debug(f"Running performance test for combination {current_progress_idx}")
-                # Gọi hàm wrapper đã sửa lỗi
                 perf_result = run_combined_perf_test_wrapper(
                     params_to_test_in_wrapper=test_params,
                     combo_names_in_wrapper=combination_algo_names,
@@ -2976,69 +2864,55 @@ class OptimizerEmbedded(QWidget):
                 )
                 optimizer_worker_logger.debug(f"Performance test for combo {current_progress_idx} completed.")
 
-                # Kiểm tra lại stop event ngay sau khi test xong (quan trọng nếu test lâu)
                 if self.optimizer_stop_event.is_set():
                     finish_reason="stopped"
                     optimizer_worker_logger.info("Stop event detected immediately after performance test.")
                     break
 
-                # --- Xử lý kết quả performance test ---
                 if perf_result is not None:
                     new_score = get_primary_score(perf_result)
                     optimizer_worker_logger.debug(f"Combo {current_progress_idx} score: {new_score}")
-                    # So sánh với điểm tốt nhất hiện tại
                     if new_score > current_best_score_tuple:
                         queue_log("BEST", f"Tìm thấy bộ tốt hơn! Bộ {current_progress_idx}/{total_combinations}. Score: {new_score}", tag="BEST")
                         optimizer_worker_logger.info(f"New best score found: {new_score} > {current_best_score_tuple} at index {idx}")
                         optimizer_worker_logger.debug(f"  Best Params Updated: {test_params}")
-                        # Chỉ log params ở mức DEBUG để tránh làm đầy log
                         queue_log("DEBUG", f"  Params: {test_params}")
 
-                        # Cập nhật giá trị tốt nhất
                         current_best_params = test_params.copy()
                         current_best_perf = perf_result
                         current_best_score_tuple = new_score
-                        # Gửi tín hiệu cập nhật lên UI
                         queue_best_update(current_best_params, current_best_score_tuple)
                     else:
-                        # Log ở mức DEBUG nếu không tốt hơn
                         optimizer_worker_logger.debug(f"Combination {current_progress_idx} score {new_score} not better than current best {current_best_score_tuple}")
                 else:
-                    # Log cảnh báo nếu test performance trả về None (lỗi)
                     queue_log("WARNING", f"Lỗi khi kiểm tra bộ tham số {current_progress_idx}.", tag="WARNING")
                     optimizer_worker_logger.warning(f"Performance test returned None for combination {current_progress_idx}.")
 
-            # === KẾT THÚC VÒNG LẶP KIỂM TRA ===
             optimizer_worker_logger.info(f"Finished testing loop. Reason: {finish_reason}")
 
-            # === BƯỚC 3: HOÀN TẤT VÀ LƯU KẾT QUẢ ===
-            # Gửi tín hiệu progress cuối cùng để đảm bảo thanh chạy đến 100%
             queue_progress(total_combinations, total_combinations)
 
-            # Xác định thông báo kết thúc dựa trên lý do dừng
             final_message = ""
             if finish_reason == "stopped":
                 final_message = "Dừng bởi người dùng."
             elif finish_reason == "time_limit":
                 final_message = f"Đã hết thời gian tối ưu ({time_limit_sec/60:.0f} phút)."
             elif finish_reason == "critical_error":
-                final_message = "Lỗi nghiêm trọng trong worker." # Sẽ được ghi đè nếu lỗi xảy ra trong try-except này
+                final_message = "Lỗi nghiêm trọng trong worker."
             elif finish_reason == "combo_generation_failed":
                 final_message = "Tạo bộ tham số thất bại."
-            elif current_best_params is None: # Đã chạy xong nhưng không có kết quả nào tốt
+            elif current_best_params is None:
                 final_message = "Hoàn thành kiểm tra nhưng không tìm thấy bộ tham số nào cho kết quả hợp lệ."
-                finish_reason = "combo_mode_no_results" # Cập nhật lý do chính xác hơn
-            else: # finish_reason == 'completed' và có kết quả tốt nhất
+                finish_reason = "combo_mode_no_results"
+            else:
                 final_message = "Hoàn thành kiểm tra các bộ tham số."
 
-            # Kiểm tra xem có kết quả để lưu không (chỉ lưu nếu có kết quả tốt nhất và không kết thúc do lỗi nghiêm trọng)
             can_log_or_save = current_best_params is not None and finish_reason not in [
                 "critical_error", "combo_mode_no_results", "combo_generation_failed"
             ]
 
             if can_log_or_save:
                 final_message += " Kết quả tốt nhất đã được lưu."
-                # Ghi log tóm tắt kết quả tốt nhất
                 queue_log("BEST", "="*10 + " TỐI ƯU KẾT THÚC (Bộ Tham Số) " + "="*10, tag="BEST")
                 queue_log("BEST", f"Lý do kết thúc: {finish_reason}", tag="BEST")
                 queue_log("BEST", f"Đã tạo và kiểm tra tổng cộng: {total_combinations} bộ", tag="BEST")
@@ -3046,21 +2920,17 @@ class OptimizerEmbedded(QWidget):
                 score_desc = "(Top3%, Top5%, Top1%, -AvgRepT10)"
                 queue_log("BEST", f"Điểm số tốt nhất {score_desc}: ({', '.join(f'{s:.3f}' for s in current_best_score_tuple)})", tag="BEST")
                 if current_best_perf:
-                     # Log thêm chi tiết hiệu suất nếu có
                      queue_log("BEST", f"Chi tiết hiệu suất tốt nhất: Top3={current_best_perf.get('acc_top_3_pct',0.0):.2f}%, Top5={current_best_perf.get('acc_top_5_pct',0.0):.2f}%, Top1={current_best_perf.get('acc_top_1_pct',0.0):.2f}%, Lặp TB={current_best_perf.get('avg_top10_repetition',0.0):.2f}", tag="BEST")
 
-                # --- Lưu file kết quả ---
                 try:
                     optimizer_worker_logger.info("Saving best results found...")
                     final_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    success_dir = target_dir / "success" # Thư mục success đã được đảm bảo tồn tại
-                    # Tạo tên file dựa trên kết quả
+                    success_dir = target_dir / "success"
                     perf_metric_for_name = current_best_perf.get('acc_top_3_pct', 0.0) if current_best_perf else 0.0
                     perf_str = f"top3_{perf_metric_for_name:.1f}"
                     success_filename_base = f"optimized_combo_{target_algo_data['path'].stem}_{perf_str}_{final_timestamp}"
                     optimizer_worker_logger.debug(f"Base filename for saving: {success_filename_base}")
 
-                    # Lưu file .py với tham số tốt nhất
                     success_filename_py = success_filename_base + ".py"
                     final_py_path = success_dir / success_filename_py
                     optimizer_worker_logger.debug(f"Attempting to save Python file: {final_py_path}")
@@ -3072,14 +2942,13 @@ class OptimizerEmbedded(QWidget):
                          queue_log("ERROR", "Lỗi khi tạo source code đã chỉnh sửa để lưu file .py cuối cùng.", tag="ERROR")
                          optimizer_worker_logger.error("Failed to generate modified source code for saving.")
 
-                    # Lưu file .json với thông tin chi tiết
                     success_filename_json = success_filename_base + ".json"
                     final_json_path = success_dir / success_filename_json
                     optimizer_worker_logger.debug(f"Attempting to save JSON file: {final_json_path}")
                     final_save_data = {
                         "optimization_mode": "generated_combinations",
                         "target_algorithm": target_display_name,
-                        "total_combinations_generated": total_combinations, # Thêm thông tin này
+                        "total_combinations_generated": total_combinations,
                         "params": current_best_params,
                         "performance": current_best_perf if current_best_perf else "N/A",
                         "score_tuple": list(current_best_score_tuple),
@@ -3090,34 +2959,26 @@ class OptimizerEmbedded(QWidget):
                         "finish_timestamp": datetime.datetime.now().isoformat()
                     }
                     try:
-                        # Ghi dữ liệu vào file JSON
                         final_json_path.write_text(json.dumps(final_save_data, indent=4, ensure_ascii=False), encoding='utf-8')
                         queue_log("BEST", f"Đã lưu kết quả tối ưu vào thư mục: {success_dir.relative_to(self.base_dir)}", tag="BEST")
                         optimizer_worker_logger.info(f"Saved optimization details to JSON file: {final_json_path.name}")
                     except Exception as json_save_err:
-                         # Xử lý lỗi nếu không lưu được JSON
                          queue_log("ERROR", f"Lỗi lưu file JSON kết quả cuối: {json_save_err}", tag="ERROR")
                          optimizer_worker_logger.error(f"Failed to save JSON results file: {json_save_err}", exc_info=True)
                          final_message += "\n(Lỗi lưu file JSON kết quả!)"
 
                 except Exception as final_save_err:
-                    # Xử lý lỗi chung khi lưu file (ví dụ: không có quyền ghi)
                     queue_log("ERROR", f"Lỗi lưu kết quả cuối cùng: {final_save_err}", tag="ERROR")
                     optimizer_worker_logger.error(f"Error during final result saving: {final_save_err}", exc_info=True)
                     final_message += "\n(Lỗi lưu file kết quả!)"
-            # --- Kết thúc lưu file ---
 
-            # Xác định trạng thái thành công cuối cùng để gửi lên UI
             is_successful_run = finish_reason in ["completed", "time_limit"] and can_log_or_save
             optimizer_worker_logger.info(f"Worker sending finished signal. Success: {is_successful_run}, Reason: {finish_reason}")
-            # Gửi tín hiệu hoàn tất cuối cùng
             queue_finished(final_message, success=is_successful_run, reason=finish_reason)
 
         except Exception as worker_err:
-            # Xử lý các lỗi không mong muốn xảy ra trong toàn bộ quá trình của worker
-            finish_reason = "critical_error" # Cập nhật lý do nếu có lỗi nghiêm trọng
+            finish_reason = "critical_error"
             optimizer_worker_logger.critical(f"Worker encountered a critical exception: {worker_err}", exc_info=True)
-            # Gửi tín hiệu lỗi và tín hiệu hoàn tất (với trạng thái lỗi)
             queue_error(f"Lỗi nghiêm trọng trong luồng tối ưu: {worker_err}")
             queue_finished(f"Lỗi nghiêm trọng: {worker_err}", success=False, reason=finish_reason)
 
@@ -3448,7 +3309,6 @@ class OptimizerEmbedded(QWidget):
         latest_file, latest_data, latest_timestamp = None, None, 0
         if success_dir.is_dir():
             try:
-                # Look for both normal and combo optimized files
                 patterns = [f"optimized_{algo_stem}_*_*.json", f"optimized_combo_{algo_stem}_*_*.json"]
                 json_files = []
                 for pattern in patterns:
@@ -3460,7 +3320,6 @@ class OptimizerEmbedded(QWidget):
                         file_timestamp = 0
                         try:
                             parts = f_path.stem.split('_')
-                            # Handle both naming conventions
                             file_ts_str = f"{parts[-2]}_{parts[-1]}"
                             file_dt = datetime.datetime.strptime(file_ts_str, "%Y%m%d_%H%M%S")
                             file_timestamp = file_dt.timestamp()
@@ -3472,7 +3331,6 @@ class OptimizerEmbedded(QWidget):
                         if file_timestamp > latest_timestamp:
                              try:
                                  data = json.loads(f_path.read_text(encoding='utf-8'))
-                                 # Check for required keys common to both modes
                                  if "params" in data and "score_tuple" in data and "optimization_range" in data and "combination_algorithms" in data:
                                      latest_timestamp = file_timestamp
                                      latest_file = f_path
@@ -3492,17 +3350,14 @@ class OptimizerEmbedded(QWidget):
 
         if latest_file:
             optimizer_logger.info(f"Latest successful optimization found: {latest_file.name}")
-            # Do NOT use state file as fallback if a success file exists
             return latest_file, latest_data
 
-        # Only check state file if NO success file was found
         optimizer_logger.debug("No success file found, checking for state file...")
         state_file_path = self.optimize_dir / algo_stem / f"optimization_state_{algo_stem}.json"
         if state_file_path.exists():
             optimizer_logger.debug(f"Found state file: {state_file_path.name}")
             try:
                  data = json.loads(state_file_path.read_text(encoding='utf-8'))
-                 # Check for state file specific keys (or common keys if same format)
                  if "params" in data and "score_tuple" in data and "optimization_range" in data and "combination_algorithms" in data:
                      optimizer_logger.info(f"Using state file as fallback: {state_file_path.name}")
                      return state_file_path, data
@@ -3528,7 +3383,6 @@ class OptimizerEmbedded(QWidget):
             success_dir = optimize_target_dir / "success"
             latest_file, latest_data = self.find_latest_successful_optimization(success_dir, algo_stem)
             if latest_file and latest_data:
-                # Check if the result was from 'auto_hill_climb' mode before enabling resume
                 is_resumable_mode = latest_data.get('optimization_mode', 'auto_hill_climb') == 'auto_hill_climb'
                 if is_resumable_mode:
                     can_resume_flag = True
@@ -3728,8 +3582,8 @@ class OptimizerEmbedded(QWidget):
         combinations_iter = itertools.product(*all_param_value_lists)
         param_combinations_list = []
         for combo_values in combinations_iter:
-            param_dict = original_params.copy() # Start with all params
-            param_dict.update(dict(zip(param_names_ordered, combo_values))) # Update numeric ones
+            param_dict = original_params.copy()
+            param_dict.update(dict(zip(param_names_ordered, combo_values)))
             param_combinations_list.append(param_dict)
 
         optimizer_logger.info(f"Total combinations generated: {len(param_combinations_list)}")
@@ -3741,25 +3595,22 @@ class OptimizerEmbedded(QWidget):
         is_float = isinstance(original_value, float)
 
         if method == "random":
-            # Define a range for random values (e.g., +/- 20% or a fixed range for small values)
             deviation = abs(original_value) * 0.2 if abs(original_value) > 1e-3 else 0.5
             if not is_float:
-                 deviation = max(1, int(round(deviation))) # Ensure integer deviation is at least 1
+                 deviation = max(1, int(round(deviation)))
             min_val = original_value - deviation
             max_val = original_value + deviation
 
-            # Add original value first to ensure it's included
             values.add(original_value)
 
             while len(values) < num_values:
                 if is_float:
                     rand_val = random.uniform(min_val, max_val)
-                    # Round floats to a reasonable precision to avoid tiny differences
                     rand_val = float(f"{rand_val:.6g}")
                 else:
                     rand_val = random.randint(int(round(min_val)), int(round(max_val)))
                 values.add(rand_val)
-                if len(values) >= num_values * 5 and len(values) < num_values : # Safety break if struggling to find unique values
+                if len(values) >= num_values * 5 and len(values) < num_values :
                     optimizer_logger.warning(f"Struggling to generate {num_values} unique random values for '{param_name}' near {original_value}. Using {len(values)}.")
                     break
 
@@ -3767,22 +3618,20 @@ class OptimizerEmbedded(QWidget):
         elif method == "adjacent":
             values.add(original_value)
             num_each_side = (num_values - 1) // 2
-            num_increase = num_each_side + ((num_values - 1) % 2) # Add extra if odd total
+            num_increase = num_each_side + ((num_values - 1) % 2)
             num_decrease = num_each_side
 
             if is_float:
-                step = max(abs(original_value) * 0.02, 1e-4) # Smaller step for floats
+                step = max(abs(original_value) * 0.02, 1e-4)
             else:
-                step = 1 # Integer step
+                step = 1
 
-            # Generate increasing values
             current_val = original_value
             for _ in range(num_increase):
                 current_val += step
                 val_to_add = float(f"{current_val:.6g}") if is_float else int(round(current_val))
                 values.add(val_to_add)
 
-            # Generate decreasing values
             current_val = original_value
             for _ in range(num_decrease):
                 current_val -= step
@@ -3793,7 +3642,6 @@ class OptimizerEmbedded(QWidget):
             optimizer_logger.error(f"Unknown generation method: {method}")
             return []
 
-        # Sort the results for consistency, especially for 'adjacent'
         return sorted(list(values))
 
 
@@ -3852,13 +3700,12 @@ class LotteryPredictionApp(QMainWindow):
         self.create_directories()
         self._setup_validators()
 
-        self.load_config() # Loads self.config, and sets font/size/window instance vars
-        self._setup_global_font() # Uses the now-set font attributes
-        self.setup_main_ui_structure() # Creates all UI elements
+        self.load_config()
+        self._setup_global_font()
+        self.setup_main_ui_structure()
         self.apply_stylesheet()
-        self._apply_window_size_from_config() # Applies loaded window size
+        self._apply_window_size_from_config()
 
-        # ---- NEW SECTION: Populate Main Tab UI elements from self.config ----
         main_tab_data_file = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
         main_tab_sync_url = self.config.get('DATA', 'sync_url', fallback="https://raw.githubusercontent.com/khiemdoan/vietnam-lottery-xsmb-analysis/main/data/xsmb-2-digits.json")
 
@@ -3867,12 +3714,11 @@ class LotteryPredictionApp(QMainWindow):
             self.data_file_path_label.setToolTip(main_tab_data_file)
         if hasattr(self, 'sync_url_input'):
             self.sync_url_input.setText(main_tab_sync_url)
-        # ---- END NEW SECTION ----
 
-        self._populate_settings_tab_ui() # Populates Settings Tab from self.config
+        self._populate_settings_tab_ui()
 
-        self.load_data() # Uses data_file from self.config
-        self.load_algorithms() # This will call apply_algorithm_config_states internally
+        self.load_data()
+        self.load_algorithms()
         self.load_tools()
 
         if hasattr(self, 'optimizer_tab_frame'):
@@ -3915,29 +3761,21 @@ class LotteryPredictionApp(QMainWindow):
         Trích xuất siêu dữ liệu (ID, Date, Description, Name) từ nội dung file Python.
         Sử dụng regex cho ID và Date, và AST hoặc regex cho Description và Name.
         """
-        # Khởi tạo dictionary chứa siêu dữ liệu với giá trị mặc định là None
         metadata = {"id": None, "date_str": None, "description": None, "name": None}
         try:
-            # Trích xuất ID thuật toán từ comment dạng: # ID: 000001
             match_id = re.search(r"#\s*ID:\s*(\d{6})", content, re.IGNORECASE)
             if match_id:
-                metadata["id"] = match_id.group(1) # Lấy phần số ID
+                metadata["id"] = match_id.group(1)
 
-            # Trích xuất ngày cập nhật từ comment dạng: # Date: dd/mm/yyyy
             match_date = re.search(r"#\s*Date:\s*(\d{2}/\d{2}/\d{4})", content, re.IGNORECASE)
             if match_date:
-                metadata["date_str"] = match_date.group(1) # Lấy chuỗi ngày tháng
+                metadata["date_str"] = match_date.group(1)
 
-            # Trích xuất mô tả từ self.config trong code thuật toán
-            # Sử dụng regex để tìm chuỗi {"description": "Mô tả thực tế", ...}
-            # Hoặc {'description': 'Mô tả thực tế', ...}
-            # DOTALL cho phép '.' khớp cả ký tự xuống dòng, IGNORECASE không phân biệt hoa thường
             desc_match = re.search(
                 r'self\.config\s*=\s*\{.*?["\']description["\']\s*:\s*["\'](.*?)["\'],',
                 content,
                 re.DOTALL | re.IGNORECASE
             )
-            # Nếu không tìm thấy với dấu phẩy ở cuối, thử tìm không có dấu phẩy (trường hợp description là mục cuối)
             if not desc_match:
                  desc_match = re.search(
                     r'self\.config\s*=\s*\{.*?["\']description["\']\s*:\s*["\'](.*?)["\']\s*\}',
@@ -3946,98 +3784,76 @@ class LotteryPredictionApp(QMainWindow):
                 )
 
             if desc_match:
-                metadata["description"] = desc_match.group(1).strip() # Lấy nội dung mô tả và loại bỏ khoảng trắng thừa
+                metadata["description"] = desc_match.group(1).strip()
             else:
-                # Nếu không tìm thấy mô tả trong self.config, thử lấy docstring của lớp đầu tiên
-                tree = ast.parse(content) # Phân tích code thành cây cú pháp trừu tượng (AST)
-                for node in tree.body: # Duyệt qua các node cấp cao nhất trong file
-                    if isinstance(node, ast.ClassDef): # Nếu node là một định nghĩa lớp
-                        docstring = ast.get_docstring(node) # Lấy docstring của lớp đó
+                tree = ast.parse(content)
+                for node in tree.body:
+                    if isinstance(node, ast.ClassDef):
+                        docstring = ast.get_docstring(node)
                         if docstring:
-                            # Lấy dòng đầu tiên của docstring làm mô tả
                             metadata["description"] = docstring.strip().splitlines()[0]
-                            metadata["name"] = node.name # Lấy tên lớp
-                            break # Giả sử lớp đầu tiên là lớp chính của thuật toán
+                            metadata["name"] = node.name
+                            break
             
-            # Nếu tên thuật toán (tên lớp) vẫn chưa được tìm thấy
-            # (ví dụ: mô tả được lấy từ self.config, không phải từ docstring)
             if not metadata["name"]:
-                if not 'tree' in locals(): # Phân tích AST nếu chưa được phân tích trước đó
+                if not 'tree' in locals():
                     tree = ast.parse(content)
-                for node in tree.body: # Duyệt qua các node
-                    if isinstance(node, ast.ClassDef): # Nếu là định nghĩa lớp
-                         # Kiểm tra đơn giản xem có phải là lớp con của BaseAlgorithm không
-                         # bằng cách tìm phương thức __init__ (một cách ước lượng)
+                for node in tree.body:
+                    if isinstance(node, ast.ClassDef):
                          for sub_node in node.body:
                              if isinstance(sub_node, ast.FunctionDef) and sub_node.name == "__init__":
-                                 metadata["name"] = node.name # Lấy tên lớp
-                                 break # Thoát vòng lặp con
+                                 metadata["name"] = node.name
+                                 break
                          if metadata["name"]:
-                             break # Thoát vòng lặp cha nếu đã tìm thấy tên
+                             break
 
         except SyntaxError:
-            # Ghi log nếu có lỗi cú pháp khi phân tích nội dung file
             algo_mgmnt_logger.warning(f"Lỗi cú pháp khi phân tích nội dung để lấy siêu dữ liệu.")
         except Exception as e:
-            # Ghi log nếu có lỗi khác xảy ra
             algo_mgmnt_logger.error(f"Lỗi trích xuất siêu dữ liệu từ nội dung: {e}")
-        return metadata # Trả về dictionary chứa siêu dữ liệu
+        return metadata
 
 
     def setup_main_ui_structure(self):
         """Thiết lập cấu trúc giao diện người dùng chính của ứng dụng, bao gồm các tab."""
         main_logger.debug("Thiết lập cấu trúc UI chính (PyQt5)...")
 
-        self.central_widget = QWidget() # Widget trung tâm của QMainWindow
+        self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-        main_layout = QVBoxLayout(self.central_widget) # Layout chính cho widget trung tâm
-        main_layout.setContentsMargins(5, 5, 5, 5) # Đặt lề cho layout chính
+        main_layout = QVBoxLayout(self.central_widget)
+        main_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Tạo QTabWidget để chứa các tab
         self.tab_widget = QTabWidget()
-        self.tab_widget.setObjectName("MainTabWidget") # Đặt tên đối tượng để có thể style bằng CSS
+        self.tab_widget.setObjectName("MainTabWidget")
 
-        # ---- KHỞI TẠO CÁC FRAME (QWidget) CHO TỪNG TAB ----
-        # Quan trọng: Tất cả các self.xxx_tab_frame phải được tạo trước khi gọi addTab
-        self.main_tab_frame = QWidget()                # Frame cho tab "Main"
-        self.algo_management_tab_frame = QWidget()     # Frame cho tab "Quản lý Thuật Toán" (MỚI)
-        self.optimizer_tab_frame = QWidget()           # Frame cho tab "Tối ưu"
-        self.tools_tab_frame = QWidget()               # Frame cho tab "Công Cụ"
-        self.settings_tab_frame = QWidget()            # Frame cho tab "Cài Đặt"
-        # self.info_tab_frame = QWidget()              # Frame cho tab "Thông Tin" (nếu có)
+        self.main_tab_frame = QWidget()
+        self.algo_management_tab_frame = QWidget()
+        self.optimizer_tab_frame = QWidget()
+        self.tools_tab_frame = QWidget()
+        self.settings_tab_frame = QWidget()
 
-        # ---- THÊM CÁC TAB VÀO QTabWidget ----
         self.tab_widget.addTab(self.main_tab_frame, " Main 🏠")
         self.tab_widget.addTab(self.algo_management_tab_frame, "  Thuật Toán 🛠️") 
         self.tab_widget.addTab(self.optimizer_tab_frame, " Tối ưu 🚀 ")
-        self.tab_widget.addTab(self.tools_tab_frame, " Công Cụ 🧰") # Đã sửa icon
+        self.tab_widget.addTab(self.tools_tab_frame, " Công Cụ 🧰")
         self.tab_widget.addTab(self.settings_tab_frame, " Cài Đặt ⚙️")
-        # if hasattr(self, 'info_tab_frame'): # Kiểm tra nếu có frame này
-        #     self.tab_widget.addTab(self.info_tab_frame, " Thông Tin ℹ️")
 
 
-        main_layout.addWidget(self.tab_widget) # Thêm QTabWidget vào layout chính
+        main_layout.addWidget(self.tab_widget)
 
-        # ---- GỌI CÁC PHƯƠNG THỨC ĐỂ THIẾT LẬP NỘI DUNG CHO TỪNG TAB ----
-        # Các phương thức này sẽ làm việc với các self.xxx_tab_frame đã được tạo ở trên.
         self.setup_main_tab()
-        self.setup_algo_management_tab()  # Gọi hàm thiết lập cho tab quản lý thuật toán (MỚI)
-        # self.setup_optimizer_tab() # LƯU Ý: Optimizer được tạo và thêm vào optimizer_tab_frame sau, không gọi hàm setup riêng ở đây
+        self.setup_algo_management_tab()
         self.setup_tools_tab()
         self.setup_settings_tab()
-        # if hasattr(self, 'info_tab_frame'):
-        #     self.setup_info_tab() # Nếu có tab thông tin
 
-        # ---- THIẾT LẬP THANH TRẠNG THÁI (STATUS BAR) ----
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
-        self.status_bar_label = QLabel("Khởi tạo...") # Label hiển thị trạng thái
-        self.status_bar_label.setObjectName("StatusBarLabel") # Để style riêng
-        self.status_bar.addWidget(self.status_bar_label, 1) # Tham số 1 để label chiếm hết không gian còn lại
+        self.status_bar_label = QLabel("Khởi tạo...")
+        self.status_bar_label.setObjectName("StatusBarLabel")
+        self.status_bar.addWidget(self.status_bar_label, 1)
 
-        # ---- ĐẶT ICON CHO CỬA SỔ ỨNG DỤNG ----
         try:
-            icon_path = self.config_dir / "logo.png" # Đường dẫn đến file icon
+            icon_path = self.config_dir / "logo.png"
             if icon_path.exists():
                 self.setWindowIcon(QIcon(str(icon_path)))
                 main_logger.info(f"Icon ứng dụng được đặt từ: {icon_path}")
@@ -4056,9 +3872,9 @@ class LotteryPredictionApp(QMainWindow):
 
     def create_directories(self):
         try:
-            for directory in [self.data_dir, self.config_dir, self.calculate_dir, self.algorithms_dir, self.optimize_dir, self.tools_dir]: # MODIFIED
+            for directory in [self.data_dir, self.config_dir, self.calculate_dir, self.algorithms_dir, self.optimize_dir, self.tools_dir]:
                 directory.mkdir(parents=True, exist_ok=True)
-            for dir_path in [self.algorithms_dir, self.optimize_dir, self.tools_dir]: # MODIFIED
+            for dir_path in [self.algorithms_dir, self.optimize_dir, self.tools_dir]:
                 init_file = dir_path / "__init__.py"
                 if not init_file.exists():
                     init_file.touch()
@@ -4732,53 +4548,47 @@ class LotteryPredictionApp(QMainWindow):
     def setup_settings_tab(self):
         """Thiết lập giao diện người dùng cho tab Cài đặt."""
         main_logger.debug("Thiết lập giao diện tab Cài đặt (PyQt5)...")
-        # Layout chính cho tab Cài đặt
         settings_tab_layout = QVBoxLayout(self.settings_tab_frame)
-        settings_tab_layout.setContentsMargins(15, 15, 15, 15) # Đặt lề
-        settings_tab_layout.setSpacing(15) # Đặt khoảng cách giữa các widget
-        settings_tab_layout.setAlignment(Qt.AlignTop) # Căn các widget lên trên
+        settings_tab_layout.setContentsMargins(15, 15, 15, 15)
+        settings_tab_layout.setSpacing(15)
+        settings_tab_layout.setAlignment(Qt.AlignTop)
 
-        # GroupBox cho các cài đặt chung
         settings_group = QGroupBox("⚙Cài Đặt Chung")
-        settings_group_layout = QGridLayout(settings_group) # Sử dụng QGridLayout cho bố cục linh hoạt
+        settings_group_layout = QGridLayout(settings_group)
         settings_group_layout.setContentsMargins(10, 15, 10, 10)
         settings_group_layout.setHorizontalSpacing(10)
         settings_group_layout.setVerticalSpacing(12)
 
-        # Cài đặt file dữ liệu
         settings_group_layout.addWidget(QLabel("📂 File dữ liệu:"), 0, 0, Qt.AlignLeft)
         self.config_data_path_edit = QLineEdit()
         self.config_data_path_edit.setToolTip("Đường dẫn đầy đủ đến file JSON chứa dữ liệu kết quả.")
-        settings_group_layout.addWidget(self.config_data_path_edit, 0, 1, 1, 2) # Widget chiếm 1 hàng, 2 cột
+        settings_group_layout.addWidget(self.config_data_path_edit, 0, 1, 1, 2)
         browse_button = QPushButton("📂")
         browse_button.setFixedWidth(40)
         browse_button.setToolTip("Chọn file dữ liệu JSON 📂")
-        browse_button.clicked.connect(self.browse_data_file_settings) # Kết nối sự kiện click
+        browse_button.clicked.connect(self.browse_data_file_settings)
         settings_group_layout.addWidget(browse_button, 0, 3)
 
-        # Cài đặt URL đồng bộ dữ liệu
         settings_group_layout.addWidget(QLabel("🔗 URL đồng bộ dữ liệu:"), 1, 0, Qt.AlignLeft)
         self.config_sync_url_edit = QLineEdit()
         self.config_sync_url_edit.setToolTip("URL để tải dữ liệu mới khi nhấn nút 'Sync' ở tab Main.")
         settings_group_layout.addWidget(self.config_sync_url_edit, 1, 1, 1, 3)
 
-        # Cài đặt URL danh sách thuật toán online (MỚI)
         settings_group_layout.addWidget(QLabel("🔗 Link danh sách thuật toán:"), 2, 0, Qt.AlignLeft)
         self.config_algo_list_url_edit = QLineEdit()
         self.config_algo_list_url_edit.setToolTip("URL của file text chứa danh sách thuật toán online.")
         settings_group_layout.addWidget(self.config_algo_list_url_edit, 2, 1, 1, 3)
 
 
-        # Cài đặt kích thước cửa sổ (Hàng được điều chỉnh +1 so với trước)
         settings_group_layout.addWidget(QLabel("💻 Kích thước cửa sổ:"), 3, 0, Qt.AlignLeft)
-        size_frame = QWidget() # Frame để nhóm các widget kích thước
+        size_frame = QWidget()
         size_layout = QHBoxLayout(size_frame)
         size_layout.setContentsMargins(0,0,0,0)
         size_layout.setSpacing(5)
         self.window_width_edit = QLineEdit()
         self.window_width_edit.setFixedWidth(80)
         self.window_width_edit.setAlignment(Qt.AlignCenter)
-        self.window_width_edit.setValidator(self.dimension_validator) # Sử dụng validator đã tạo
+        self.window_width_edit.setValidator(self.dimension_validator)
         self.window_width_edit.setToolTip("Chiều rộng cửa sổ ứng dụng (pixels).")
         size_layout.addWidget(self.window_width_edit)
         size_layout.addWidget(QLabel(" x "))
@@ -4789,54 +4599,50 @@ class LotteryPredictionApp(QMainWindow):
         self.window_height_edit.setToolTip("Chiều cao cửa sổ ứng dụng (pixels).")
         size_layout.addWidget(self.window_height_edit)
         size_layout.addWidget(QLabel("(pixels)"))
-        size_layout.addStretch(1) # Đẩy các widget về bên trái
+        size_layout.addStretch(1)
         settings_group_layout.addWidget(size_frame, 3, 1, 1, 3)
 
-        # Cài đặt font chữ (Hàng được điều chỉnh +1)
         settings_group_layout.addWidget(QLabel("🔤 Font chữ (Cần khởi động lại):"), 4, 0, Qt.AlignLeft)
-        font_frame = QWidget() # Frame để nhóm các widget font
+        font_frame = QWidget()
         font_layout = QHBoxLayout(font_frame)
         font_layout.setContentsMargins(0,0,0,0)
         font_layout.setSpacing(10)
         self.theme_font_family_base_combo = QComboBox()
-        self.theme_font_family_base_combo.addItems(self.available_fonts) # Thêm danh sách font có sẵn
+        self.theme_font_family_base_combo.addItems(self.available_fonts)
         self.theme_font_family_base_combo.setToolTip("Chọn font chữ mặc định cho ứng dụng.")
-        font_layout.addWidget(self.theme_font_family_base_combo, 1) # Tham số stretch factor là 1
+        font_layout.addWidget(self.theme_font_family_base_combo, 1)
 
         font_layout.addWidget(QLabel("Cỡ:"))
         self.theme_font_size_base_spinbox = QSpinBox()
-        self.theme_font_size_base_spinbox.setRange(8, 24) # Giới hạn cỡ font
+        self.theme_font_size_base_spinbox.setRange(8, 24)
         self.theme_font_size_base_spinbox.setToolTip("Chọn cỡ chữ mặc định (points).")
         self.theme_font_size_base_spinbox.setFixedWidth(60)
         font_layout.addWidget(self.theme_font_size_base_spinbox)
         font_layout.addStretch(1)
         settings_group_layout.addWidget(font_frame, 4, 1, 1, 3)
 
-        # Đường kẻ ngang phân cách (Hàng được điều chỉnh +1)
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
         settings_group_layout.addWidget(separator, 5, 0, 1, 4)
 
-        # Quản lý file cấu hình khác (Hàng được điều chỉnh +1)
         settings_group_layout.addWidget(QLabel("⚙️ Quản lý file cấu hình khác:"), 6, 0, Qt.AlignLeft)
         self.config_listwidget = QListWidget()
-        self.config_listwidget.setFixedHeight(80) # Giới hạn chiều cao
+        self.config_listwidget.setFixedHeight(80)
         self.config_listwidget.setToolTip("Double-click để tải file cấu hình đã chọn.")
         self.config_listwidget.itemDoubleClicked.connect(self.load_selected_config_qt)
         settings_group_layout.addWidget(self.config_listwidget, 7, 0, 1, 4)
-        self.update_config_list() # Cập nhật danh sách file config
+        self.update_config_list()
 
-        settings_tab_layout.addWidget(settings_group) # Thêm GroupBox vào layout chính của tab
+        settings_tab_layout.addWidget(settings_group)
 
-        # Frame chứa các nút bấm
         button_frame = QWidget()
         button_layout = QHBoxLayout(button_frame)
         button_layout.setContentsMargins(0, 10, 0, 0)
         button_layout.setSpacing(6)
 
         save_config_button = QPushButton("💾 Lưu Cấu Hình")
-        save_config_button.setObjectName("SettingsButton") # Để áp dụng style riêng nếu có
+        save_config_button.setObjectName("SettingsButton")
         save_config_button.setToolTip("Lưu các cài đặt hiện tại vào file chính settings.ini\n(Cần khởi động lại để áp dụng thay đổi font).")
         save_config_button.clicked.connect(self.save_current_settings_to_main_config)
         button_layout.addWidget(save_config_button)
@@ -4854,22 +4660,21 @@ class LotteryPredictionApp(QMainWindow):
         button_layout.addWidget(load_cfg_button)
 
         reset_cfg_button = QPushButton("🔄 Reset Mặc Định")
-        reset_cfg_button.setObjectName("DangerButton") # Style nút nguy hiểm
+        reset_cfg_button.setObjectName("DangerButton")
         reset_cfg_button.setToolTip("Khôi phục tất cả cài đặt (bao gồm font) về giá trị mặc định trong settings.ini\n(Cần khởi động lại để áp dụng).")
         reset_cfg_button.clicked.connect(self.reset_config)
         button_layout.addWidget(reset_cfg_button)
 
-        button_layout.addStretch(1) # Đẩy các nút về bên trái
+        button_layout.addStretch(1)
         settings_tab_layout.addWidget(button_frame)
 
-        # GroupBox thông tin ứng dụng
-        info_groupbox = QGroupBox("Thông Tin Ứng Dụng") # Sửa lại tiêu đề cho rõ ràng
+        info_groupbox = QGroupBox("Thông Tin Ứng Dụng")
         info_group_layout = QVBoxLayout(info_groupbox)
         info_group_layout.setContentsMargins(10, 15, 10, 10)
         info_group_layout.setSpacing(8)
 
-        version_label = QLabel(f"<b>Lottery Predictor V4.3</b> by Luvideez <br>(Ngày cập nhật: 09/05/2025)") # Sửa phiên bản và ngày
-        version_label.setTextFormat(Qt.RichText) # Cho phép dùng HTML
+        version_label = QLabel(f"<b>Lottery Predictor V4.3</b> by Luvideez <br>(Ngày cập nhật: 10/05/2025)")
+        version_label.setTextFormat(Qt.RichText)
         version_label.setAlignment(Qt.AlignCenter)
         info_group_layout.addWidget(version_label)
 
@@ -4897,13 +4702,13 @@ class LotteryPredictionApp(QMainWindow):
         sys_info_label.setTextFormat(Qt.RichText)
         sys_info_label.setStyleSheet("color: #17a2b8;")
         sys_info_label.setAlignment(Qt.AlignCenter)
-        sys_info_label.setWordWrap(True) # Cho phép wrap nếu đường dẫn quá dài
+        sys_info_label.setWordWrap(True)
         info_group_layout.addWidget(sys_info_label)
 
         settings_tab_layout.addWidget(info_groupbox)
-        settings_tab_layout.addStretch(1) # Đẩy các groupbox lên trên
+        settings_tab_layout.addStretch(1)
 
-        self._populate_settings_tab_ui() # Gọi hàm để điền dữ liệu vào các widget
+        self._populate_settings_tab_ui()
 
         main_logger.debug("Hoàn tất thiết lập giao diện tab Cài đặt.")
 
@@ -4922,21 +4727,20 @@ class LotteryPredictionApp(QMainWindow):
 
         self.local_algorithms_managed_ui.clear()
 
-        # ---- SỬA LỖI RUNTIME ----
-        # Tạo lại label nếu nó không tồn tại hoặc đã bị xóa
         if not hasattr(self, 'initial_local_algo_manage_label') or not self.initial_local_algo_manage_label:
             self.initial_local_algo_manage_label = QLabel("Đang tải thuật toán trên máy...")
             self.initial_local_algo_manage_label.setStyleSheet("font-style: italic; color: #6c757d;")
             self.initial_local_algo_manage_label.setAlignment(Qt.AlignCenter)
-        # Thêm lại label vào layout nếu nó chưa có trong layout
+        
         if self.local_algo_manage_list_layout.indexOf(self.initial_local_algo_manage_label) == -1:
             self.local_algo_manage_list_layout.addWidget(self.initial_local_algo_manage_label)
-        # ---- KẾT THÚC SỬA LỖI RUNTIME ----
+        else:
+            self.initial_local_algo_manage_label.setText("Đang tải thuật toán trên máy...")
+            self.initial_local_algo_manage_label.setStyleSheet("font-style: italic; color: #6c757d;")
 
 
         if not self.algorithms_dir.is_dir():
             algo_mgmnt_logger.warning(f"Algorithms directory not found: {self.algorithms_dir}")
-            # Không cần tạo label lỗi ở đây nữa vì initial_label sẽ hiển thị
             if self.initial_local_algo_manage_label:
                  self.initial_local_algo_manage_label.setText(f"Lỗi: Không tìm thấy thư mục thuật toán:\n{self.algorithms_dir}")
                  self.initial_local_algo_manage_label.setStyleSheet("color: red;")
@@ -4948,31 +4752,30 @@ class LotteryPredictionApp(QMainWindow):
         ]
 
         if not local_algo_files:
-            if self.initial_local_algo_manage_label: # Kiểm tra lại xem có tồn tại không
+            if self.initial_local_algo_manage_label: 
                  self.initial_local_algo_manage_label.setText("Không có thuật toán nào trên máy.")
-                 # Đảm bảo nó vẫn còn trong layout nếu không có file nào được tìm thấy
                  if self.local_algo_manage_list_layout.indexOf(self.initial_local_algo_manage_label) == -1:
                      self.local_algo_manage_list_layout.addWidget(self.initial_local_algo_manage_label)
             return
         
-        # Nếu có file thuật toán, xóa label "Đang tải..."
         if self.initial_local_algo_manage_label and \
            self.local_algo_manage_list_layout.indexOf(self.initial_local_algo_manage_label) != -1:
             self.local_algo_manage_list_layout.removeWidget(self.initial_local_algo_manage_label)
             self.initial_local_algo_manage_label.deleteLater()
-            self.initial_local_algo_manage_label = None # Quan trọng: đánh dấu đã xóa
+            self.initial_local_algo_manage_label = None 
 
 
         for algo_path in local_algo_files:
-            try:
+            try: 
                 content = algo_path.read_text(encoding='utf-8')
-                # Đảm bảo rằng _extract_metadata_from_py_content đã được định nghĩa đúng
                 metadata = self._extract_metadata_from_py_content(content) 
                 
                 algo_name_display = metadata.get("name") or algo_path.stem
                 description = metadata.get("description") or "Không có mô tả."
                 algo_id = metadata.get("id")
                 algo_date_str = metadata.get("date_str")
+
+                display_name_for_optimizer = f"{algo_name_display} ({algo_path.name})"
 
                 card_frame = QFrame()
                 card_frame.setObjectName("CardFrame")
@@ -4999,30 +4802,80 @@ class LotteryPredictionApp(QMainWindow):
                 file_label.setStyleSheet("color: #6c757d;")
                 card_layout.addWidget(file_label)
 
-                delete_button = QPushButton("❎ Xóa")
-                delete_button.setObjectName("DangerButton")
-                delete_button.setFixedWidth(100)
-                delete_button.setToolTip(f"Xóa file thuật toán: {algo_path.name}")
-                delete_button.clicked.connect(lambda checked=False, p=algo_path: self._handle_delete_local_algorithm(p))
-                
                 button_container = QWidget()
                 button_container_layout = QHBoxLayout(button_container)
                 button_container_layout.setContentsMargins(0,5,0,0)
+                button_container_layout.setSpacing(5) 
                 button_container_layout.addStretch(1)
+
+                edit_button = QPushButton(" 🔨 Sửa  ")
+                edit_button.setObjectName("ListAccentButton")
+                edit_button.setToolTip(f"Chỉnh sửa tham số thuật toán: {algo_name_display}")
+                edit_button.clicked.connect(
+                    lambda checked=False, dn=display_name_for_optimizer: self._handle_manage_tab_edit_request(dn)
+                )
+                button_container_layout.addWidget(edit_button)
+
+                optimize_button = QPushButton("🚀 Tối ưu")
+                optimize_button.setObjectName("ListAccentButton")
+                optimize_button.setToolTip(f"Tối ưu hóa thuật toán: {algo_name_display}")
+                optimize_button.clicked.connect(
+                    lambda checked=False, dn=display_name_for_optimizer: self._handle_manage_tab_optimize_request(dn)
+                )
+                button_container_layout.addWidget(optimize_button)
+                
+                delete_button = QPushButton("❎ Xóa") 
+                delete_button.setObjectName("DangerButton") 
+                delete_button.setToolTip(f"Xóa file thuật toán: {algo_path.name}")
+                delete_button.clicked.connect(lambda checked=False, p=algo_path: self._handle_delete_local_algorithm(p))
                 button_container_layout.addWidget(delete_button)
+                
                 card_layout.addWidget(button_container)
 
                 self.local_algo_manage_list_layout.addWidget(card_frame)
                 self.local_algorithms_managed_ui[str(algo_path)] = card_frame
 
-            except AttributeError as ae: # Bắt lỗi AttributeError cụ thể
+            except AttributeError as ae: 
                 if "_extract_metadata_from_py_content" in str(ae):
                     algo_mgmnt_logger.critical(f"CRITICAL: Method _extract_metadata_from_py_content not found in LotteryPredictionApp for {algo_path.name}. Please define it.")
-                    # Có thể hiển thị một lỗi chung hơn cho người dùng hoặc dừng lại ở đây
                     error_item = QLabel(f"Lỗi nghiêm trọng khi xử lý {algo_path.name}: Thiếu phương thức nội bộ.")
                     error_item.setStyleSheet("color: red; font-weight: bold;")
                     self.local_algo_manage_list_layout.addWidget(error_item)
-                else: # Lỗi AttributeError khác
+                else: 
+                    algo_mgmnt_logger.error(f"AttributeError creating UI for local algorithm {algo_path.name}: {ae}", exc_info=True)
+                    error_item = QLabel(f"Lỗi thuộc tính khi tải {algo_path.name}: {ae}")
+                    error_item.setStyleSheet("color: red;")
+                    self.local_algo_manage_list_layout.addWidget(error_item)
+            except Exception as e:
+                algo_mgmnt_logger.error(f"Error creating UI for local algorithm {algo_path.name}: {e}", exc_info=True)
+                error_item = QLabel(f"Lỗi tải {algo_path.name}: {e}")
+                error_item.setStyleSheet("color: red;")
+                self.local_algo_manage_list_layout.addWidget(error_item)
+
+            except AttributeError as ae: 
+                if "_extract_metadata_from_py_content" in str(ae):
+                    algo_mgmnt_logger.critical(f"CRITICAL: Method _extract_metadata_from_py_content not found in LotteryPredictionApp for {algo_path.name}. Please define it.")
+                    error_item = QLabel(f"Lỗi nghiêm trọng khi xử lý {algo_path.name}: Thiếu phương thức nội bộ.")
+                    error_item.setStyleSheet("color: red; font-weight: bold;")
+                    self.local_algo_manage_list_layout.addWidget(error_item)
+                else:
+                    algo_mgmnt_logger.error(f"AttributeError creating UI for local algorithm {algo_path.name}: {ae}", exc_info=True)
+                    error_item = QLabel(f"Lỗi thuộc tính khi tải {algo_path.name}: {ae}")
+                    error_item.setStyleSheet("color: red;")
+                    self.local_algo_manage_list_layout.addWidget(error_item)
+            except Exception as e:
+                algo_mgmnt_logger.error(f"Error creating UI for local algorithm {algo_path.name}: {e}", exc_info=True)
+                error_item = QLabel(f"Lỗi tải {algo_path.name}: {e}")
+                error_item.setStyleSheet("color: red;")
+                self.local_algo_manage_list_layout.addWidget(error_item)
+
+            except AttributeError as ae:
+                if "_extract_metadata_from_py_content" in str(ae):
+                    algo_mgmnt_logger.critical(f"CRITICAL: Method _extract_metadata_from_py_content not found in LotteryPredictionApp for {algo_path.name}. Please define it.")
+                    error_item = QLabel(f"Lỗi nghiêm trọng khi xử lý {algo_path.name}: Thiếu phương thức nội bộ.")
+                    error_item.setStyleSheet("color: red; font-weight: bold;")
+                    self.local_algo_manage_list_layout.addWidget(error_item)
+                else:
                     algo_mgmnt_logger.error(f"AttributeError creating UI for local algorithm {algo_path.name}: {ae}", exc_info=True)
                     error_item = QLabel(f"Lỗi thuộc tính khi tải {algo_path.name}: {ae}")
                     error_item.setStyleSheet("color: red;")
@@ -5042,15 +4895,13 @@ class LotteryPredictionApp(QMainWindow):
         
         if reply == QMessageBox.Yes:
             try:
-                algo_path.unlink() # Delete the file
+                algo_path.unlink()
                 algo_mgmnt_logger.info(f"Successfully deleted algorithm file: {algo_path}")
                 self.update_status(f"Đã xóa thuật toán: {algo_path.name}")
 
-                # Refresh this tab's local list
                 self._populate_local_algorithms_management_list()
                 
-                # Reload algorithms in Main and Optimizer tabs
-                self.reload_algorithms() # This already updates Main and calls Optimizer's reload
+                self.reload_algorithms()
 
             except OSError as e:
                 algo_mgmnt_logger.error(f"Error deleting algorithm file {algo_path}: {e}", exc_info=True)
@@ -5066,7 +4917,6 @@ class LotteryPredictionApp(QMainWindow):
         """
         algo_mgmnt_logger.info("Đang tìm nạp và điền danh sách thuật toán online...")
         
-        # ... (phần xóa UI cũ và xử lý initial_online_algo_label giữ nguyên như trước) ...
         if hasattr(self, 'online_algo_list_layout'):
             while self.online_algo_list_layout.count() > 0:
                 item = self.online_algo_list_layout.takeAt(0)
@@ -5122,17 +4972,6 @@ class LotteryPredictionApp(QMainWindow):
         
         parsed_online_algos = []
         if online_list_content:
-            # ---- SỬA REGEX ĐỂ PARSE ĐỊNH DẠNG [phần1]-[phần2]-[phần3]-[phần4] ----
-            # Regex pattern:
-            # \[([^\]]+?)\] : Group 1: URL (mọi ký tự, không tham lam, bên trong [])
-            # -             : Dấu gạch nối
-            # \[([^\]]+?)\] : Group 2: Tên (mọi ký tự, không tham lam, bên trong [])
-            # -             : Dấu gạch nối
-            # \[([^\]]+?)\] : Group 3: Ngày (mọi ký tự, không tham lam, bên trong [])
-            # -             : Dấu gạch nối
-            # \[(ID:\s*\d{6})\] : Group 4: Toàn bộ phần ID (bên trong []), ví dụ: "[ID:000001]"
-            #                    Dấu ? sau [^\]]+ làm cho việc khớp trở nên "non-greedy" (không tham lam),
-            #                    nghĩa là nó sẽ khớp với chuỗi ngắn nhất có thể.
             line_pattern = re.compile(r"\[([^\]]+?)\]-\[([^\]]+?)\]-\[([^\]]+?)\]-\[(ID:\s*\d{6})\]", re.IGNORECASE)
             
             lines = online_list_content.splitlines()
@@ -5143,12 +4982,11 @@ class LotteryPredictionApp(QMainWindow):
                 
                 match = line_pattern.fullmatch(line)
                 if match:
-                    parsed_url = match.group(1).strip()  # URL từ group 1
-                    name = match.group(2).strip()        # Tên từ group 2
-                    date_str = match.group(3).strip()    # Ngày từ group 3
-                    id_full_part_in_brackets = match.group(4).strip() # Phần ID bao gồm "ID:xxxxxx"
+                    parsed_url = match.group(1).strip()
+                    name = match.group(2).strip()
+                    date_str = match.group(3).strip()
+                    id_full_part_in_brackets = match.group(4).strip()
 
-                    # Trích xuất 6 chữ số ID từ id_full_part_in_brackets
                     id_numeric_match = re.search(r"\d{6}", id_full_part_in_brackets)
                     if id_numeric_match:
                         actual_id = id_numeric_match.group(0)
@@ -5164,7 +5002,6 @@ class LotteryPredictionApp(QMainWindow):
                         algo_mgmnt_logger.warning(f"Không thể trích xuất số ID từ '{id_full_part_in_brackets}' trong dòng: {line_num+1} -> '{line}'")
                 else:
                     algo_mgmnt_logger.warning(f"Bỏ qua dòng không đúng định dạng regex {line_num+1} trong danh sách online: '{line}'")
-            # ---- KẾT THÚC SỬA REGEX ----
 
         if not parsed_online_algos:
             if self.initial_online_algo_label:
@@ -5197,7 +5034,7 @@ class LotteryPredictionApp(QMainWindow):
                     if metadata.get("id") == target_id:
                         return algo_file, metadata
                 except Exception:
-                    continue # Ignore errors reading individual files for this check
+                    continue
         return None, None
 
     def _create_online_algorithm_card_qt(self, online_algo_data: dict):
@@ -5209,7 +5046,6 @@ class LotteryPredictionApp(QMainWindow):
         online_date_str = online_algo_data["date_str"]
         online_id = online_algo_data["id"]
 
-        # Fetch the .py file content to get description
         description = "Đang tải mô tả..."
         online_code_content = None
         try:
@@ -5219,7 +5055,6 @@ class LotteryPredictionApp(QMainWindow):
             online_code_content = py_response.text
             metadata_from_online_code = self._extract_metadata_from_py_content(online_code_content)
             description = metadata_from_online_code.get("description") or "Không có mô tả trong code."
-            # Verify ID from code matches ID from list for consistency (optional, but good check)
             id_from_code = metadata_from_online_code.get("id")
             if id_from_code and id_from_code != online_id:
                 algo_mgmnt_logger.warning(f"ID mismatch for {online_name}: List ID='{online_id}', Code ID='{id_from_code}'. Using list ID.")
@@ -5254,7 +5089,6 @@ class LotteryPredictionApp(QMainWindow):
         info_label.setStyleSheet("color: #5a5a5a;")
         card_layout.addWidget(info_label)
 
-        # --- Determine button/status ---
         button_container = QWidget()
         button_layout = QHBoxLayout(button_container)
         button_layout.setContentsMargins(0,5,0,0)
@@ -5283,7 +5117,7 @@ class LotteryPredictionApp(QMainWindow):
             
             if needs_update:
                 update_button = QPushButton("⬆️ Cập nhật")
-                update_button.setObjectName("AccentButton") # Or a specific "UpdateButton" style
+                update_button.setObjectName("AccentButton")
                 update_button.setToolTip(f"Cập nhật file local '{local_algo_path.name}' bằng phiên bản online.")
                 update_button.clicked.connect(lambda chk=False, o_data=online_algo_data, l_path=local_algo_path, o_content=online_code_content : self._handle_update_online_algorithm(o_data, l_path, o_content))
                 action_widget = update_button
@@ -5295,7 +5129,6 @@ class LotteryPredictionApp(QMainWindow):
             download_button = QPushButton("⬇️ Tải về")
             download_button.setObjectName("AccentButton")
             download_button.setToolTip(f"Tải và lưu thuật toán '{online_name}' vào thư mục algorithms.")
-            # Pass online_code_content to avoid re-fetching if already fetched for description
             download_button.clicked.connect(lambda chk=False, o_data=online_algo_data, o_content=online_code_content : self._handle_download_online_algorithm(o_data, o_content))
             action_widget = download_button
         
@@ -5311,21 +5144,17 @@ class LotteryPredictionApp(QMainWindow):
         online_url = online_algo_data["url"]
         online_name = online_algo_data["name"]
         
-        # ---- SỬA TÊN FILE LƯU ----
         filename_from_url_obj = Path(online_url)
-        # Lấy tên file không có đuôi, sau đó thêm .py
-        # Ví dụ: test_sync.txt -> test_sync.py; test_sync.py -> test_sync.py
         target_filename = filename_from_url_obj.stem + ".py"
         save_path = self.algorithms_dir / target_filename
-        # ---- KẾT THÚC SỬA TÊN FILE LƯU ----
 
         algo_mgmnt_logger.info(f"Downloading algorithm '{online_name}' from {online_url} to {save_path}")
-        self.update_status(f"Đang tải về {target_filename}...") # Sử dụng target_filename
+        self.update_status(f"Đang tải về {target_filename}...")
         QApplication.processEvents()
 
         if save_path.exists():
             reply = QMessageBox.question(self, "File Tồn Tại",
-                                         f"File '{target_filename}' đã tồn tại. Ghi đè?", # Sử dụng target_filename
+                                         f"File '{target_filename}' đã tồn tại. Ghi đè?",
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
             if reply == QMessageBox.No:
                 self.update_status("Tải về bị hủy do file đã tồn tại.")
@@ -5340,23 +5169,23 @@ class LotteryPredictionApp(QMainWindow):
             
             save_path.write_text(online_code_content, encoding='utf-8')
             algo_mgmnt_logger.info(f"Successfully downloaded and saved to {save_path}")
-            QMessageBox.information(self, "Tải Thành Công", f"Đã tải và lưu thuật toán:\n{target_filename}") # Sử dụng target_filename
-            self.update_status(f"Đã tải thành công: {target_filename}") # Sử dụng target_filename
+            QMessageBox.information(self, "Tải Thành Công", f"Đã tải và lưu thuật toán:\n{target_filename}")
+            self.update_status(f"Đã tải thành công: {target_filename}")
             
             self._refresh_algo_management_page() 
             self.reload_algorithms() 
 
         except requests.exceptions.RequestException as e:
             algo_mgmnt_logger.error(f"Network error downloading {online_url}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Tải", f"Lỗi mạng khi tải {target_filename}:\n{e}") # Sử dụng target_filename
+            QMessageBox.critical(self, "Lỗi Tải", f"Lỗi mạng khi tải {target_filename}:\n{e}")
             self.update_status(f"Lỗi tải {target_filename}.")
         except IOError as e:
             algo_mgmnt_logger.error(f"IOError saving {save_path}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Lưu File", f"Không thể lưu file {target_filename}:\n{e}") # Sử dụng target_filename
+            QMessageBox.critical(self, "Lỗi Lưu File", f"Không thể lưu file {target_filename}:\n{e}")
             self.update_status(f"Lỗi lưu {target_filename}.")
         except Exception as e:
             algo_mgmnt_logger.error(f"Unexpected error downloading/saving {online_name}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Không Xác Định", f"Lỗi khi tải {target_filename}:\n{e}") # Sử dụng target_filename
+            QMessageBox.critical(self, "Lỗi Không Xác Định", f"Lỗi khi tải {target_filename}:\n{e}")
             self.update_status(f"Lỗi không xác định khi tải {target_filename}.")
 
 
@@ -5375,7 +5204,6 @@ class LotteryPredictionApp(QMainWindow):
                 response.raise_for_status()
                 online_code_content = response.text
 
-            # Create backup of the old file
             backup_path = local_algo_path.with_suffix(local_algo_path.suffix + ".bak")
             try:
                 if local_algo_path.exists():
@@ -5383,7 +5211,6 @@ class LotteryPredictionApp(QMainWindow):
                     algo_mgmnt_logger.info(f"Backed up '{local_algo_path.name}' to '{backup_path.name}'")
             except Exception as e_backup:
                 algo_mgmnt_logger.warning(f"Could not create backup for {local_algo_path.name}: {e_backup}")
-                # Optionally, ask user if they want to proceed without backup
 
             local_algo_path.write_text(online_code_content, encoding='utf-8')
             algo_mgmnt_logger.info(f"Successfully updated {local_algo_path}")
@@ -5410,36 +5237,30 @@ class LotteryPredictionApp(QMainWindow):
         """Điền dữ liệu từ config vào các widget trên tab Cài đặt."""
         main_logger.debug("Điền dữ liệu từ config vào giao diện tab Cài đặt...")
         try:
-            # Giá trị mặc định nếu không tìm thấy trong config
             default_data_path = str(self.data_dir / "xsmb-2-digits.json")
             default_sync_url = "https://raw.githubusercontent.com/khiemdoan/vietnam-lottery-xsmb-analysis/main/data/xsmb-2-digits.json"
             default_algo_list_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa"
             default_width = 1200
             default_height = 1000
-            # self.font_family_base và self.font_size_base được tải trước đó trong load_config
 
-            # Điền đường dẫn file dữ liệu
             if hasattr(self, 'config_data_path_edit'):
                 data_file = self.config.get('DATA', 'data_file', fallback=default_data_path)
                 self.config_data_path_edit.setText(data_file)
             else:
                 main_logger.warning("Widget 'config_data_path_edit' không tìm thấy khi điền UI.")
 
-            # Điền URL đồng bộ dữ liệu
             if hasattr(self, 'config_sync_url_edit'):
                 sync_url = self.config.get('DATA', 'sync_url', fallback=default_sync_url)
                 self.config_sync_url_edit.setText(sync_url)
             else:
                 main_logger.warning("Widget 'config_sync_url_edit' không tìm thấy khi điền UI.")
 
-            # Điền URL danh sách thuật toán (MỚI)
             if hasattr(self, 'config_algo_list_url_edit'):
                 algo_list_url = self.config.get('DATA', 'algo_list_url', fallback=default_algo_list_url)
                 self.config_algo_list_url_edit.setText(algo_list_url)
             else:
                 main_logger.warning("Widget 'config_algo_list_url_edit' không tìm thấy khi điền UI.")
 
-            # Điền kích thước cửa sổ
             if hasattr(self, 'window_width_edit'):
                 width_str = self.config.get('UI', 'width', fallback=str(default_width))
                 self.window_width_edit.setText(width_str)
@@ -5452,21 +5273,20 @@ class LotteryPredictionApp(QMainWindow):
             else:
                 main_logger.warning("Widget 'window_height_edit' không tìm thấy khi điền UI.")
 
-            # Điền cài đặt font chữ
             if hasattr(self, 'theme_font_family_base_combo'):
-                font_family = self.font_family_base # Sử dụng giá trị đã được load/set
+                font_family = self.font_family_base
                 index = self.theme_font_family_base_combo.findText(font_family, Qt.MatchFixedString)
                 if index >= 0:
                      self.theme_font_family_base_combo.setCurrentIndex(index)
-                else: # Nếu font trong config không có trong danh sách, chọn font mặc định (ví dụ Segoe UI)
+                else:
                      default_font_index = self.theme_font_family_base_combo.findText('Segoe UI', Qt.MatchFixedString)
                      if default_font_index >= 0: self.theme_font_family_base_combo.setCurrentIndex(default_font_index)
-                     else: self.theme_font_family_base_combo.setCurrentIndex(0) # Hoặc chọn item đầu tiên
+                     else: self.theme_font_family_base_combo.setCurrentIndex(0)
             else:
                  main_logger.warning("Widget 'theme_font_family_base_combo' không tìm thấy khi điền UI.")
 
             if hasattr(self, 'theme_font_size_base_spinbox'):
-                self.theme_font_size_base_spinbox.setValue(self.font_size_base) # Sử dụng giá trị đã được load/set
+                self.theme_font_size_base_spinbox.setValue(self.font_size_base)
             else:
                  main_logger.warning("Widget 'theme_font_size_base_spinbox' không tìm thấy khi điền UI.")
 
@@ -5512,7 +5332,7 @@ class LotteryPredictionApp(QMainWindow):
         main_logger.info(f"Loading main config: {config_filename}...")
         is_main_settings = (config_filename == "settings.ini")
         config_path = self.config_dir / config_filename
-        self.config = configparser.ConfigParser(interpolation=None) # Initialize self.config
+        self.config = configparser.ConfigParser(interpolation=None)
         config_needs_saving = False
 
         try:
@@ -5520,16 +5340,15 @@ class LotteryPredictionApp(QMainWindow):
                 read_files = self.config.read(config_path, encoding='utf-8')
                 if not read_files:
                      main_logger.error(f"ConfigParser failed to read file (but exists): {config_path}. Check permissions or format. Falling back to defaults.")
-                     self.set_default_config() # This will populate self.config with defaults
+                     self.set_default_config()
                      config_needs_saving = True
                 else:
                      main_logger.info(f"Read config from {config_path}")
             else:
                 main_logger.warning(f"Config file {config_path} not found. Setting defaults.")
-                self.set_default_config() # This will populate self.config with defaults
+                self.set_default_config()
                 config_needs_saving = True
 
-            # Ensure DATA section and its fallbacks
             default_data_path = str(self.data_dir / "xsmb-2-digits.json")
             default_sync_url = "https://raw.githubusercontent.com/khiemdoan/vietnam-lottery-xsmb-analysis/main/data/xsmb-2-digits.json"
             default_algo_list_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa"
@@ -5537,9 +5356,8 @@ class LotteryPredictionApp(QMainWindow):
             if not self.config.has_section('DATA'):
                 main_logger.warning("Config missing [DATA] section. Adding default.")
                 self.config.add_section('DATA')
-                config_needs_saving = True # Mark for saving if section was added
+                config_needs_saving = True
             
-            # Ensure options exist with fallbacks, update self.config if option was missing
             if not self.config.has_option('DATA', 'data_file'):
                 self.config.set('DATA','data_file', default_data_path)
                 config_needs_saving = True
@@ -5550,31 +5368,16 @@ class LotteryPredictionApp(QMainWindow):
                 self.config.set('DATA','algo_list_url', default_algo_list_url)
                 config_needs_saving = True
 
-            # ---- SECTION REMOVED FROM HERE ----
-            # The following lines that tried to update Main tab's UI elements are removed
-            # because the UI elements don't exist yet when load_config is first called.
-            #
-            # data_file_from_config = self.config.get('DATA', 'data_file', fallback=default_data_path)
-            # sync_url_from_config = self.config.get('DATA', 'sync_url', fallback=default_sync_url)
-            #
-            # if hasattr(self, 'sync_url_input'):
-            #     self.sync_url_input.setText(sync_url_from_config)
-            # if hasattr(self, 'data_file_path_label'):
-            #     self.data_file_path_label.setText(data_file_from_config)
-            #     self.data_file_path_label.setToolTip(data_file_from_config)
-            # ---- END OF SECTION REMOVED ----
 
 
-            # UI Section - for window size and font (needed before full UI population)
-            default_width, default_height = 1200, 800 # Default values if not in config
+            default_width, default_height = 1200, 800
             default_font_family = 'Segoe UI'
-            default_font_size = 10
+            default_font_size = 12
             if not self.config.has_section('UI'):
                 main_logger.warning("Config missing [UI] section. Adding default.")
                 self.config.add_section('UI')
-                config_needs_saving = True # Mark for saving if section was added
+                config_needs_saving = True
 
-            # Ensure UI options exist and set instance variables
             if not self.config.has_option('UI', 'width'):
                 self.config.set('UI', 'width', str(default_width))
                 config_needs_saving = True
@@ -5592,10 +5395,9 @@ class LotteryPredictionApp(QMainWindow):
                 self.loaded_width = self.config.getint('UI', 'width')
                 self.loaded_height = self.config.getint('UI', 'height')
 
-                # Validate and correct if necessary (ensure it's a string for config)
                 current_width_str = self.config.get('UI', 'width')
                 current_height_str = self.config.get('UI', 'height')
-                if current_width_str != str(self.loaded_width): # If getint changed type
+                if current_width_str != str(self.loaded_width):
                     self.config.set('UI', 'width', str(self.loaded_width))
                     config_needs_saving = True
                 if current_height_str != str(self.loaded_height):
@@ -5610,9 +5412,8 @@ class LotteryPredictionApp(QMainWindow):
                 config_needs_saving = True
 
             try:
-                # Font Family
                 loaded_font_family = self.config.get('UI', 'font_family_base')
-                if not self.available_fonts: # Should not happen if __init__ is correct
+                if not self.available_fonts:
                     main_logger.error("System font list is empty! Using default font family for instance var.")
                     self.font_family_base = default_font_family
                     if loaded_font_family != default_font_family:
@@ -5621,19 +5422,18 @@ class LotteryPredictionApp(QMainWindow):
                 elif loaded_font_family not in self.available_fonts:
                     main_logger.warning(f"Font '{loaded_font_family}' from config not found. Falling back to '{default_font_family}' for instance var.")
                     self.font_family_base = default_font_family
-                    self.config.set('UI', 'font_family_base', self.font_family_base) # Save the fallback to config
+                    self.config.set('UI', 'font_family_base', self.font_family_base)
                     config_needs_saving = True
                 else:
-                    self.font_family_base = loaded_font_family # Set instance variable
+                    self.font_family_base = loaded_font_family
 
-                # Font Size
-                original_size_str = self.config.get('UI', 'font_size_base') # Get as string first
-                loaded_font_size = self.config.getint('UI', 'font_size_base') # Then as int for validation
-                validated_font_size = max(8, min(24, loaded_font_size)) # Validate range
-                self.font_size_base = validated_font_size # Set instance variable
+                original_size_str = self.config.get('UI', 'font_size_base')
+                loaded_font_size = self.config.getint('UI', 'font_size_base')
+                validated_font_size = max(8, min(24, loaded_font_size))
+                self.font_size_base = validated_font_size
 
-                if str(validated_font_size) != original_size_str: # If validation changed it
-                     self.config.set('UI', 'font_size_base', str(validated_font_size)) # Save validated string to config
+                if str(validated_font_size) != original_size_str:
+                     self.config.set('UI', 'font_size_base', str(validated_font_size))
                      config_needs_saving = True
 
                 main_logger.info(f"Loaded font instance vars: Family='{self.font_family_base}', Size={self.font_size_base}")
@@ -5649,17 +5449,16 @@ class LotteryPredictionApp(QMainWindow):
 
             if is_main_settings and config_needs_saving:
                  main_logger.info("Config needed saving after loading defaults/validation.")
-                 self._save_default_config_if_needed(self.settings_file_path) # Save if any defaults were applied
+                 self._save_default_config_if_needed(self.settings_file_path)
 
         except configparser.Error as e:
             main_logger.error(f"Error parsing config file {config_path}: {e}. Setting defaults.")
             self.set_default_config()
-            self._apply_default_config_to_vars() # Make sure instance vars are set from these defaults
+            self._apply_default_config_to_vars()
             if is_main_settings:
                  self._save_default_config_if_needed(self.settings_file_path)
         except Exception as e:
             main_logger.error(f"Unexpected error loading main config {config_path}: {e}", exc_info=True)
-            # Fallback to defaults in case of any other severe error
             self.set_default_config()
             self._apply_default_config_to_vars()
             if is_main_settings:
@@ -5746,7 +5545,6 @@ class LotteryPredictionApp(QMainWindow):
          """
          main_logger.debug("Áp dụng các giá trị config mặc định vào biến và một số UI.")
          
-         # Lấy giá trị từ self.config (đã được set_default_config)
          data_file = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
          sync_url = self.config.get('DATA', 'sync_url', fallback="https://raw.githubusercontent.com/khiemdoan/vietnam-lottery-xsmb-analysis/main/data/xsmb-2-digits.json")
          algo_list_url = self.config.get('DATA', 'algo_list_url', fallback="https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa")
@@ -5758,7 +5556,6 @@ class LotteryPredictionApp(QMainWindow):
          self.loaded_width = int(width_str)
          self.loaded_height = int(height_str)
 
-         # Cập nhật các widget trên tab Cài đặt (nếu chúng đã được tạo)
          if hasattr(self, 'config_data_path_edit'): self.config_data_path_edit.setText(data_file)
          if hasattr(self, 'config_sync_url_edit'): self.config_sync_url_edit.setText(sync_url)
          if hasattr(self, 'config_algo_list_url_edit'): self.config_algo_list_url_edit.setText(algo_list_url)
@@ -5773,34 +5570,29 @@ class LotteryPredictionApp(QMainWindow):
          if hasattr(self, 'theme_font_size_base_spinbox'):
             self.theme_font_size_base_spinbox.setValue(self.font_size_base)
 
-         # Cập nhật widget trên tab Main
          if hasattr(self, 'sync_url_input'): self.sync_url_input.setText(sync_url)
          if hasattr(self, 'data_file_path_label'):
              self.data_file_path_label.setText(data_file)
              self.data_file_path_label.setToolTip(data_file)
 
 
-         # Áp dụng lại trạng thái cho các thuật toán dựa trên config mặc định (thường là enabled=True)
-         # Hàm này cũng sẽ tạo section trong self.config nếu chưa có
          self.apply_algorithm_config_states()
 
     def set_default_config(self):
         """Thiết lập đối tượng self.config về các giá trị mặc định."""
         main_logger.info("Thiết lập đối tượng self.config về giá trị mặc định.")
-        self.config = configparser.ConfigParser(interpolation=None) # Tạo mới đối tượng config
+        self.config = configparser.ConfigParser(interpolation=None)
         self.config['DATA'] = {
-            'data_file': str(self.data_dir / "xsmb-2-digits.json"), # Đường dẫn file dữ liệu mặc định
-            'sync_url': "https://raw.githubusercontent.com/khiemdoan/vietnam-lottery-xsmb-analysis/main/data/xsmb-2-digits.json", # URL đồng bộ mặc định
-            'algo_list_url': "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa" # URL danh sách thuật toán mặc định
+            'data_file': str(self.data_dir / "xsmb-2-digits.json"),
+            'sync_url': "https://raw.githubusercontent.com/khiemdoan/vietnam-lottery-xsmb-analysis/main/data/xsmb-2-digits.json",
+            'algo_list_url': "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa"
         }
         self.config['UI'] = {
-            'width': '1200', # Chiều rộng cửa sổ mặc định
-            'height': '1000', # Chiều cao cửa sổ mặc định
-            'font_family_base': 'Segoe UI', # Font chữ mặc định
-            'font_size_base': '10' # Cỡ chữ mặc định
+            'width': '1200',
+            'height': '1000',
+            'font_family_base': 'Segoe UI',
+            'font_size_base': '10'
         }
-        # Không thêm section cho từng thuật toán ở đây, vì chúng sẽ được tự động thêm
-        # khi tải thuật toán lần đầu hoặc khi người dùng thay đổi trạng thái của chúng.
 
     def save_config_from_settings_ui(self):
          """Saves the current state of the Settings UI fields to settings.ini."""
@@ -5853,75 +5645,61 @@ class LotteryPredictionApp(QMainWindow):
     def save_config(self, config_filename="settings.ini"):
         """Lưu đối tượng self.config hiện tại vào file được chỉ định."""
         main_logger.debug(f"Lưu đối tượng config vào file: {config_filename}...")
-        save_path = self.config_dir / config_filename # Đường dẫn đầy đủ để lưu
+        save_path = self.config_dir / config_filename
         try:
-            # Đảm bảo các section và option cơ bản tồn tại trước khi ghi
-            # (quan trọng khi lưu file settings.ini mặc định lần đầu)
             if not self.config.has_section('DATA'): self.config.add_section('DATA')
             if not self.config.has_section('UI'): self.config.add_section('UI')
             
-            # Đảm bảo các options mặc định cho DATA nếu chưa có
             if not self.config.has_option('DATA', 'data_file'): 
                 self.config.set('DATA', 'data_file', str(self.data_dir / "xsmb-2-digits.json"))
             if not self.config.has_option('DATA', 'sync_url'): 
                 self.config.set('DATA', 'sync_url', "https://raw.githubusercontent.com/khiemdoan/vietnam-lottery-xsmb-analysis/main/data/xsmb-2-digits.json")
-            if not self.config.has_option('DATA', 'algo_list_url'): # Mới thêm
+            if not self.config.has_option('DATA', 'algo_list_url'):
                 self.config.set('DATA', 'algo_list_url', "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa")
 
-            # Đảm bảo các options mặc định cho UI nếu chưa có
             if not self.config.has_option('UI', 'width'): self.config.set('UI','width', '1200')
             if not self.config.has_option('UI', 'height'): self.config.set('UI','height', '800')
             if not self.config.has_option('UI', 'font_family_base'): self.config.set('UI','font_family_base', 'Segoe UI')
             if not self.config.has_option('UI', 'font_size_base'): self.config.set('UI','font_size_base', '10')
 
-            # Ghi self.config ra file
             with open(save_path, 'w', encoding='utf-8') as configfile:
                 self.config.write(configfile)
 
-            # Nếu lưu vào file settings.ini chính, cập nhật một số UI ngay lập tức
             if config_filename == "settings.ini":
-                if hasattr(self, 'sync_url_input'): # Widget trên tab Main
+                if hasattr(self, 'sync_url_input'):
                      self.sync_url_input.setText(self.config.get('DATA','sync_url', fallback=''))
-                self._apply_window_size_from_config() # Áp dụng kích thước cửa sổ
+                self._apply_window_size_from_config()
 
             main_logger.info(f"Cấu hình đã được lưu vào: {save_path}")
 
         except Exception as e:
             main_logger.error(f"Lỗi khi lưu đối tượng config vào '{config_filename}': {e}", exc_info=True)
-            # Thông thường, hàm này được gọi nội bộ, nên có thể không cần QMessageBox ở đây
-            # Nếu muốn thông báo lỗi ra UI, bạn cần truyền self (QMainWindow) vào hàm này.
-            # QMessageBox.critical(self, "Lỗi Lưu File", f"Không thể lưu file {config_filename}:\n{e}")
-            raise # Ném lại lỗi để nơi gọi xử lý nếu cần
+            raise
 
     def save_current_settings_to_main_config(self):
         """Lưu trạng thái hiện tại của các trường trong UI Cài đặt vào file settings.ini."""
         main_logger.info("Lưu cấu hình từ UI Cài đặt vào settings.ini...")
         try:
-            # Đảm bảo section DATA tồn tại
             if not self.config.has_section('DATA'): self.config.add_section('DATA')
             self.config.set('DATA', 'data_file', self.config_data_path_edit.text())
             self.config.set('DATA', 'sync_url', self.config_sync_url_edit.text())
-            self.config.set('DATA', 'algo_list_url', self.config_algo_list_url_edit.text()) # Lấy giá trị mới
+            self.config.set('DATA', 'algo_list_url', self.config_algo_list_url_edit.text())
 
-            # Đảm bảo section UI tồn tại
             if not self.config.has_section('UI'): self.config.add_section('UI')
             width_str = self.window_width_edit.text().strip()
             height_str = self.window_height_edit.text().strip()
             try: w = int(width_str) if width_str else 1200
-            except ValueError: w = 1200 # Mặc định nếu nhập liệu không hợp lệ
+            except ValueError: w = 1200
             try: h = int(height_str) if height_str else 800
             except ValueError: h = 800
             self.config.set('UI', 'width', str(w))
             self.config.set('UI', 'height', str(h))
 
-            # Lưu cài đặt font
             font_family = self.theme_font_family_base_combo.currentText()
             font_size = str(self.theme_font_size_base_spinbox.value())
             self.config.set('UI', 'font_family_base', font_family)
             self.config.set('UI', 'font_size_base', font_size)
 
-            # Lưu trạng thái của các thuật toán (enabled, weight_enabled, weight_value)
-            # Phần này đã có trong phiên bản gốc của bạn, đảm bảo nó được bao gồm ở đây nếu cần
             if hasattr(self, 'algorithms'):
                  for algo_name, algo_data in self.algorithms.items():
                      chk_enable = algo_data.get('chk_enable')
@@ -5929,26 +5707,22 @@ class LotteryPredictionApp(QMainWindow):
                      weight_entry = algo_data.get('weight_entry')
                      if not chk_enable or not chk_weight or not weight_entry: continue
 
-                     config_section = algo_name # Tên section là tên thuật toán
+                     config_section = algo_name
                      if not self.config.has_section(config_section): self.config.add_section(config_section)
 
                      self.config.set(config_section, 'enabled', str(chk_enable.isChecked()))
                      self.config.set(config_section, 'weight_enabled', str(chk_weight.isChecked()))
                      value_to_save = weight_entry.text().strip()
-                     # Kiểm tra xem giá trị có phải là số float hợp lệ không
                      value_to_save = value_to_save if self._is_valid_float_str(value_to_save) else "1.0"
                      self.config.set(config_section, 'weight_value', value_to_save)
 
 
-            # Ghi self.config đã cập nhật vào file settings.ini
-            self.save_config("settings.ini") # Gọi hàm save_config đã có để ghi file
+            self.save_config("settings.ini")
 
-            # Cập nhật lại các widget liên quan trên các tab khác nếu cần
-            if hasattr(self, 'sync_url_input'): # Widget trên tab Main
+            if hasattr(self, 'sync_url_input'):
                 self.sync_url_input.setText(self.config_sync_url_edit.text())
-            self._apply_window_size_from_config() # Áp dụng kích thước cửa sổ
+            self._apply_window_size_from_config()
             
-            # Cập nhật biến instance cho font để các hàm get_qfont sử dụng giá trị mới
             self.font_family_base = font_family
             self.font_size_base = int(font_size)
 
@@ -5986,41 +5760,34 @@ class LotteryPredictionApp(QMainWindow):
     def save_config_dialog(self):
         """Mở hộp thoại để lưu cấu hình hiện tại (từ UI Cài đặt) ra một file .ini mới."""
         try:
-            # Tạo tên file mặc định dựa trên ngày giờ hiện tại
             default_name = f"config_{datetime.datetime.now():%Y%m%d_%H%M}.ini"
-            # Mở hộp thoại lưu file
             filename, _ = QFileDialog.getSaveFileName(
-                self, # parent
-                "Lưu Cấu Hình App Hiện Tại Thành File Mới", # Tiêu đề hộp thoại
-                str(self.config_dir / default_name), # Đường dẫn và tên file mặc định
-                "Config files (*.ini);;All files (*.*)" # Bộ lọc file
+                self,
+                "Lưu Cấu Hình App Hiện Tại Thành File Mới",
+                str(self.config_dir / default_name),
+                "Config files (*.ini);;All files (*.*)"
             )
-            if filename: # Nếu người dùng chọn một tên file và nhấn Save
-                new_filename = Path(filename).name # Lấy chỉ tên file
-                # Các file hệ thống không nên bị ghi đè
+            if filename:
+                new_filename = Path(filename).name
                 protected_files = {"settings.ini", "performance_history.ini", "settings_optimizer.ini", "ui_theme.ini"}
                 if new_filename.lower() in protected_files:
                     QMessageBox.warning(self, "Lưu Ý", f"Không nên ghi đè file hệ thống '{new_filename}'.\nVui lòng chọn tên khác.")
                     return
 
-                # Tạo một đối tượng ConfigParser tạm thời để chứa cấu hình từ UI
                 temp_config_obj = configparser.ConfigParser(interpolation=None)
 
-                # Section [DATA]
                 if not temp_config_obj.has_section('DATA'): temp_config_obj.add_section('DATA')
                 temp_config_obj.set('DATA', 'data_file', self.config_data_path_edit.text())
                 temp_config_obj.set('DATA', 'sync_url', self.config_sync_url_edit.text())
-                temp_config_obj.set('DATA', 'algo_list_url', self.config_algo_list_url_edit.text()) # Thêm URL danh sách algo
+                temp_config_obj.set('DATA', 'algo_list_url', self.config_algo_list_url_edit.text())
 
-                # Section [UI]
                 if not temp_config_obj.has_section('UI'): temp_config_obj.add_section('UI')
                 w_str = self.window_width_edit.text(); h_str = self.window_height_edit.text()
-                temp_config_obj.set('UI', 'width', w_str if w_str.isdigit() else '1200') # Mặc định nếu không phải số
+                temp_config_obj.set('UI', 'width', w_str if w_str.isdigit() else '1200')
                 temp_config_obj.set('UI', 'height', h_str if h_str.isdigit() else '800')
                 temp_config_obj.set('UI', 'font_family_base', self.theme_font_family_base_combo.currentText())
                 temp_config_obj.set('UI', 'font_size_base', str(self.theme_font_size_base_spinbox.value()))
 
-                # Sections cho từng thuật toán (lưu trạng thái hiện tại của chúng)
                 if hasattr(self, 'algorithms'):
                      for algo_name, algo_data in self.algorithms.items():
                          chk_enable = algo_data.get('chk_enable')
@@ -6028,18 +5795,17 @@ class LotteryPredictionApp(QMainWindow):
                          weight_entry = algo_data.get('weight_entry')
                          if not chk_enable or not chk_weight or not weight_entry: continue
                          
-                         sec = algo_name # Tên section là tên thuật toán
+                         sec = algo_name
                          if not temp_config_obj.has_section(sec): temp_config_obj.add_section(sec)
                          temp_config_obj.set(sec, 'enabled', str(chk_enable.isChecked()))
                          temp_config_obj.set(sec, 'weight_enabled', str(chk_weight.isChecked()))
                          w_val = weight_entry.text().strip()
                          temp_config_obj.set(sec, 'weight_value', w_val if self._is_valid_float_str(w_val) else "1.0")
 
-                # Ghi đối tượng config tạm thời ra file đã chọn
                 with open(filename, 'w', encoding='utf-8') as configfile:
                     temp_config_obj.write(configfile)
 
-                self.update_config_list() # Cập nhật danh sách file config trên UI
+                self.update_config_list()
                 QMessageBox.information(self, "Lưu Thành Công", f"Đã lưu cấu hình hiện tại vào:\n{new_filename}")
         except Exception as e:
             main_logger.error(f"Lỗi trong save_config_dialog: {e}", exc_info=True)
@@ -8225,12 +7991,10 @@ class LotteryPredictionApp(QMainWindow):
 
     def setup_algo_management_tab(self):
         algo_mgmnt_logger.debug("Setting up Algorithm Management tab UI (PyQt5)...")
-        # Main layout for this tab
         tab_layout = QVBoxLayout(self.algo_management_tab_frame)
         tab_layout.setContentsMargins(10, 10, 10, 10)
         tab_layout.setSpacing(10)
 
-        # Top control frame (Refresh button)
         control_frame = QFrame()
         control_frame_layout = QHBoxLayout(control_frame)
         control_frame_layout.setContentsMargins(0,0,0,0)
@@ -8241,13 +8005,11 @@ class LotteryPredictionApp(QMainWindow):
         control_frame_layout.addStretch(1)
         tab_layout.addWidget(control_frame)
 
-        # Main splitter for local and online algorithms
         splitter = QSplitter(Qt.Horizontal)
 
-        # --- Left Group: Local Algorithms ---
         local_algo_group = QGroupBox("🎰Thuật toán trên máy")
         local_algo_layout = QVBoxLayout(local_algo_group)
-        local_algo_layout.setContentsMargins(5, 10, 5, 5) # GroupBox title padding
+        local_algo_layout.setContentsMargins(5, 10, 5, 5)
 
         self.local_algo_manage_scroll_area = QScrollArea()
         self.local_algo_manage_scroll_area.setWidgetResizable(True)
@@ -8267,7 +8029,6 @@ class LotteryPredictionApp(QMainWindow):
         local_algo_layout.addWidget(self.local_algo_manage_scroll_area)
         splitter.addWidget(local_algo_group)
 
-        # --- Right Group: Online Algorithms ---
         online_algo_group = QGroupBox("📡Danh sách Thuật toán Online")
         online_algo_layout = QVBoxLayout(online_algo_group)
         online_algo_layout.setContentsMargins(5, 10, 5, 5)
@@ -8290,18 +8051,14 @@ class LotteryPredictionApp(QMainWindow):
         online_algo_layout.addWidget(self.online_algo_scroll_area)
         splitter.addWidget(online_algo_group)
 
-        tab_layout.addWidget(splitter, 1) # Give splitter stretch factor
+        tab_layout.addWidget(splitter, 1)
 
-        # Set initial splitter sizes (e.g., 1/3 for local, 2/3 for online)
         QTimer.singleShot(0, lambda: splitter.setSizes([self.width() // 3, self.width() * 2 // 3]))
 
-        # Initialize data structures for this tab
-        self.local_algorithms_managed_ui = {} # To store UI elements for local algos on this tab
-        self.online_algorithms_ui = {} # To store UI elements for online algos
+        self.local_algorithms_managed_ui = {}
+        self.online_algorithms_ui = {}
 
-        # Initial population
         self._populate_local_algorithms_management_list()
-        # Online list will be populated on refresh or initial load triggered by refresh button
         algo_mgmnt_logger.debug("Algorithm Management tab UI structure set up.")
 
     def _refresh_algo_management_page(self):
@@ -8310,9 +8067,49 @@ class LotteryPredictionApp(QMainWindow):
         QApplication.processEvents()
 
         self._populate_local_algorithms_management_list()
-        self._fetch_and_populate_online_algorithms_list() # This will fetch then populate
+        self._fetch_and_populate_online_algorithms_list()
 
         self.update_status("Làm mới danh sách thuật toán quản lý hoàn tất.")
+
+    def _handle_manage_tab_edit_request(self, display_name_for_optimizer):
+        """Handles edit request from Algorithm Management tab."""
+        algo_mgmnt_logger.info(f"Edit request for '{display_name_for_optimizer}' from Algo Management Tab.")
+        if self.optimizer_app_instance:
+            optimizer_tab_index = -1
+            for i in range(self.tab_widget.count()):
+                if self.tab_widget.widget(i) == self.optimizer_tab_frame:
+                    optimizer_tab_index = i
+                    break
+            
+            if optimizer_tab_index != -1:
+                self.tab_widget.setCurrentIndex(optimizer_tab_index)
+                self.optimizer_app_instance.trigger_select_for_edit(display_name_for_optimizer)
+            else:
+                algo_mgmnt_logger.error("Optimizer tab frame (optimizer_tab_frame) not found when handling edit request.")
+                QMessageBox.critical(self, "Lỗi Giao Diện", "Không tìm thấy tab Tối ưu.")
+        else:
+            algo_mgmnt_logger.error("Optimizer instance (optimizer_app_instance) not available for edit request.")
+            QMessageBox.critical(self, "Lỗi Hệ Thống", "Trình tối ưu chưa được khởi tạo.")
+
+    def _handle_manage_tab_optimize_request(self, display_name_for_optimizer):
+        """Handles optimize request from Algorithm Management tab."""
+        algo_mgmnt_logger.info(f"Optimize request for '{display_name_for_optimizer}' from Algo Management Tab.")
+        if self.optimizer_app_instance:
+            optimizer_tab_index = -1
+            for i in range(self.tab_widget.count()):
+                if self.tab_widget.widget(i) == self.optimizer_tab_frame:
+                    optimizer_tab_index = i
+                    break
+            
+            if optimizer_tab_index != -1:
+                self.tab_widget.setCurrentIndex(optimizer_tab_index)
+                self.optimizer_app_instance.trigger_select_for_optimize(display_name_for_optimizer)
+            else:
+                algo_mgmnt_logger.error("Optimizer tab frame (optimizer_tab_frame) not found when handling optimize request.")
+                QMessageBox.critical(self, "Lỗi Giao Diện", "Không tìm thấy tab Tối ưu.")
+        else:
+            algo_mgmnt_logger.error("Optimizer instance (optimizer_app_instance) not available for optimize request.")
+            QMessageBox.critical(self, "Lỗi Hệ Thống", "Trình tối ưu chưa được khởi tạo.")
 
     def setup_tools_tab(self):
         main_logger.debug("Setting up Tools tab UI (PyQt5)...")
@@ -8366,24 +8163,21 @@ class LotteryPredictionApp(QMainWindow):
             main_logger.error("Tools list layout (tools_list_layout) not found. Cannot load tool UI.")
             return
 
-        # Clear existing tool UI elements
         while self.tools_list_layout.count() > 0:
             item = self.tools_list_layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
 
-        # Ensure initial_tools_label is reset if it was removed
         if not hasattr(self, 'initial_tools_label') or not self.initial_tools_label:
              self.initial_tools_label = QLabel("Đang tải công cụ...")
              self.initial_tools_label.setStyleSheet("font-style: italic; color: #6c757d;")
              self.initial_tools_label.setAlignment(Qt.AlignCenter)
-        # Add it back temporarily, it will be removed if tools are found
         if self.tools_list_layout.indexOf(self.initial_tools_label) == -1:
              self.tools_list_layout.addWidget(self.initial_tools_label)
 
 
-        if not hasattr(self, 'loaded_tools'): # Should be initialized in __init__
+        if not hasattr(self, 'loaded_tools'):
             self.loaded_tools = {}
         self.loaded_tools.clear()
         count_success, count_failed = 0, 0
@@ -8395,7 +8189,7 @@ class LotteryPredictionApp(QMainWindow):
 
         try:
             tool_files_to_load = [
-                f for f in self.tools_dir.glob('*.pyw') # Scan for .pyw files
+                f for f in self.tools_dir.glob('*.pyw')
                 if f.is_file()
             ]
             main_logger.debug(f"Found {len(tool_files_to_load)} potential .pyw tool files.")
@@ -8409,7 +8203,7 @@ class LotteryPredictionApp(QMainWindow):
             if self.initial_tools_label and self.tools_list_layout.indexOf(self.initial_tools_label) != -1:
                 self.tools_list_layout.removeWidget(self.initial_tools_label)
                 self.initial_tools_label.deleteLater()
-                self.initial_tools_label = None # Mark as removed
+                self.initial_tools_label = None
 
             main_logger.debug(f"Processing tool file: {tool_path.name}")
             try:
@@ -8422,7 +8216,7 @@ class LotteryPredictionApp(QMainWindow):
                 main_logger.error(f"Error processing tool file {tool_path.name}: {e}", exc_info=True)
                 count_failed += 1
          
-        if not has_tools and self.initial_tools_label: # If no tools were successfully processed
+        if not has_tools and self.initial_tools_label:
              self.initial_tools_label.setText("Không tìm thấy file công cụ (.pyw) nào trong thư mục 'tools'.")
 
 
@@ -8436,33 +8230,31 @@ class LotteryPredictionApp(QMainWindow):
 
     def extract_tool_info_from_file(self, tool_path: Path):
         display_name = tool_path.name
-        description = "Không có mô tả." # Default description
+        description = "Không có mô tả."
 
         try:
             source_code = tool_path.read_text(encoding='utf-8', errors='ignore')
             tree = ast.parse(source_code)
 
-            # Attempt to get module-level docstring for description
             module_docstring = ast.get_docstring(tree)
             if module_docstring:
-                description = module_docstring.strip().splitlines()[0] # Use first line
+                description = module_docstring.strip().splitlines()[0]
 
-            # Search for setWindowTitle calls
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call):
                     func_name = ""
-                    if isinstance(node.func, ast.Attribute): # e.g., self.setWindowTitle, app.setWindowTitle
+                    if isinstance(node.func, ast.Attribute):
                         func_name = node.func.attr
-                    elif isinstance(node.func, ast.Name): # e.g., setWindowTitle (if imported directly)
+                    elif isinstance(node.func, ast.Name):
                         func_name = node.func.id
 
                     if func_name == 'setWindowTitle':
                         if node.args:
                             first_arg = node.args[0]
-                            if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str): # Python 3.8+
+                            if isinstance(first_arg, ast.Constant) and isinstance(first_arg.value, str):
                                 display_name = first_arg.value
                                 break
-                            elif hasattr(ast, 'Str') and isinstance(first_arg, ast.Str) and isinstance(first_arg.s, str): # Python < 3.8
+                            elif hasattr(ast, 'Str') and isinstance(first_arg, ast.Str) and isinstance(first_arg.s, str):
                                 display_name = first_arg.s
                                 break
         except FileNotFoundError:
@@ -8472,7 +8264,6 @@ class LotteryPredictionApp(QMainWindow):
         except Exception as e:
             main_logger.error(f"Error extracting info from {tool_path.name} using AST: {e}", exc_info=True)
         
-        # Fallback for description if AST fails or no docstring: check for a specific comment
         if description == "Không có mô tả.":
              try:
                  with tool_path.open('r', encoding='utf-8', errors='ignore') as f:
@@ -8481,7 +8272,7 @@ class LotteryPredictionApp(QMainWindow):
                          if stripped_line.startswith('# DESC:'):
                              description = stripped_line[len('# DESC:'):].strip()
                              break
-                         if stripped_line and not stripped_line.startswith('#'): # Stop if non-comment line found early
+                         if stripped_line and not stripped_line.startswith('#'):
                              break
              except Exception as e_comment:
                  main_logger.warning(f"Could not read tool {tool_path.name} for comment-based description: {e_comment}")
@@ -8535,7 +8326,7 @@ class LotteryPredictionApp(QMainWindow):
             
             button_container = QWidget()
             button_v_layout = QVBoxLayout(button_container)
-            button_v_layout.addWidget(run_button, alignment=Qt.AlignVCenter | Qt.AlignRight) # Align button
+            button_v_layout.addWidget(run_button, alignment=Qt.AlignVCenter | Qt.AlignRight)
             button_v_layout.setContentsMargins(0,0,0,0)
 
             tool_layout.addWidget(button_container)
@@ -8558,7 +8349,7 @@ class LotteryPredictionApp(QMainWindow):
             subprocess.Popen([interpreter, str(tool_path)])
             self.update_status(f"Đã khởi chạy công cụ: {tool_path.name}")
         except FileNotFoundError:
-            try: # Fallback to 'python' if 'python3' or 'pythonw' not found
+            try:
                  subprocess.Popen(['python', str(tool_path)])
                  self.update_status(f"Đã khởi chạy công cụ (với 'python'): {tool_path.name}")
             except FileNotFoundError:
@@ -8603,7 +8394,7 @@ class LotteryPredictionApp(QMainWindow):
                 main_logger.info("User confirmed exit while optimizer running. Stopping optimizer.")
                 try:
                      self.optimizer_app_instance.stop_optimization(force_stop=True)
-                     time.sleep(0.1) # Give it a moment to process the stop
+                     time.sleep(0.1)
                 except Exception as stop_err:
                      main_logger.error(f"Error stopping optimizer on close: {stop_err}")
                 event.accept()
@@ -8612,7 +8403,6 @@ class LotteryPredictionApp(QMainWindow):
                 event.ignore()
                 return
 
-        # Stop timers
         if hasattr(self, 'prediction_timer') and self.prediction_timer.isActive():
             self.prediction_timer.stop()
             main_logger.debug("Stopped prediction timer.")
