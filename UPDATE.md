@@ -1,5 +1,12 @@
 # Update list
 
+### 13/05/2025
+
+**Update ver 4.4**
+
+
+Update thêm thông tin điểm và lịch sử xuất hiện từng con số trong bảng dự đoán kết quả hàng ngày
+
 
 ### 09/05/2025
 
