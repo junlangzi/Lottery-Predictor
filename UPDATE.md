@@ -1,5 +1,13 @@
 # Update list
 
+### 15/05/2025
+
+**Update ver 4.5**
+
+Bổ sung phần Nhật ký hoạt động trong mục cài đặt, thêm chế độ tự động Sync file kết quả xổ số khi chương trình khởi động. Cập nhật thêm chế độ update khi có phiên bản mới
+
+<br>
+
 ### 13/05/2025
 
 **Update ver 4.4**
