@@ -8,7 +8,7 @@ Cách để viết các thuật toán ở đây: [ALGORITHMS](https://git
 Để chạy chương trình cần cài đặt Python và các gói bổ sung sau:
 
 ```
-pip install PyQt5 requests astor google-generativeai
+pip install PyQt5 requests astor psutil google-generativeai packaging
 ```
 
 Tại thư mục chương trình, chạy file **main.py**
