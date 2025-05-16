@@ -1,6 +1,6 @@
-# Version: 4.7
+# Version: 4.8
 # Date: 16/05/2025
-# Update: <br>Sửa lỗi update, xoá file tạm.<br> Điều chỉnh khung hiển thị thuật toán trên máy trong tab Thuật toán<br> Định dạng lại nhật ký hoạt động trong Repo.<br> Fix nút copy lỗi.<br> Tối ưu thuật toán hoạt động...
+# Update: <br><b>Sửa lỗi update</b>, xoá file tạm.<br> Điều chỉnh khung hiển thị thuật toán trên máy trong tab Thuật toán<br> Định dạng lại nhật ký hoạt động trong Repo.<br> Fix nút copy lỗi.<br> Tối ưu thuật toán hoạt động. <br> Di chuyển thanh Trạng thái hoạt động lên trên, hiển thị thông tin hệ thống xuống phía bên dưới...
 import os
 import sys
 import logging
@@ -57,6 +57,14 @@ except ImportError as e:
     except ImportError:
         pass
     sys.exit(1)
+
+try:
+    import psutil
+    HAS_PSUTIL = True
+    print("psutil library found.")
+except ImportError:
+    HAS_PSUTIL = False
+    print("psutil library not found. System stats in status bar will be unavailable. Install with: pip install psutil")
 
 try:
     if sys.version_info < (3, 9):
@@ -3764,7 +3772,7 @@ class SquareQLabel(QLabel):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (V4.7)")
+        self.setWindowTitle("Lottery Predictor (v4.8)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
 
         self.font_family_base = 'Segoe UI'
@@ -3815,6 +3823,22 @@ class LotteryPredictionApp(QMainWindow):
         self.performance_timer_interval = 200
 
         self.optimizer_app_instance = None
+
+        self.current_process = psutil.Process(os.getpid()) if HAS_PSUTIL else None
+
+        self.algo_count_label = QLabel("Thuật toán: 0")
+        self.tool_count_label = QLabel("Công cụ: 0")
+        self.ram_usage_label = QLabel("Ram sử dụng: N/A MB")
+        self.cpu_usage_label = QLabel("CPU sử dụng (1 core): N/A %")
+        self.system_ram_label = QLabel("Ram hệ thống: N/A GB")
+
+        self.ram_usage_label.setStyleSheet("color: green;")
+        self.cpu_usage_label.setStyleSheet("color: orange;")
+        self.system_ram_label.setStyleSheet("color: red;")
+
+        self.system_stats_timer = QTimer(self)
+        self.system_stats_timer.timeout.connect(self._update_system_stats)
+        self.system_stats_timer.start(2000)
 
         self.update_logger = logging.getLogger("AppUpdate")
         self.update_project_path_edit = None
@@ -3892,6 +3916,9 @@ class LotteryPredictionApp(QMainWindow):
             app_instance.aboutToQuit.connect(self.cleanup_on_quit)
         else:
             main_logger.warning("QApplication instance is None, cannot connect aboutToQuit signal.")
+
+        self._setup_bottom_status_bar()
+        self._update_system_stats()
 
 
         QTimer.singleShot(1500, self.perform_auto_sync_if_needed)
@@ -4039,14 +4066,75 @@ class LotteryPredictionApp(QMainWindow):
         return metadata
 
 
+    def _setup_bottom_status_bar(self):
+        self.bottom_status_bar = QStatusBar()
+        self.setStatusBar(self.bottom_status_bar)
+
+        spacer = QLabel(" ⭐ ")
+
+        self.bottom_status_bar.addPermanentWidget(self.algo_count_label)
+        self.bottom_status_bar.addPermanentWidget(QLabel(" ⭐ "))
+        self.bottom_status_bar.addPermanentWidget(self.tool_count_label)
+        self.bottom_status_bar.addPermanentWidget(QLabel(" ⭐ "))
+        self.bottom_status_bar.addPermanentWidget(self.ram_usage_label)
+        self.bottom_status_bar.addPermanentWidget(QLabel(" ⭐ "))
+        self.bottom_status_bar.addPermanentWidget(self.cpu_usage_label)
+        self.bottom_status_bar.addPermanentWidget(QLabel(" (1 core ) "))
+        self.bottom_status_bar.addPermanentWidget(self.system_ram_label)
+        main_logger.info("Bottom status bar with system stats initialized.")
+
+    def _update_system_stats(self):
+        if not HAS_PSUTIL or not self.current_process:
+            self.ram_usage_label.setText("Ram Sử dụng: N/A")
+            self.cpu_usage_label.setText("CPU Sử dụng (1 core): N/A")
+            self.system_ram_label.setText("Ram Hệ Thống: N/A")
+            return
+
+        try:
+            mem_info = self.current_process.memory_info()
+            ram_usage_mb = mem_info.rss / (1024 * 1024)
+            self.ram_usage_label.setText(f"Ram sử dụng: {ram_usage_mb:.1f} MB")
+
+            cpu_percent = self.current_process.cpu_percent(interval=0.1)
+            self.cpu_usage_label.setText(f"CPU sử dụng (1 core): {cpu_percent:.1f} %")
+
+            sys_mem = psutil.virtual_memory()
+            sys_ram_free_gb = sys_mem.available / (1024 * 1024 * 1024)
+            sys_ram_total_gb = sys_mem.total / (1024 * 1024 * 1024)
+            self.system_ram_label.setText(f"Ram hệ thống: {sys_ram_free_gb:.1f}/{sys_ram_total_gb:.1f} GB")
+
+        except psutil.NoSuchProcess:
+            main_logger.warning("Process not found for psutil, stopping system stats updates.")
+            self.system_stats_timer.stop()
+            self.ram_usage_label.setText("Ram: Lỗi")
+            self.cpu_usage_label.setText("CPU: Lỗi")
+            self.system_ram_label.setText("Ram hệ thống: Lỗi")
+        except Exception as e:
+            main_logger.error(f"Error updating system stats: {e}", exc_info=False)
+
+
     def setup_main_ui_structure(self):
         """Thiết lập cấu trúc giao diện người dùng chính của ứng dụng, bao gồm các tab."""
         main_logger.debug("Thiết lập cấu trúc UI chính (PyQt5)...")
 
+        self.top_status_toolbar = QtWidgets.QToolBar("TopStatusToolBar")
+        self.top_status_toolbar.setMovable(False)
+        self.top_status_toolbar.setFloatable(False)
+        self.top_status_toolbar.setObjectName("TopStatusToolBar")
+        self.top_status_toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+
+        self.status_bar_label = QLabel("Khởi tạo...")
+        self.status_bar_label.setObjectName("StatusBarLabel")
+        self.status_bar_label.setMinimumWidth(400)
+        self.status_bar_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.top_status_toolbar.addWidget(self.status_bar_label)
+        
+        self.addToolBar(Qt.TopToolBarArea, self.top_status_toolbar)
+
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         main_layout = QVBoxLayout(self.central_widget)
-        main_layout.setContentsMargins(5, 5, 5, 5)
+        main_layout.setContentsMargins(5, 0, 5, 5)
 
         self.tab_widget = QTabWidget()
         self.tab_widget.setObjectName("MainTabWidget")
@@ -4073,11 +4161,6 @@ class LotteryPredictionApp(QMainWindow):
         self.setup_settings_tab()
         self.setup_update_tab()
 
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar_label = QLabel("Khởi tạo...")
-        self.status_bar_label.setObjectName("StatusBarLabel")
-        self.status_bar.addWidget(self.status_bar_label, 1)
 
         try:
             icon_path = self.config_dir / "logo.png"
@@ -4227,6 +4310,7 @@ class LotteryPredictionApp(QMainWindow):
             COLOR_TAB_INACTIVE_BG = '#E9E9E9'
             PB_TROUGH = COLOR_DISABLED_BG
             COLOR_CARD_BG = '#F0F0F0'
+            COLOR_TOP_STATUS_BAR_BG = '#F0F0F0'
 
             stylesheet = f"""
                 QMainWindow {{
@@ -4234,12 +4318,36 @@ class LotteryPredictionApp(QMainWindow):
                 }}
                 QWidget {{
                     color: {COLOR_TEXT_DARK};
-                    /* font-family: "{self.font_family_base}"; */ /* Removed to allow QFontDatabase to work better */
-                    /* font-size: {self.font_size_base}pt; */   /* Removed to allow QFontDatabase to work better */
+                    /* font-family: "{self.font_family_base}"; */ 
+                    /* font-size: {self.font_size_base}pt; */   
                 }}
+
+                /* ---- CSS CHO THANH TRẠNG THÁI MỚI Ở TRÊN ---- */
+                QToolBar#TopStatusToolBar {{
+                    background-color: {COLOR_TOP_STATUS_BAR_BG}; 
+                    border-bottom: 1px solid {COLOR_BORDER}; 
+                    border-top: none;
+                    border-left: none;
+                    border-right: none;
+                    padding: 5px 7px; /* Chút padding cho toolbar */
+                    min-height: 30px; /* Chiều cao tối thiểu cho toolbar */
+                }}
+                QLabel#StatusBarLabel {{ 
+                     padding: 5px 7px; 
+                     /* Font và size sẽ được QFont kế thừa hoặc đặt riêng nếu muốn */
+                }}
+                /* Các style trạng thái cụ thể cho StatusBarLabel */
+                QLabel#StatusBarLabel[status="error"] {{ color: {COLOR_DANGER}; font-weight: bold; }}
+                QLabel#StatusBarLabel[status="success"] {{ color: {COLOR_SUCCESS}; font-weight: bold; }}
+                QLabel#StatusBarLabel[status="info"] {{ color: {COLOR_INFO}; }}
+                QLabel#StatusBarLabel {{ /* Default, ghi đè style status="info" nếu cần khác */
+                    color: {COLOR_SECONDARY};
+                }}
+                /* ---- KẾT THÚC CSS CHO THANH TRẠNG THÁI MỚI ---- */
+
                 QTabWidget::pane {{
                     border: 1px solid {COLOR_BORDER};
-                    border-top: none;
+                    border-top: none; 
                     background: {COLOR_BG_WHITE};
                 }}
                 QTabBar::tab {{
@@ -4257,8 +4365,8 @@ class LotteryPredictionApp(QMainWindow):
                     background: {COLOR_TAB_SELECTED_BG};
                     color: {COLOR_TAB_SELECTED_FG};
                     border-color: {COLOR_BORDER};
-                    border-bottom-color: {COLOR_TAB_SELECTED_BG}; /* Hide bottom border of selected tab */
-                    margin-bottom: -1px; /* Pull selected tab down slightly */
+                    border-bottom-color: {COLOR_TAB_SELECTED_BG}; 
+                    margin-bottom: -1px; 
                 }}
                 QTabBar::tab:!selected:hover {{
                     background: #E0E0E0;
@@ -4268,9 +4376,9 @@ class LotteryPredictionApp(QMainWindow):
                     font-weight: bold;
                     border: 1px solid {COLOR_BORDER};
                     border-radius: 4px;
-                    margin-top: 15px; /* Space for title */
-                    padding-top: 8px; /* Ensure content doesn't overlap with border/title */
-                    background-color: {COLOR_BG_LIGHT}; /* Slightly different from QWidget for visual separation */
+                    margin-top: 15px; 
+                    padding-top: 8px; 
+                    background-color: {COLOR_BG_LIGHT}; 
                 }}
                 QGroupBox::title {{
                     subcontrol-origin: margin;
@@ -4278,41 +4386,30 @@ class LotteryPredictionApp(QMainWindow):
                     padding: 0 5px 0 5px;
                     margin-left: 10px;
                     color: {COLOR_PRIMARY_DARK};
-                    background-color: {COLOR_BG_LIGHT}; /* Match GroupBox background */
+                    background-color: {COLOR_BG_LIGHT}; 
                 }}
-
-                QLabel#StatusBarLabel {{
-                     padding: 3px 5px;
-                }}
-                QLabel#StatusBarLabel[status="error"] {{ color: {COLOR_DANGER}; }}
-                QLabel#StatusBarLabel[status="success"] {{ color: {COLOR_SUCCESS}; }}
-                QLabel#StatusBarLabel[status="info"] {{ color: {COLOR_INFO}; }}
-                QLabel#StatusBarLabel[status="info"], QLabel#StatusBarLabel {{ /* Default */
-                    color: {COLOR_SECONDARY};
-                }}
-
 
                 QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QTextEdit {{
                     background-color: {COLOR_BG_WHITE};
                     border: 1px solid {COLOR_BORDER};
                     padding: 4px;
                     border-radius: 3px;
-                    min-height: 22px; /* Consistent height */
+                    min-height: 22px; 
                 }}
                 QLineEdit:read-only {{
-                     background-color: {COLOR_DISABLED_BG}; /* Slightly different for read-only */
+                     background-color: {COLOR_DISABLED_BG}; 
                 }}
                 QLineEdit:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QComboBox:disabled, QTextEdit:disabled, QTextEdit:read-only {{
                     background-color: {COLOR_DISABLED_BG};
                     color: {COLOR_DISABLED_FG};
-                    border: 1px solid #D0D0D0; /* Lighter border for disabled */
+                    border: 1px solid #D0D0D0; 
                 }}
                  QComboBox::drop-down {{ border: none; }}
-                 QComboBox::down-arrow {{ image: url({str(self.config_dir / "down_arrow.png").replace(os.sep, '/')}); }} /* Example for custom arrow */
+                 QComboBox::down-arrow {{ image: url({str(self.config_dir / "down_arrow.png").replace(os.sep, '/')}); }} 
 
 
                 QPushButton {{
-                    background-color: #EFEFEF; /* Standard button color */
+                    background-color: #EFEFEF; 
                     color: {COLOR_TEXT_DARK};
                     border: 1px solid #B0B0B0;
                     padding: 6px 12px;
@@ -4345,26 +4442,25 @@ class LotteryPredictionApp(QMainWindow):
 
                 QPushButton#WarningButton {{
                     background-color: {COLOR_WARNING};
-                    color: {COLOR_TEXT_DARK}; /* Dark text for better contrast on yellow */
-                    border-color: #E0A800; /* Darker yellow for border */
+                    color: {COLOR_TEXT_DARK}; 
+                    border-color: #E0A800; 
                     font-weight: bold;
-                    padding: 8px 12px; /* Slightly larger padding for emphasis */
+                    padding: 8px 12px; 
                 }}
-                QPushButton#WarningButton:hover {{ background-color: #ffad33; }} /* Lighter yellow on hover */
+                QPushButton#WarningButton:hover {{ background-color: #ffad33; }} 
                 QPushButton#WarningButton:pressed {{ background-color: #ffad33; }}
 
                 QPushButton#DangerButton {{
                     background-color: {COLOR_DANGER};
                     color: {COLOR_TEXT_LIGHT};
-                    border-color: #b21f2d; /* Darker red for border */
+                    border-color: #b21f2d; 
                     font-weight: bold;
-                    padding: 5px 8px; /* Adjusted padding */
+                    padding: 5px 8px; 
                     border-radius: 3px;
-                    min-width: 100px; /* Adjusted min-width */
-                    /* max-width: 150px; */ /* Adjusted max-width - <--- XOÁ DÒNG NÀY */
+                    min-width: 100px; 
                     min-height: 23px;
                 }}
-                QPushButton#DangerButton:hover {{ background-color: #c82333; }} /* Darker red on hover */
+                QPushButton#DangerButton:hover {{ background-color: #c82333; }} 
                 QPushButton#DangerButton:pressed {{ background-color: #c82333; }}
 
                 QPushButton#SettingsButton {{
@@ -4374,7 +4470,6 @@ class LotteryPredictionApp(QMainWindow):
                     padding: 5px 8px;
                     border-radius: 3px;
                     min-width: 60px;
-                    /* max-width: 150px; */ /* <--- XOÁ DÒNG NÀY */
                     min-height: 23px;
                 }}
                 QPushButton#SettingsButton:hover {{
@@ -4386,12 +4481,12 @@ class LotteryPredictionApp(QMainWindow):
                 }}
 
                 QPushButton#ListAccentButton {{
-                     background-color: {COLOR_PRIMARY_DARK}; /* Darker accent for list buttons */
+                     background-color: {COLOR_PRIMARY_DARK}; 
                      color: {COLOR_TEXT_LIGHT};
-                     border-color: #004085; /* Even darker border */
-                     padding: 4px 8px; /* Smaller padding for list items */
+                     border-color: #004085; 
+                     padding: 4px 8px; 
                      font-weight: bold;
-                     font-size: {self.get_font_size("small")}pt; /* Smaller font */
+                     font-size: {self.get_font_size("small")}pt; 
                      min-width: 50px;
                 }}
                  QPushButton#ListAccentButton:hover {{ background-color: #004085; }}
@@ -4419,9 +4514,9 @@ class LotteryPredictionApp(QMainWindow):
                     padding: 2px 3px;
                     min-width: 24px;
                     max-width: 24px;
-                    min-height: 22px; /* Match QLineEdit height */
+                    min-height: 22px; 
                     max-height: 22px;
-                    font-size: {self.get_font_size("base") + 2}pt; /* Slightly larger icon */
+                    font-size: {self.get_font_size("base") + 2}pt; 
                     background-color: #F5F5F5;
                     border: 1px solid #C0C0C0;
                     border-radius: 3px;
@@ -4439,18 +4534,18 @@ class LotteryPredictionApp(QMainWindow):
                     border: 1px solid {COLOR_BORDER};
                     border-radius: 3px;
                     text-align: center;
-                    background-color: {PB_TROUGH}; /* Trough color */
+                    background-color: {PB_TROUGH}; 
                 }}
                  QProgressBar::chunk {{
-                     border-radius: 2px; /* Slightly rounded chunk */
-                     background-color: {COLOR_INFO}; /* Default chunk color */
-                     margin: 1px; /* Small margin around the chunk */
+                     border-radius: 2px; 
+                     background-color: {COLOR_INFO}; 
+                     margin: 1px; 
                  }}
                  QProgressBar#PredictionProgressBar::chunk {{ background-color: {COLOR_INFO}; }}
                  QProgressBar#PerformanceProgressBar::chunk {{ background-color: {COLOR_PRIMARY}; }}
                  QProgressBar#OptimizeProgressBar::chunk {{ background-color: {COLOR_SUCCESS}; }}
                  QProgressBar#OptimizeProgressBar {{
-                    min-height: 18px; /* Specific height for this progress bar */
+                    min-height: 18px; 
                  }}
 
 
@@ -4458,8 +4553,8 @@ class LotteryPredictionApp(QMainWindow):
                     border: 1px solid {COLOR_BORDER};
                     background-color: {COLOR_BG_WHITE};
                 }}
-                 QScrollArea > QWidget > QWidget {{ /* Target the viewport's immediate child if it's also a QWidget */
-                     background-color: {COLOR_BG_WHITE}; /* Ensure scroll area content background */
+                 QScrollArea > QWidget > QWidget {{ 
+                     background-color: {COLOR_BG_WHITE}; 
                  }}
 
 
@@ -4474,31 +4569,23 @@ class LotteryPredictionApp(QMainWindow):
                  }}
 
 
-                 QFrame#CardFrame {{ /* For algorithm cards in Optimizer and Main tab */
+                 QFrame#CardFrame {{ 
                      background-color: {COLOR_CARD_BG};
                      border-radius: 4px;
                      margin-bottom: 6px;
-                     /* border: 1px solid #D0D0D0; Removed to rely on StyledPanel shadow*/
                  }}
 
-
-                 /* Default Tooltip Style - This will be used if Qt can render HTML tooltips */
-                 /* If tooltips still don't show with complex HTML, this part might be too restrictive */
-                 /* or the HTML content itself has issues. */
                  QToolTip {{
                      background-color: {COLOR_TOOLTIP_BG};
                      color: {COLOR_TEXT_DARK};
                      border: 1px solid black;
-                     padding: 3px; /* Slightly more padding */
+                     padding: 3px; 
                      border-radius: 3px;
-                     /* font-family: "{self.font_family_base}"; */ /* Explicit font for tooltip */
-                     /* font-size: {self.get_font_size("small")}pt; */ /* Smaller font for tooltip */
-                     /* max-width: 400px; */ /* Optional: constrain tooltip width */
                  }}
             """
 
             self.setStyleSheet(stylesheet)
-            style_logger.info("Application stylesheet applied with updated and commented sections.")
+            style_logger.info("Application stylesheet applied with new top status bar styles.")
 
         except Exception as e:
             style_logger.error(f"Error applying stylesheet: {e}", exc_info=True)
@@ -5608,13 +5695,11 @@ class LotteryPredictionApp(QMainWindow):
             clipboard.setText(account_number)
             self.update_status(f"Đã sao chép số tài khoản: {account_number}")
 
-            # SỬA ĐỔI Ở ĐÂY
             original_text = self.copy_account_button_update_tab.text()
             self.copy_account_button_update_tab.setText("COPY!")
             self.copy_account_button_update_tab.setEnabled(False)
 
             QTimer.singleShot(2000, lambda: (
-                # VÀ Ở ĐÂY
                 self.copy_account_button_update_tab.setText(original_text),
                 self.copy_account_button_update_tab.setEnabled(True)
             ))
@@ -5739,15 +5824,15 @@ class LotteryPredictionApp(QMainWindow):
                 name_label = QLabel(name_label_text)
                 name_label.setFont(self.get_qfont("bold"))
                 name_label.setWordWrap(True)
-                name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred) # MODIFIED
-                name_label.setMinimumWidth(1) # ADDED
+                name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+                name_label.setMinimumWidth(1)
                 card_layout.addWidget(name_label)
 
                 desc_label = QLabel(description)
                 desc_label.setFont(self.get_qfont("small"))
                 desc_label.setWordWrap(True)
-                desc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred) # MODIFIED
-                desc_label.setMinimumWidth(1) # ADDED
+                desc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+                desc_label.setMinimumWidth(1)
                 card_layout.addWidget(desc_label)
                 
                 file_info_text = f"Tên File:<br> {algo_path.name}"
@@ -5756,8 +5841,8 @@ class LotteryPredictionApp(QMainWindow):
                 file_label.setFont(self.get_qfont("italic_small"))
                 file_label.setStyleSheet("color: #6c757d;")
                 file_label.setWordWrap(True)
-                file_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred) # MODIFIED
-                file_label.setMinimumWidth(1) # ADDED
+                file_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+                file_label.setMinimumWidth(1)
                 card_layout.addWidget(file_label)
 
                 button_container = QWidget()
@@ -5994,6 +6079,8 @@ class LotteryPredictionApp(QMainWindow):
                 except Exception:
                     continue
         return None, None
+
+    
 
     def _create_online_algorithm_card_qt(self, online_algo_data: dict):
         """Creates a UI card for a single online algorithm."""
@@ -7494,6 +7581,9 @@ class LotteryPredictionApp(QMainWindow):
         if count_failed > 0:
             status_msg += f", lỗi {count_failed} file"
         self.update_status(status_msg)
+
+        if hasattr(self, 'algo_count_label'):
+            self.algo_count_label.setText(f"Số lượng thuật toán: {count_success}")
 
         if count_failed > 0 and count_success > 0:
             QMessageBox.warning(self, "Lỗi Tải Thuật Toán", f"Đã xảy ra lỗi khi tải {count_failed} file thuật toán.\nKiểm tra file log để biết chi tiết.")
@@ -9535,6 +9625,9 @@ class LotteryPredictionApp(QMainWindow):
             status_msg += f", lỗi {count_failed} file"
         self.update_status(status_msg)
 
+        if hasattr(self, 'tool_count_label'):
+            self.tool_count_label.setText(f"Số lượng công cụ: {count_success}")
+
         if count_failed > 0:
             QMessageBox.warning(self, "Lỗi Tải Công Cụ", f"Đã xảy ra lỗi khi tải {count_failed} file công cụ.\nKiểm tra file log để biết chi tiết.")
 
@@ -9685,7 +9778,7 @@ class LotteryPredictionApp(QMainWindow):
             status_type = "success"
 
         if hasattr(self, 'status_bar_label'):
-            self.status_bar_label.setText(f"Trạng thái: {message}")
+            self.status_bar_label.setText(f"  ⌛Hoạt động: {message}")
             self.status_bar_label.setProperty("status", status_type)
             self.status_bar_label.style().unpolish(self.status_bar_label)
             self.status_bar_label.style().polish(self.status_bar_label)
