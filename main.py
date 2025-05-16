@@ -3,13 +3,13 @@
 # Update: Sửa lỗi update, xoá file tạm, định dạng lại nhật ký hoạt động trong Repo. Tối ưu thuật toán hoạt động...
 import os
 import sys
-import logging # logging nên được import sớm
+import logging
 import json
 import traceback
 import datetime
 import shutil
 import calendar
-from pathlib import Path # Đảm bảo Path đã được import
+from pathlib import Path
 import configparser
 import importlib.util
 import inspect
@@ -26,12 +26,9 @@ from abc import ABC, abstractmethod
 import re
 import textwrap
 import itertools
-import xml.etree.ElementTree as ET # For parsing Atom feed
-from packaging.version import parse as parse_version # For robust version comparison
+import xml.etree.ElementTree as ET
+from packaging.version import parse as parse_version
 
-# >>> BẮT ĐẦU VỊ TRÍ ĐẶT KHỐI KIỂM TRA PYQT5 <<<
-# BIẾN HAS_PYQT5 SẼ ĐƯỢC ĐỊNH NGHĨA Ở ĐÂY
-# QObject, pyqtSignal VÀ CÁC WIDGET KHÁC CŨNG SẼ ĐƯỢC IMPORT Ở ĐÂY
 try:
     from PyQt5 import QtWidgets, QtCore, QtGui
     from PyQt5.QtWidgets import (
@@ -60,9 +57,7 @@ except ImportError as e:
     except ImportError:
         pass
     sys.exit(1)
-# >>> KẾT THÚC VỊ TRÍ ĐẶT KHỐI KIỂM TRA PYQT5 <<<
 
-# >>> Khối định nghĩa HAS_ASTOR <<<
 try:
     if sys.version_info < (3, 9):
         import astor
@@ -74,16 +69,12 @@ try:
 except ImportError:
     HAS_ASTOR = False
     print("Astor library not found (may be needed for Python < 3.9 AST writing if not using Python >= 3.9).")
-# >>> Kết thúc khối định nghĩa HAS_ASTOR <<<
 
-# >>> ĐỊNH NGHĨA base_dir_for_log VÀ log_file_path NGAY TẠI ĐÂY <<<
 base_dir_for_log = Path(__file__).parent.resolve()
 log_file_path = base_dir_for_log / "lottery_app_qt.log"
-# >>> KẾT THÚC ĐỊNH NGHĨA log_file_path <<<
 
-# >>> ĐỊNH NGHĨA SignallingLogHandler SAU KHI ĐÃ IMPORT QObject và pyqtSignal <<<
-class SignallingLogHandler(logging.Handler, QObject): # Bây giờ QObject đã được định nghĩa
-    log_updated = pyqtSignal(str) # pyqtSignal cũng đã được định nghĩa
+class SignallingLogHandler(logging.Handler, QObject):
+    log_updated = pyqtSignal(str)
 
     def __init__(self):
         logging.Handler.__init__(self)
@@ -95,15 +86,9 @@ class SignallingLogHandler(logging.Handler, QObject): # Bây giờ QObject đã 
             return
         try:
             msg = self.format(record)
-            # Kiểm tra parent() và signalsBlocked() trước khi emit là một biện pháp an toàn tốt
             if self.parent() is not None and not self.signalsBlocked():
-                 # Tuy nhiên, SignallingLogHandler thường không có parent khi add vào root logger.
-                 # Nếu bạn không set parent cho nó, self.parent() sẽ là None.
-                 # Cân nhắc bỏ `self.parent() is not None` nếu không cần thiết
-                 # hoặc đảm bảo bạn set parent cho handler nếu check này quan trọng.
-                 # Trong ngữ cảnh này, chỉ check signalsBlocked là đủ nếu không có parent.
                  self.log_updated.emit(msg)
-            elif self.parent() is None and not self.signalsBlocked(): # Trường hợp không có parent
+            elif self.parent() is None and not self.signalsBlocked():
                  self.log_updated.emit(msg)
 
         except RuntimeError as e:
@@ -145,14 +130,12 @@ class SignallingLogHandler(logging.Handler, QObject): # Bây giờ QObject đã 
                     handler_found = True
                     break
         except RuntimeError:
-            pass # Lỗi này có thể xảy ra nếu đối tượng C++ đã bị xóa
+            pass
         except Exception:
-            pass # Bỏ qua các lỗi khác
+            pass
         finally:
             logging._releaseLock()
-# >>> KẾT THÚC ĐỊNH NGHĨA SignallingLogHandler <<<
 
-# >>> Cấu hình logging <<<
 logging.basicConfig(
     level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - [%(threadName)s] - %(message)s',
@@ -165,10 +148,6 @@ root_logger = logging.getLogger('')
 for handler in root_logger.handlers[:]:
     root_logger.removeHandler(handler)
 root_logger.addHandler(console_handler)
-# Nếu bạn muốn log ra file ngay từ đầu:
-# file_log_handler = logging.FileHandler(log_file_path, encoding='utf-8')
-# file_log_handler.setFormatter(formatter)
-# root_logger.addHandler(file_log_handler)
 root_logger.setLevel(logging.DEBUG)
 
 
@@ -177,7 +156,6 @@ optimizer_logger = logging.getLogger("OptimizerQt")
 style_logger = logging.getLogger("UIStyleQt")
 algo_mgmnt_logger = logging.getLogger("AlgoManagementQt")
 
-# >>> Phần import BaseAlgorithm và xử lý lỗi <<<
 try:
     script_dir_base = Path(__file__).parent.resolve()
     if str(script_dir_base) not in sys.path:
@@ -2192,7 +2170,6 @@ class OptimizerEmbedded(QWidget):
                     confirmed = True
 
             if confirmed:
-                # self._save_optimization_state(reason="stopped")
                 self.optimizer_stop_event.set()
 
                 if hasattr(self, 'opt_start_button'): self.opt_start_button.setEnabled(False)
@@ -2358,12 +2335,10 @@ class OptimizerEmbedded(QWidget):
                     success = payload.get("success", False)
                     reason = payload.get("reason", "completed")
 
-                    # ---- SỬA ĐỔI Ở ĐÂY ----
-                    if reason == "stopped": # Worker đã dừng do stop_event
-                        self._save_optimization_state(reason="stopped_by_user_request") # Lưu trạng thái ở đây
-                    elif reason not in ["stopped", "paused"]: # Các trường hợp hoàn thành khác (completed, time_limit, no_improvement)
+                    if reason == "stopped":
+                        self._save_optimization_state(reason="stopped_by_user_request")
+                    elif reason not in ["stopped", "paused"]:
                         self._save_optimization_state(reason=reason)
-                    # ---- KẾT THÚC SỬA ĐỔI ----
 
                     log_level, log_tag_prefix, msg_box_func, msg_box_title = "INFO", "[KẾT THÚC]", QMessageBox.information, "Kết Thúc Tối Ưu"
                     display_final_message = final_message_from_worker
@@ -3135,7 +3110,6 @@ class OptimizerEmbedded(QWidget):
         try:
             worker_logger.debug(f"Starting combined performance test for {target_class_name} with params: {target_params_to_test}")
             try:
-                # ---- KIỂM TRA DỪNG TRƯỚC KHI SỬA AST ----
                 if self.optimizer_stop_event.is_set():
                     worker_logger.info("Stop event detected before AST modification.")
                     return None
@@ -3145,7 +3119,6 @@ class OptimizerEmbedded(QWidget):
                     worker_logger.error("AST modification failed for performance test, returned no source.")
                     raise RuntimeError("AST modification failed for performance test.")
 
-                # ---- KIỂM TRA DỪNG SAU KHI SỬA AST ----
                 if self.optimizer_stop_event.is_set():
                     worker_logger.info("Stop event detected after AST modification.")
                     return None
@@ -3160,21 +3133,19 @@ class OptimizerEmbedded(QWidget):
                 optimize_target_dir.mkdir(parents=True, exist_ok=True)
                 if not (optimize_target_dir / "__init__.py").exists():
                     (optimize_target_dir / "__init__.py").touch()
-                if not (self.optimize_dir / "__init__.py").exists(): # Đảm bảo optimize cũng là package
+                if not (self.optimize_dir / "__init__.py").exists():
                     (self.optimize_dir / "__init__.py").touch()
 
 
                 temp_target_module_name = f"optimize.{optimize_target_dir.name}.{temp_target_filename[:-3]}"
 
                 worker_logger.debug(f"Importing temporary target module: {temp_target_module_name}")
-                # ---- KIỂM TRA DỪNG TRƯỚC KHI IMPORT ----
                 if self.optimizer_stop_event.is_set():
                     worker_logger.info("Stop event detected before importing temporary module.")
                     return None
 
                 target_instance = self._import_and_instantiate_temp_algo(temp_target_filepath, temp_target_module_name, target_class_name)
 
-                # ---- KIỂM TRA DỪNG SAU KHI IMPORT ----
                 if self.optimizer_stop_event.is_set():
                     worker_logger.info("Stop event detected after importing temporary module.")
                     return None
@@ -3186,13 +3157,11 @@ class OptimizerEmbedded(QWidget):
 
             except Exception as target_load_err:
                 worker_logger.error(f"Failed loading TARGET {target_class_name} for perf test: {target_load_err}", exc_info=True)
-                # Không cần queue_error_local ở đây vì lỗi này sẽ được bắt ở worker cha
-                raise # Đảm bảo raise để finally được thực thi và worker cha xử lý
+                raise
 
             worker_logger.debug(f"Loading {len(combination_algo_display_names)} combination algorithms.")
             data_copy_for_combo = copy.deepcopy(self.results_data) if self.results_data else []
             for combo_name in combination_algo_display_names:
-                # ---- KIỂM TRA DỪNG KHI TẢI COMBO ALGO ----
                 if self.optimizer_stop_event.is_set():
                     worker_logger.info("Stop event detected during combination algorithm loading.")
                     return None
@@ -3201,17 +3170,15 @@ class OptimizerEmbedded(QWidget):
                     continue
                 try:
                      combo_data = self.loaded_algorithms[combo_name]
-                     # Tạo instance mới để đảm bảo tính độc lập, không dùng lại instance đã có
                      combo_instance = combo_data['instance'].__class__(
-                         data_results_list=data_copy_for_combo, # Dùng data_copy_for_combo thay vì self.results_data
-                         cache_dir=self.calculate_dir # Hoặc một cache dir riêng nếu cần
+                         data_results_list=data_copy_for_combo,
+                         cache_dir=self.calculate_dir
                      )
                      combo_instances[combo_name] = combo_instance
                      worker_logger.debug(f"Loaded combination instance: {combo_name}")
                 except Exception as combo_load_err:
                      worker_logger.error(f"Failed loading COMBO instance {combo_name} for perf test: {combo_load_err}", exc_info=True)
                      if combo_name in combo_instances: del combo_instances[combo_name]
-                     # Không raise ở đây để không dừng toàn bộ test chỉ vì 1 combo algo lỗi
 
 
             worker_logger.debug(f"Starting performance loop from {test_start_date} to {test_end_date}")
@@ -3230,11 +3197,11 @@ class OptimizerEmbedded(QWidget):
                 if self.optimizer_stop_event.is_set():
                     worker_logger.info("Performance test stopped by event (start of date loop).")
                     return None
-                while self.optimizer_pause_event.is_set(): # Check pause event
+                while self.optimizer_pause_event.is_set():
                     if self.optimizer_stop_event.is_set():
                         worker_logger.info("Performance test stopped during pause.")
                         return None
-                    time.sleep(0.2) # Ngủ một chút khi pause để giảm CPU load
+                    time.sleep(0.2)
 
                 predict_date = current_date
                 check_date = predict_date + datetime.timedelta(days=1)
@@ -3248,7 +3215,7 @@ class OptimizerEmbedded(QWidget):
                     continue
 
                 actual_numbers_set = set()
-                if target_instance: # Phải kiểm tra lại vì nó có thể bị set None nếu có lỗi
+                if target_instance:
                     actual_numbers_set = target_instance.extract_numbers_from_dict(actual_result_dict)
                 else:
                     worker_logger.error(f"Target instance is None for {predict_date}, cannot extract actual numbers. This shouldn't happen if import was successful.")
@@ -3258,37 +3225,33 @@ class OptimizerEmbedded(QWidget):
 
                 if not actual_numbers_set:
                     worker_logger.debug(f"No actual numbers extracted for {check_date}.")
-                    stats['errors'] += 1 # Hoặc coi đây là ngày không thể test
+                    stats['errors'] += 1
                     current_date += datetime.timedelta(days=1)
                     continue
 
                 all_predictions_for_day = {}
-                hist_copy_for_day = copy.deepcopy(hist_data) # Tạo bản copy sâu cho mỗi ngày
+                hist_copy_for_day = copy.deepcopy(hist_data)
 
-                # Dự đoán từ thuật toán đích
                 if target_instance:
                     try:
-                        # ---- KIỂM TRA DỪNG TRƯỚC TARGET PREDICT ----
                         if self.optimizer_stop_event.is_set(): worker_logger.info("Stop event before target predict."); return None
                         all_predictions_for_day[target_display_name] = target_instance.predict(predict_date, hist_copy_for_day)
                     except Exception as target_pred_err:
                         worker_logger.error(f"Error predicting TARGET {target_display_name} for {predict_date}: {target_pred_err}", exc_info=False)
-                        all_predictions_for_day[target_display_name] = {} # Kết quả rỗng nếu lỗi
+                        all_predictions_for_day[target_display_name] = {}
                         stats['errors'] += 1
-                else: # Trường hợp target_instance bị None (không nên xảy ra nếu check ở trên)
+                else:
                     all_predictions_for_day[target_display_name] = {}
                     stats['errors'] += 1
 
 
-                # Dự đoán từ các thuật toán kết hợp
                 for combo_name, combo_inst in combo_instances.items():
                     try:
-                        # ---- KIỂM TRA DỪNG TRƯỚC COMBO PREDICT ----
                         if self.optimizer_stop_event.is_set(): worker_logger.info("Stop event before combo predict."); return None
                         all_predictions_for_day[combo_name] = combo_inst.predict(predict_date, hist_copy_for_day)
                     except Exception as combo_pred_err:
                         worker_logger.error(f"Error predicting COMBO {combo_name} for {predict_date}: {combo_pred_err}", exc_info=False)
-                        all_predictions_for_day[combo_name] = {} # Kết quả rỗng nếu lỗi
+                        all_predictions_for_day[combo_name] = {}
                         stats['errors'] += 1
 
 
@@ -3297,7 +3260,7 @@ class OptimizerEmbedded(QWidget):
 
                 for algo_name, scores_dict in all_predictions_for_day.items():
                     if not isinstance(scores_dict, dict) or not scores_dict:
-                        continue # Bỏ qua nếu không phải dict hoặc dict rỗng
+                        continue
 
                     valid_algo_count += 1
                     for num_str, delta_val in scores_dict.items():
@@ -3309,14 +3272,14 @@ class OptimizerEmbedded(QWidget):
                                 stats['errors'] += 1
 
 
-                if valid_algo_count == 0: # Không có thuật toán nào trả về kết quả hợp lệ
+                if valid_algo_count == 0:
                     worker_logger.warning(f"No valid algorithm results for {predict_date}")
                     stats['errors'] += 1
                     current_date += datetime.timedelta(days=1)
                     continue
 
                 combined_scores_list = []
-                base_score = 100.0 # Hoặc một giá trị cơ sở khác nếu cần
+                base_score = 100.0
                 for num_str, delta in combined_scores_raw.items():
                      try:
                          final_score = base_score + float(delta)
@@ -3343,7 +3306,7 @@ class OptimizerEmbedded(QWidget):
                 if pred_top_5.intersection(actual_numbers_set): stats['hits_top_5'] += 1
                 if pred_top_10.intersection(actual_numbers_set): stats['hits_top_10'] += 1
 
-                all_top_10_combined_numbers.extend(list(pred_top_10)) # Thêm vào danh sách để tính độ lặp
+                all_top_10_combined_numbers.extend(list(pred_top_10))
 
                 stats['total_days_tested'] += 1
 
@@ -3364,12 +3327,12 @@ class OptimizerEmbedded(QWidget):
                     unique_predictions_in_top10 = len(top10_counts)
                     stats['avg_top10_repetition'] = total_predictions_in_top10 / unique_predictions_in_top10 if unique_predictions_in_top10 > 0 else 0.0
                     stats['max_top10_repetition_count'] = max(top10_counts.values()) if top10_counts else 0
-                    stats['top10_repetition_details'] = dict(top10_counts.most_common(5)) # 5 số lặp nhiều nhất
+                    stats['top10_repetition_details'] = dict(top10_counts.most_common(5))
                 else:
                     stats['avg_top10_repetition'] = 0.0
                     stats['max_top10_repetition_count'] = 0
                     stats['top10_repetition_details'] = {}
-            else: # Đặt giá trị mặc định nếu không test được ngày nào
+            else:
                 stats['acc_top_1_pct'] = 0.0; stats['acc_top_3_pct'] = 0.0; stats['acc_top_5_pct'] = 0.0; stats['acc_top_10_pct'] = 0.0; stats['avg_top10_repetition'] = 0.0
 
             worker_logger.info(f"Performance test calculation complete. Stats: {stats}")
@@ -3377,11 +3340,10 @@ class OptimizerEmbedded(QWidget):
 
         except Exception as e:
             worker_logger.error(f"Performance test failed critically: {e}", exc_info=True)
-            # Không queue_error_local ở đây nữa, để worker cha xử lý
-            return None # Trả về None nếu có lỗi nghiêm trọng
+            return None
         finally:
             worker_logger.debug("Cleaning up performance test resources.")
-            target_instance = None # Giải phóng instance
+            target_instance = None
             combo_instances.clear()
             if temp_target_module_name and temp_target_module_name in sys.modules:
                 try:
@@ -3824,17 +3786,16 @@ class LotteryPredictionApp(QMainWindow):
         self.optimize_dir = self.base_dir / "optimize"
         self.tools_dir = self.base_dir / "tools"
         self.settings_file_path = self.config_dir / "settings.ini"
-        # self.ui_theme_file_path = self.config_dir / "ui_theme.ini" # Uncomment nếu bạn có file này
 
         self.config = configparser.ConfigParser(interpolation=None)
 
         self.results = []
         self.selected_date = None
-        self.algorithms = {} # Cho Main Tab
-        self.algorithm_instances = {} # Cho Main Tab
-        self.loaded_tools = {} # Cho Tools Tab
-        self.local_algorithms_managed_ui = {} # Cho Algo Management Tab
-        self.online_algorithms_ui = {} # Cho Algo Management Tab
+        self.algorithms = {}
+        self.algorithm_instances = {}
+        self.loaded_tools = {}
+        self.local_algorithms_managed_ui = {}
+        self.online_algorithms_ui = {}
 
 
         self.calculation_queue = queue.Queue()
@@ -3855,7 +3816,6 @@ class LotteryPredictionApp(QMainWindow):
 
         self.optimizer_app_instance = None
 
-        # ---- THUỘC TÍNH CHO TAB UPDATE ----
         self.update_logger = logging.getLogger("AppUpdate")
         self.update_project_path_edit = None
         self.update_project_path_default_checkbox = None
@@ -3874,43 +3834,36 @@ class LotteryPredictionApp(QMainWindow):
         self.check_update_worker = None
         self.perform_update_thread = None
         self.perform_update_worker = None
-        # Copy button cho tab update (nếu bạn muốn nó riêng biệt)
-        self.copy_account_button_update_tab = None # Sẽ được tạo trong setup_update_tab
-        self.qr_code_label_update_tab = None # Sẽ được tạo trong setup_update_tab
-        self.info_groupbox_update = None # GroupBox cho thông tin app trong tab Update
-        # ---- KẾT THÚC THUỘC TÍNH TAB UPDATE ----
+        self.copy_account_button_update_tab = None
+        self.qr_code_label_update_tab = None
+        self.info_groupbox_update = None
 
         self.create_directories()
         self._setup_validators()
 
-        self.load_config() # Tải config chính
-        # self.load_ui_theme_config() # Uncomment nếu bạn có hàm và file này
+        self.load_config()
 
         self._setup_global_font()
-        self.setup_main_ui_structure() # UI chính được thiết lập ở đây
+        self.setup_main_ui_structure()
 
-        # --- Khởi tạo SignallingLogHandler và kết nối ---
-        # settings_log_display sẽ được tạo trong setup_settings_tab, được gọi từ setup_main_ui_structure
         if hasattr(self, 'settings_log_display') and self.settings_log_display:
             self.signalling_log_handler = SignallingLogHandler()
-            global formatter # Giả sử formatter được định nghĩa toàn cục
+            global formatter
             self.signalling_log_handler.setFormatter(formatter)
             self.signalling_log_handler.setLevel(logging.DEBUG)
             self.signalling_log_handler.log_updated.connect(self._append_log_to_settings_display)
 
-            self.root_logger_instance = logging.getLogger('') # Lưu lại để dùng khi thoát
+            self.root_logger_instance = logging.getLogger('')
             self.root_logger_instance.addHandler(self.signalling_log_handler)
             main_logger.info("UI Log Handler for Settings tab initialized and added to root logger.")
         else:
-            self.signalling_log_handler = None # Đánh dấu là không có
+            self.signalling_log_handler = None
             self.root_logger_instance = None
             main_logger.error("settings_log_display widget not found AFTER setup_main_ui_structure. Cannot initialize UI Log Handler.")
-        # --- KẾT THÚC SignallingLogHandler ---
 
         self.apply_stylesheet()
         self._apply_window_size_from_config()
 
-        # Lấy thông tin từ config để điền vào UI (ví dụ Main tab)
         main_tab_data_file = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
         main_tab_sync_url = self.config.get('DATA', 'sync_url', fallback="https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/data/xsmb-2-digits.json")
 
@@ -3920,14 +3873,11 @@ class LotteryPredictionApp(QMainWindow):
         if hasattr(self, 'sync_url_input'):
             self.sync_url_input.setText(main_tab_sync_url)
 
-        # Điền dữ liệu vào tab Cài đặt (đã được gọi trong setup_main_ui_structure -> setup_settings_tab)
-        # self._populate_settings_tab_ui() # Đã được gọi ngầm
 
         self.load_data()
-        self.load_algorithms() # Cho Main tab
-        self.load_tools()      # Cho Tools tab
+        self.load_algorithms()
+        self.load_tools()
 
-        # Khởi tạo OptimizerEmbedded
         if hasattr(self, 'optimizer_tab_frame'):
             try:
                 self.optimizer_app_instance = OptimizerEmbedded(self.optimizer_tab_frame, self.base_dir, self)
@@ -3936,9 +3886,7 @@ class LotteryPredictionApp(QMainWindow):
                 opt_layout.addWidget(self.optimizer_app_instance)
             except Exception as opt_init_err:
                 main_logger.error(f"Failed to initialize OptimizerEmbedded: {opt_init_err}", exc_info=True)
-                # Hiển thị lỗi trên tab Optimizer nếu cần
 
-        # Kết nối với signal aboutToQuit của QApplication
         app_instance = QApplication.instance()
         if app_instance:
             app_instance.aboutToQuit.connect(self.cleanup_on_quit)
@@ -3958,46 +3906,35 @@ class LotteryPredictionApp(QMainWindow):
     def cleanup_on_quit(self):
         """Được gọi khi QApplication chuẩn bị thoát."""
         main_logger.info("QApplication aboutToQuit. Đang dọn dẹp SignallingLogHandler.")
-        # print("cleanup_on_quit được gọi", file=sys.stderr) # Debug
         if self.signalling_log_handler:
-            # 1. Gỡ bỏ handler khỏi logger cụ thể mà nó đã được thêm vào.
             if self.root_logger_instance:
                 try:
-                    # print("Đang gỡ bỏ SignallingLogHandler khỏi root logger", file=sys.stderr) # Debug
                     self.root_logger_instance.removeHandler(self.signalling_log_handler)
                     main_logger.debug("Đã gỡ bỏ SignallingLogHandler khỏi root logger.")
-                except RuntimeError as e_remove_rt: # Bắt lỗi nếu đối tượng C++ bị xóa trong quá trình removeHandler
+                except RuntimeError as e_remove_rt:
                     main_logger.error(f"RuntimeError khi gỡ bỏ SignallingLogHandler khỏi root logger (đối tượng C++ có thể đã biến mất): {e_remove_rt}")
-                    if hasattr(self.signalling_log_handler, '_instance_closed'): # Kiểm tra xem thuộc tính có tồn tại không
-                        self.signalling_log_handler._instance_closed = True # Đảm bảo nó được đánh dấu
+                    if hasattr(self.signalling_log_handler, '_instance_closed'):
+                        self.signalling_log_handler._instance_closed = True
                 except Exception as e_remove:
                     main_logger.error(f"Lỗi khi gỡ bỏ SignallingLogHandler khỏi root logger trong cleanup_on_quit: {e_remove}")
 
-            # 2. Gọi phương thức close của handler.
-            # Thao tác này sẽ đặt cờ _instance_closed nội bộ của nó thành True
-            # và cố gắng tự gỡ bỏ khỏi logging._handlerList.
             try:
-                # print("Đang gọi SignallingLogHandler.close()", file=sys.stderr) # Debug
                 self.signalling_log_handler.close()
                 main_logger.debug("Đã gọi SignallingLogHandler.close().")
-            except RuntimeError as e_close_rt: # Bắt lỗi nếu đối tượng C++ bị xóa trước/trong khi close
+            except RuntimeError as e_close_rt:
                 main_logger.error(f"RuntimeError khi đóng SignallingLogHandler (đối tượng C++ có thể đã biến mất): {e_close_rt}")
             except Exception as e_close:
                 main_logger.error(f"Lỗi khi đóng SignallingLogHandler trong cleanup_on_quit: {e_close}")
 
             main_logger.info("Xử lý SignallingLogHandler trong cleanup_on_quit đã hoàn tất.")
-            self.signalling_log_handler = None # Quan trọng: Phá vỡ tham chiếu của ứng dụng đến handler
+            self.signalling_log_handler = None
         else:
             main_logger.info("SignallingLogHandler là None hoặc đã được dọn dẹp trong cleanup_on_quit.")
 
     def closeEvent(self, event):
         main_logger.info("Sự kiện closeEvent của QMainWindow được kích hoạt.")
-        # print("QMainWindow closeEvent được gọi", file=sys.stderr) # Debug
 
-        # Không thao tác trực tiếp với SignallingLogHandler._instance_closed ở đây.
-        # Phương thức emit() của nó và cleanup_on_quit sẽ xử lý vòng đời của nó.
 
-        # ... (code hiện có để dừng các luồng và optimizer) ...
         optimizer_cancelled_exit = False
         if hasattr(self, 'optimizer_app_instance') and self.optimizer_app_instance and \
            hasattr(self.optimizer_app_instance, 'optimizer_running') and self.optimizer_app_instance.optimizer_running:
@@ -4007,29 +3944,25 @@ class LotteryPredictionApp(QMainWindow):
             if reply == QMessageBox.Yes:
                 main_logger.info("Người dùng xác nhận thoát khi optimizer đang chạy. Đang dừng optimizer.")
                 try:
-                    # Đảm bảo các timer của optimizer được dừng trước luồng của nó
                     if hasattr(self.optimizer_app_instance, 'optimizer_timer') and self.optimizer_app_instance.optimizer_timer.isActive():
                          self.optimizer_app_instance.optimizer_timer.stop()
                     if hasattr(self.optimizer_app_instance, 'display_timer') and self.optimizer_app_instance.display_timer.isActive():
                          self.optimizer_app_instance.display_timer.stop()
 
                     self.optimizer_app_instance.stop_optimization(force_stop=True)
-                    # Cho luồng optimizer một chút thời gian để nhận biết stop_event nếu nó đang bị chặn
                     if self.optimizer_app_instance.optimizer_thread and self.optimizer_app_instance.optimizer_thread.is_alive():
-                        self.optimizer_app_instance.optimizer_thread.join(timeout=0.5) # Timeout ngắn
+                        self.optimizer_app_instance.optimizer_thread.join(timeout=0.5)
                 except Exception as stop_err:
                     main_logger.error(f"Lỗi khi dừng optimizer khi đóng: {stop_err}")
             else:
                 main_logger.info("Người dùng hủy thoát do optimizer đang chạy.")
                 optimizer_cancelled_exit = True
-                event.ignore() # Bỏ qua sự kiện đóng
-                return       # Thoát khỏi closeEvent
+                event.ignore()
+                return
 
         if optimizer_cancelled_exit:
-            # print("Sự kiện đóng bị bỏ qua do optimizer.", file=sys.stderr) # Debug
             return
 
-        # print("Chấp nhận sự kiện đóng.", file=sys.stderr) # Debug
         main_logger.info("Chấp nhận sự kiện đóng trong QMainWindow.")
         event.accept()
 
@@ -4118,31 +4051,27 @@ class LotteryPredictionApp(QMainWindow):
         self.tab_widget = QTabWidget()
         self.tab_widget.setObjectName("MainTabWidget")
 
-        # ---- SỬA ĐỔI Ở ĐÂY ----
-        # Khởi tạo các frame cho từng tab
         self.main_tab_frame = QWidget()
         self.algo_management_tab_frame = QWidget()
         self.optimizer_tab_frame = QWidget()
         self.tools_tab_frame = QWidget()
         self.settings_tab_frame = QWidget()
-        self.update_tab_frame = QWidget() # <--- THÊM DÒNG NÀY ĐỂ KHỞI TẠO
-        # ---- KẾT THÚC SỬA ĐỔI ----
+        self.update_tab_frame = QWidget()
 
         self.tab_widget.addTab(self.main_tab_frame, " Main 🏠")
         self.tab_widget.addTab(self.algo_management_tab_frame, "  Thuật Toán 🛠️")
         self.tab_widget.addTab(self.optimizer_tab_frame, " Tối ưu 🚀 ")
         self.tab_widget.addTab(self.tools_tab_frame, " Công Cụ 🧰")
         self.tab_widget.addTab(self.settings_tab_frame, " Cài Đặt ⚙️")
-        self.tab_widget.addTab(self.update_tab_frame, " Update 🔄 ") # Bây giờ self.update_tab_frame đã tồn tại
+        self.tab_widget.addTab(self.update_tab_frame, " Update 🔄 ")
 
         main_layout.addWidget(self.tab_widget)
 
         self.setup_main_tab()
         self.setup_algo_management_tab()
-        # self.setup_optimizer_tab() # Bỏ comment nếu bạn có hàm này
         self.setup_tools_tab()
         self.setup_settings_tab()
-        self.setup_update_tab() # Đảm bảo hàm này được gọi
+        self.setup_update_tab()
 
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
@@ -4862,7 +4791,6 @@ class LotteryPredictionApp(QMainWindow):
         settings_group_layout.setHorizontalSpacing(10)
         settings_group_layout.setVerticalSpacing(12)
 
-        # Đường dẫn file dữ liệu
         settings_group_layout.addWidget(QLabel("📂 File dữ liệu:"), 0, 0, Qt.AlignLeft)
         self.config_data_path_edit = QLineEdit()
         self.config_data_path_edit.setToolTip("Đường dẫn đầy đủ đến file JSON chứa dữ liệu kết quả.")
@@ -4873,26 +4801,22 @@ class LotteryPredictionApp(QMainWindow):
         browse_button.clicked.connect(self.browse_data_file_settings)
         settings_group_layout.addWidget(browse_button, 0, 3)
 
-        # URL đồng bộ
         settings_group_layout.addWidget(QLabel("🔗 URL đồng bộ dữ liệu:"), 1, 0, Qt.AlignLeft)
         self.config_sync_url_edit = QLineEdit()
         self.config_sync_url_edit.setToolTip("URL để tải dữ liệu mới khi nhấn nút 'Sync' ở tab Main.")
         settings_group_layout.addWidget(self.config_sync_url_edit, 1, 1, 1, 3)
 
-        # Tự động đồng bộ
         self.auto_sync_checkbox = QCheckBox("  Tự động đồng bộ kết quả quay thưởng hàng ngày 📅  ")
         self.auto_sync_checkbox.setToolTip(
             "Nếu bật, chương trình sẽ tự động kiểm tra và đồng bộ dữ liệu từ URL trên khi khởi động."
         )
         settings_group_layout.addWidget(self.auto_sync_checkbox, 2, 1, 1, 3, Qt.AlignLeft)
 
-        # URL danh sách thuật toán
         settings_group_layout.addWidget(QLabel("🔗 Link danh sách thuật toán:"), 3, 0, Qt.AlignLeft)
         self.config_algo_list_url_edit = QLineEdit()
         self.config_algo_list_url_edit.setToolTip("URL của file text chứa danh sách thuật toán online.")
         settings_group_layout.addWidget(self.config_algo_list_url_edit, 3, 1, 1, 3)
 
-        # Kích thước cửa sổ
         settings_group_layout.addWidget(QLabel("💻 Kích thước cửa sổ:"), 4, 0, Qt.AlignLeft)
         size_frame = QWidget()
         size_layout = QHBoxLayout(size_frame)
@@ -4915,7 +4839,6 @@ class LotteryPredictionApp(QMainWindow):
         size_layout.addStretch(1)
         settings_group_layout.addWidget(size_frame, 4, 1, 1, 3)
 
-        # Font chữ
         settings_group_layout.addWidget(QLabel("🔤 Font chữ (Cần khởi động lại):"), 5, 0, Qt.AlignLeft)
         font_frame = QWidget()
         font_layout = QHBoxLayout(font_frame)
@@ -4934,7 +4857,6 @@ class LotteryPredictionApp(QMainWindow):
         font_layout.addStretch(1)
         settings_group_layout.addWidget(font_frame, 5, 1, 1, 3)
 
-        # Cài đặt tự động kiểm tra cập nhật
         settings_group_layout.addWidget(QLabel("🔄 Tự động kiểm tra cập nhật:"), 6, 0, Qt.AlignLeft)
         auto_update_frame = QWidget()
         auto_update_layout = QHBoxLayout(auto_update_frame)
@@ -4953,7 +4875,7 @@ class LotteryPredictionApp(QMainWindow):
         )
         self.update_notification_combo.addItem("Thông báo mỗi khi khởi động", "every_startup")
         self.update_notification_combo.addItem("Chỉ thông báo 1 lần cho phiên bản này", "once_per_version")
-        self.update_notification_combo.setEnabled(False) # Sẽ được bật/tắt bởi checkbox
+        self.update_notification_combo.setEnabled(False)
         auto_update_layout.addWidget(self.update_notification_combo)
         auto_update_layout.addStretch(1)
         
@@ -4967,7 +4889,6 @@ class LotteryPredictionApp(QMainWindow):
         separator.setFrameShadow(QFrame.Sunken)
         settings_group_layout.addWidget(separator, 7, 0, 1, 4)
 
-        # Quản lý file cấu hình khác
         settings_group_layout.addWidget(QLabel("⚙️ Quản lý file cấu hình khác:"), 8, 0, Qt.AlignLeft)
         self.config_listwidget = QListWidget()
         self.config_listwidget.setFixedHeight(80)
@@ -4978,7 +4899,6 @@ class LotteryPredictionApp(QMainWindow):
 
         settings_tab_layout.addWidget(settings_group)
 
-        # Các nút Save, Load, Reset config
         button_frame = QWidget()
         button_layout = QHBoxLayout(button_frame)
         button_layout.setContentsMargins(0, 10, 0, 0)
@@ -5011,7 +4931,6 @@ class LotteryPredictionApp(QMainWindow):
         button_layout.addStretch(1)
         settings_tab_layout.addWidget(button_frame)
 
-        # Khung hiển thị Log
         log_display_group = QGroupBox("Nhật Ký Hoạt Động Chương Trình")
         log_display_group_layout = QVBoxLayout(log_display_group)
         log_display_group_layout.setContentsMargins(5, 10, 5, 5)
@@ -5051,7 +4970,6 @@ class LotteryPredictionApp(QMainWindow):
                 self.settings_log_display.insertPlainText(message + '\n')
                 self.settings_log_display.ensureCursorVisible()
             except Exception as e:
-                # Ghi log lỗi này ra console, vì UI log có thể đang gặp vấn đề
                 print(f"ERROR updating settings_log_display: {e}", file=sys.stderr)
 
     def setup_update_tab(self):
@@ -5060,20 +4978,18 @@ class LotteryPredictionApp(QMainWindow):
         update_tab_overall_layout.setContentsMargins(10, 10, 10, 10)
         update_tab_overall_layout.setSpacing(10)
 
-        # --- Phần Thông Tin Ứng Dụng ---
         self.info_groupbox_update = QGroupBox("Thông Tin Ứng Dụng")
         info_group_main_layout_update = QGridLayout(self.info_groupbox_update)
         info_group_main_layout_update.setContentsMargins(10, 15, 10, 10)
         info_group_main_layout_update.setSpacing(20)
 
-        # Cột trái: Thông tin phiên bản, thư viện, thư mục
         left_info_widget_update = QWidget()
         left_info_widget_update.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         left_layout_update = QVBoxLayout(left_info_widget_update)
         left_layout_update.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         left_layout_update.setSpacing(8)
 
-        if not self.current_app_version_info: # Tải lại nếu __init__ chưa kịp hoặc có lỗi
+        if not self.current_app_version_info:
             try:
                 running_file_path = Path(sys.argv[0] if hasattr(sys, 'frozen') else __file__).resolve()
                 current_content = running_file_path.read_text(encoding='utf-8')
@@ -5095,7 +5011,7 @@ class LotteryPredictionApp(QMainWindow):
         except ImportError: pass
         try: from packaging.version import parse; libs_update += ", packaging"
         except ImportError: pass
-        global HAS_ASTOR # Giả định HAS_ASTOR là biến toàn cục
+        global HAS_ASTOR
         if sys.version_info < (3,9) and HAS_ASTOR: libs_update += ", astor"
 
         libs_val_label_update = QLabel(libs_update)
@@ -5112,7 +5028,6 @@ class LotteryPredictionApp(QMainWindow):
         left_layout_update.addStretch(1)
         info_group_main_layout_update.addWidget(left_info_widget_update, 0, 0)
 
-        # Cột giữa: Thông tin ủng hộ
         middle_info_widget_update = QWidget()
         middle_info_widget_update.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         middle_layout_update = QVBoxLayout(middle_info_widget_update)
@@ -5129,9 +5044,8 @@ class LotteryPredictionApp(QMainWindow):
         account_num_h_layout_update.setContentsMargins(0,0,0,0)
         account_num_label_update = QLabel("Số tài khoản: 0987575432")
 
-        self.copy_account_button_update_tab = QPushButton("COPY") # Khởi tạo nút ở đây
+        self.copy_account_button_update_tab = QPushButton("COPY")
         self.copy_account_button_update_tab.setFixedSize(QSize(90, 35))
-        # self.copy_account_button_update_tab.setIconSize(QSize(26,26)) # Bỏ comment nếu có icon
         self.copy_account_button_update_tab.setToolTip("Sao chép số tài khoản vào clipboard")
         try: self.copy_account_button_update_tab.clicked.disconnect()
         except TypeError: pass
@@ -5146,27 +5060,23 @@ class LotteryPredictionApp(QMainWindow):
         middle_layout_update.addStretch(1)
         info_group_main_layout_update.addWidget(middle_info_widget_update, 0, 1)
 
-        # Cột phải: QR Code
         right_info_widget_update = QWidget()
         right_layout_update = QVBoxLayout(right_info_widget_update)
         right_layout_update.setAlignment(Qt.AlignTop | Qt.AlignCenter)
-        self.qr_code_label_update_tab = SquareQLabel() # Hoặc QLabel nếu không cần SquareQLabel
+        self.qr_code_label_update_tab = SquareQLabel()
         self._display_qr_code(target_label=self.qr_code_label_update_tab)
-        right_layout_update.addWidget(self.qr_code_label_update_tab, 0) # Thêm alignment nếu cần
+        right_layout_update.addWidget(self.qr_code_label_update_tab, 0)
         info_group_main_layout_update.addWidget(right_info_widget_update, 0, 2)
 
         info_group_main_layout_update.setColumnStretch(0, 1)
         info_group_main_layout_update.setColumnStretch(1, 1)
         info_group_main_layout_update.setColumnStretch(2, 0)
         update_tab_overall_layout.addWidget(self.info_groupbox_update)
-        # --- Hết Phần Thông Tin Ứng Dụng ---
 
 
-        # --- Phần Cập Nhật Ứng Dụng ---
-        update_main_groupbox = QGroupBox("Cập Nhật Ứng Dụng") # Đổi tên biến
+        update_main_groupbox = QGroupBox("Cập Nhật Ứng Dụng")
         update_group_layout_main = QVBoxLayout(update_main_groupbox)
 
-        # Phần cài đặt URL và tên file
         update_settings_widget = QWidget()
         update_settings_form = QFormLayout(update_settings_widget)
         update_settings_form.setSpacing(8)
@@ -5187,7 +5097,7 @@ class LotteryPredictionApp(QMainWindow):
         save_and_check_layout.setSpacing(8)
         save_and_check_layout.addWidget(QLabel("Lưu tên file thành:"))
         self.update_save_filename_edit = QLineEdit("main.py")
-        self.update_save_filename_edit.setFixedWidth(150) # Điều chỉnh nếu cần
+        self.update_save_filename_edit.setFixedWidth(150)
         save_and_check_layout.addWidget(self.update_save_filename_edit)
         self.update_check_button = QPushButton("Kiểm tra cập nhật")
         self.update_check_button.clicked.connect(self._handle_check_for_updates_thread)
@@ -5197,18 +5107,16 @@ class LotteryPredictionApp(QMainWindow):
 
         update_group_layout_main.addWidget(update_settings_widget)
 
-        # Splitter cho 2 cột nội dung
         update_content_splitter = QSplitter(Qt.Horizontal)
 
-        # Cột 1: Thông tin cập nhật
-        update_info_container_widget = QWidget() # Đổi tên để rõ ràng hơn
+        update_info_container_widget = QWidget()
         update_info_layout = QVBoxLayout(update_info_container_widget)
         update_info_layout.setContentsMargins(0,0,0,0)
         update_info_layout.addWidget(QLabel("<b>Thông tin cập nhật:</b>"))
         self.update_info_display_textedit = QTextEdit()
         self.update_info_display_textedit.setReadOnly(True)
         self.update_info_display_textedit.setFont(self.get_qfont("code"))
-        update_info_layout.addWidget(self.update_info_display_textedit, 1) # Cho phép co giãn
+        update_info_layout.addWidget(self.update_info_display_textedit, 1)
 
         self.update_perform_button = QPushButton("Cập nhật ngay?")
         self.update_perform_button.setObjectName("AccentButton")
@@ -5222,7 +5130,7 @@ class LotteryPredictionApp(QMainWindow):
         self.update_restart_button.clicked.connect(self._handle_restart_application)
         self.update_exit_after_update_button = QPushButton("Thoát")
         self.update_exit_after_update_button.setVisible(False)
-        self.update_exit_after_update_button.clicked.connect(self.close) # self.close sẽ gọi closeEvent
+        self.update_exit_after_update_button.clicked.connect(self.close)
         update_actions_layout.addStretch()
         update_actions_layout.addWidget(self.update_restart_button)
         update_actions_layout.addWidget(self.update_exit_after_update_button)
@@ -5230,36 +5138,31 @@ class LotteryPredictionApp(QMainWindow):
         update_info_layout.addLayout(update_actions_layout)
         update_content_splitter.addWidget(update_info_container_widget)
 
-        # Cột 2: Lịch sử cập nhật Repository
-        commit_history_container_widget = QWidget() # Đổi tên
+        commit_history_container_widget = QWidget()
         commit_history_layout = QVBoxLayout(commit_history_container_widget)
         commit_history_layout.setContentsMargins(0,0,0,0)
         commit_history_layout.addWidget(QLabel("<b>Lịch sử cập nhật Repository:</b>"))
         self.update_commit_history_textedit = QTextEdit()
         self.update_commit_history_textedit.setReadOnly(True)
         self.update_commit_history_textedit.setFont(self.get_qfont("code"))
-        commit_history_layout.addWidget(self.update_commit_history_textedit, 1) # Cho phép co giãn
+        commit_history_layout.addWidget(self.update_commit_history_textedit, 1)
         update_content_splitter.addWidget(commit_history_container_widget)
 
-        # Thiết lập kích thước ban đầu cho splitter (ví dụ: 50/50)
         QTimer.singleShot(0, lambda: update_content_splitter.setSizes([update_content_splitter.width() // 2, update_content_splitter.width() // 2]))
 
 
-        update_group_layout_main.addWidget(update_content_splitter, 1) # Cho splitter co giãn
-        update_tab_overall_layout.addWidget(update_main_groupbox, 1) # Cho groupbox chính co giãn
-        # --- Hết Phần Cập Nhật Ứng Dụng ---
+        update_group_layout_main.addWidget(update_content_splitter, 1)
+        update_tab_overall_layout.addWidget(update_main_groupbox, 1)
 
-        # Kết nối signals
         self.update_project_path_edit.textChanged.connect(self._update_file_link_from_project_path)
         self.update_project_path_default_checkbox.toggled.connect(self._update_file_link_from_project_path)
         self.update_project_path_default_checkbox.toggled.connect(
             lambda checked: self.update_project_path_edit.setEnabled(not checked)
         )
-        # Khởi tạo trạng thái ban đầu
         self.update_project_path_edit.setEnabled(not self.update_project_path_default_checkbox.isChecked())
-        self._update_file_link_from_project_path() # Gọi để đặt link file ban đầu
+        self._update_file_link_from_project_path()
 
-        self._display_current_version_info() # Hiển thị thông tin phiên bản hiện tại
+        self._display_current_version_info()
         self.update_logger.info("Update tab UI setup complete with revised layout.")
 
     def _extract_app_version_info(self, file_content: str) -> dict:
@@ -5270,7 +5173,7 @@ class LotteryPredictionApp(QMainWindow):
         lines = file_content.splitlines()
         try:
             for line_num, line_text in enumerate(lines):
-                if line_num >= 5: # Chỉ kiểm tra 5 dòng đầu
+                if line_num >= 5:
                     break
                 if line_text.lower().startswith("# version:"):
                     info["version"] = line_text.split(":", 1)[1].strip()
@@ -5298,16 +5201,14 @@ class LotteryPredictionApp(QMainWindow):
         """Định dạng thông tin phiên bản thành chuỗi HTML để hiển thị."""
         if not info_dict:
             return f"<div style='font-family: {self.get_qfont('code').family()}; font-size: {self.get_font_size('code')}pt;'>" \
-                   f"<b>{title_prefix}</b><br>Không có thông tin.<br></div>" # Sử dụng font family từ get_qfont
+                   f"<b>{title_prefix}</b><br>Không có thông tin.<br></div>"
 
         version = info_dict.get('version', 'N/A')
         date_val = info_dict.get('date', 'N/A')
         update_notes = info_dict.get('update_notes', 'N/A')
 
-        # Escape HTML trong update_notes để tránh lỗi hiển thị nếu nó chứa ký tự HTML
-        update_notes_escaped = update_notes.replace('<', '<').replace('>', '>').replace('\n', '<br>                     ') # Thay newline bằng <br>
+        update_notes_escaped = update_notes.replace('<', '<').replace('>', '>').replace('\n', '<br>                     ')
 
-        # Sử dụng font family từ get_qfont cho nhất quán
         font_family_code = self.get_qfont('code').family()
         font_size_code = self.get_font_size('code')
 
@@ -5316,25 +5217,18 @@ class LotteryPredictionApp(QMainWindow):
             f"<b>{title_prefix}</b><br>"
             f"  <b>Phiên bản:</b> {version}<br>"
             f"  <b>Ngày phát hành:</b> {date_val}<br>"
-            f"  <b>Nội dung cập nhật:</b> {update_notes_escaped}<br>" # Đã sửa nhãn
+            f"  <b>Nội dung cập nhật:</b> {update_notes_escaped}<br>"
             f"</div>"
         )
     def _display_current_version_info(self):
         """Hiển thị thông tin phiên bản hiện tại lên UI của tab Update."""
         if self.update_info_display_textedit:
-            # Đọc thông tin phiên bản từ file hiện tại đang chạy
             try:
-                # Xác định đường dẫn file hiện tại
-                if getattr(sys, 'frozen', False): # Nếu là file đóng gói (PyInstaller)
-                    # sys.executable là đường dẫn đến file .exe
-                    # Chúng ta cần đọc file .py nguồn trước khi đóng gói, hoặc file được cập nhật
-                    # Giả định rằng file được cập nhật sẽ có tên giống như self.update_save_filename_edit.text()
-                    # và nằm cùng thư mục với file thực thi.
-                    # Đây là một điểm phức tạp khi cập nhật file đang chạy, đặc biệt là file .exe
+                if getattr(sys, 'frozen', False):
                     current_file_to_read = Path(sys.executable).parent / self.update_save_filename_edit.text()
-                    if not current_file_to_read.exists(): # Thử với __file__ nếu chạy từ source
+                    if not current_file_to_read.exists():
                         current_file_to_read = Path(__file__).resolve()
-                else: # Nếu chạy trực tiếp file .py
+                else:
                     current_file_to_read = Path(__file__).resolve()
 
                 self.update_logger.info(f"Đọc thông tin phiên bản từ: {current_file_to_read}")
@@ -5351,22 +5245,20 @@ class LotteryPredictionApp(QMainWindow):
 
     def _fetch_online_content(self, url: str, timeout=15) -> str | None:
         """Tải nội dung từ URL (ví dụ: file Python online, Atom feed)."""
-        import requests # <--- THÊM DÒNG IMPORT NÀY VÀO ĐẦU HÀM
+        import requests
 
         self.update_logger.info(f"Đang tải nội dung từ: {url}")
         self.update_status(f"Đang kết nối tới {url.split('/')[2]}...")
-        QApplication.processEvents() # Cẩn thận khi dùng processEvents trong worker, nhưng ở đây là để update status
+        QApplication.processEvents()
         try:
             response = requests.get(url, timeout=timeout, headers={'Cache-Control': 'no-cache', 'Pragma': 'no-cache'})
             response.raise_for_status()
             self.update_logger.info(f"Tải thành công nội dung từ {url} (Status: {response.status_code})")
             self.update_status(f"Tải thành công từ {url.split('/')[-1]}.")
             return response.text
-        # Không cần khối except ImportError ở đây nữa vì chúng ta đã import ở trên
         except requests.exceptions.RequestException as e:
             self.update_logger.error(f"Lỗi mạng khi tải {url}: {e}")
             self.update_status(f"Lỗi mạng khi tải {url.split('/')[-1]}.")
-            # QMessageBox.warning(self, "Lỗi Mạng", f"Không thể kết nối hoặc tải dữ liệu từ:\n{url}\n\nLỗi: {e}")
             return None
         except Exception as e:
             self.update_logger.error(f"Lỗi không mong muốn khi tải {url}: {e}")
@@ -5389,16 +5281,15 @@ class LotteryPredictionApp(QMainWindow):
                  if match_repo:
                      repo_name_text = match_repo.group(1)
 
-            # Sử dụng font family từ get_qfont cho nhất quán
             font_family_code = self.get_qfont('code').family()
             font_size_code = self.get_font_size('code')
 
             formatted_history = [f"<div style='font-family: \"{font_family_code}\", monospace; font-size: {font_size_code}pt;'>"]
-            formatted_history.append(f"<b>Lịch sử cập nhật ({repo_name_text})</b><br>") # Đã sửa tiêu đề
+            formatted_history.append(f"<b>Lịch sử cập nhật ({repo_name_text})</b><br>")
 
             entries_found = 0
             for entry in root.findall('atom:entry', ns):
-                if entries_found >= 20: # Có thể tăng số lượng commit hiển thị
+                if entries_found >= 20:
                     break
                 title_node = entry.find('atom:title', ns)
                 updated_node = entry.find('atom:updated', ns)
@@ -5416,11 +5307,11 @@ class LotteryPredictionApp(QMainWindow):
                     except ValueError:
                         dt_display = updated_str + " (UTC)"
 
-                title_escaped = title.replace('<', '<').replace('>', '>').replace('\n', '<br>                 ') # Thay newline bằng <br> với indent
+                title_escaped = title.replace('<', '<').replace('>', '>').replace('\n', '<br>                 ')
 
-                formatted_history.append(f"<b>Ngày giờ:</b><br>  {dt_display}") # Tách dòng
+                formatted_history.append(f"<b>Ngày giờ:</b><br>  {dt_display}")
                 formatted_history.append(f"<br>")
-                formatted_history.append(f"<b>Hoạt động</b><br>  {title_escaped}") # Tách dòng
+                formatted_history.append(f"<b>Hoạt động</b><br>  {title_escaped}")
                 formatted_history.append("<hr style='border:none; border-top:1px dashed #ccc; margin:3px 0;'>")
                 entries_found += 1
 
@@ -5445,7 +5336,7 @@ class LotteryPredictionApp(QMainWindow):
             self.update_logger.warning("So sánh phiên bản: Thiếu thông tin hiện tại hoặc online.")
             return False
         try:
-            current_ver_str = current_info.get("version", "0.0.0") # Nên có dạng X.Y.Z
+            current_ver_str = current_info.get("version", "0.0.0")
             online_ver_str = online_info.get("version", "0.0.0")
             current_date_str = current_info.get("date", "01/01/1970")
             online_date_str = online_info.get("date", "01/01/1970")
@@ -5491,17 +5382,13 @@ class LotteryPredictionApp(QMainWindow):
         self.update_project_path_edit.setEnabled(not use_default_project_path)
 
         if use_default_project_path:
-            self.update_project_path_edit.setText(default_project_url) # Đảm bảo đường dẫn là mặc định
+            self.update_project_path_edit.setText(default_project_url)
             self.update_file_url_edit.setText(default_raw_file_url)
-            self.update_file_url_edit.setEnabled(False) # Không cho sửa link file nếu dự án mặc định
+            self.update_file_url_edit.setEnabled(False)
         else:
-            # Nếu người dùng bỏ check "Mặc định", cho phép họ sửa cả hai
             self.update_file_url_edit.setEnabled(True)
-            # Nếu đường dẫn dự án KHÔNG phải là mặc định, không tự động điền link file nữa
-            # vì không biết cấu trúc repo của họ. Người dùng phải tự điền.
-            # Có thể giữ lại link file cũ nếu nó không phải là default_raw_file_url
             if self.update_file_url_edit.text() == default_raw_file_url and project_path_text != default_project_url:
-                self.update_file_url_edit.setText("") # Xóa nếu nó đang là default mà project path đã đổi
+                self.update_file_url_edit.setText("")
 
     def _handle_check_for_updates_thread(self):
         """Xử lý việc kiểm tra cập nhật trong một luồng riêng."""
@@ -5510,12 +5397,10 @@ class LotteryPredictionApp(QMainWindow):
         self.update_status("Đang kiểm tra cập nhật...")
         QApplication.processEvents()
 
-        # Tạo QThread và Worker
-        self.check_update_thread = QThread(self) # parent là self để tự động dọn dẹp
+        self.check_update_thread = QThread(self)
         self.check_update_worker = UpdateCheckWorker(self)
         self.check_update_worker.moveToThread(self.check_update_thread)
 
-        # Kết nối signals/slots
         self.check_update_worker.finished_signal.connect(self._on_check_update_finished)
         self.check_update_worker.update_info_signal.connect(self._display_update_check_results)
         self.check_update_worker.commit_history_signal.connect(
@@ -5529,7 +5414,6 @@ class LotteryPredictionApp(QMainWindow):
             )
         )
         self.check_update_thread.started.connect(self.check_update_worker.run_check)
-        # Dọn dẹp thread và worker khi hoàn thành
         self.check_update_thread.finished.connect(self.check_update_thread.deleteLater)
         self.check_update_worker.finished_signal.connect(self.check_update_thread.quit)
         self.check_update_worker.finished_signal.connect(self.check_update_worker.deleteLater)
@@ -5540,15 +5424,12 @@ class LotteryPredictionApp(QMainWindow):
         """Slot được gọi khi luồng kiểm tra cập nhật hoàn thành."""
         if hasattr(self, 'update_check_button') and self.update_check_button:
             self.update_check_button.setEnabled(True)
-        # Trạng thái sẽ được cập nhật bởi _display_update_check_results
-        # hoặc error_signal của worker
         self.update_logger.info("Luồng kiểm tra cập nhật đã hoàn thành.")
-        self.check_update_thread = None # Dọn dẹp tham chiếu
+        self.check_update_thread = None
         self.check_update_worker = None
 
     def _display_update_check_results(self, current_info_html, online_info_html, update_available):
         """Hiển thị kết quả kiểm tra cập nhật lên UI."""
-        # Cập nhật QTextEdit trên tab Update như cũ
         full_html_for_tab = ""
         status_message_for_bar = ""
 
@@ -5569,9 +5450,8 @@ class LotteryPredictionApp(QMainWindow):
 
         if hasattr(self, 'update_info_display_textedit') and self.update_info_display_textedit:
             self.update_info_display_textedit.setHtml(full_html_for_tab)
-        self.update_status(status_message_for_bar) # Cập nhật status bar chung
+        self.update_status(status_message_for_bar)
 
-        # --- THÊM MỚI: Xử lý thông báo tự động ---
         is_auto_checking = False
         if self.config.has_section('UPDATE_CHECK'):
             is_auto_checking = self.config.getboolean('UPDATE_CHECK', 'auto_check_on_startup', fallback=False)
@@ -5585,9 +5465,8 @@ class LotteryPredictionApp(QMainWindow):
 
             if notification_frequency == 'once_per_version' and online_version_str == skipped_version_config:
                 self.update_logger.info(f"Bỏ qua thông báo cho phiên bản {online_version_str} đã được skip.")
-                return # Không hiển thị dialog
+                return
 
-            # Tạo dialog thông báo
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("Có Cập Nhật Mới")
             msg_box.setIcon(QMessageBox.Information)
@@ -5602,13 +5481,10 @@ class LotteryPredictionApp(QMainWindow):
             update_button = msg_box.addButton("Cập nhật ngay", QMessageBox.AcceptRole)
             skip_button = msg_box.addButton("Bỏ qua", QMessageBox.RejectRole)
             
-            # Nút "Không thông báo lại" chỉ hiện khi tần suất là "mỗi khi khởi động"
-            # và người dùng muốn chuyển sang "chỉ một lần" cho phiên bản này.
-            # Hoặc, đơn giản hơn, nếu tần suất là "once_per_version", thì "Bỏ qua" sẽ tự động ghi nhớ.
             if notification_frequency == 'every_startup':
-                 dont_notify_again_button = msg_box.addButton("Không hỏi lại cho phiên bản này", QMessageBox.DestructiveRole) # Role này sẽ làm nút trông khác
-            else: # once_per_version
-                 dont_notify_again_button = None # không cần nút này vì "Bỏ qua" đã có ý nghĩa đó rồi
+                 dont_notify_again_button = msg_box.addButton("Không hỏi lại cho phiên bản này", QMessageBox.DestructiveRole)
+            else:
+                 dont_notify_again_button = None
 
 
             msg_box.setDefaultButton(update_button)
@@ -5618,7 +5494,6 @@ class LotteryPredictionApp(QMainWindow):
 
             if clicked_button == update_button:
                 self.update_logger.info("Người dùng chọn 'Cập nhật ngay' từ thông báo tự động.")
-                # Chuyển sang tab Update và kích hoạt quá trình cập nhật
                 update_tab_index = -1
                 for i in range(self.tab_widget.count()):
                     if self.tab_widget.widget(i) == self.update_tab_frame:
@@ -5627,7 +5502,7 @@ class LotteryPredictionApp(QMainWindow):
                 if update_tab_index != -1:
                     self.tab_widget.setCurrentIndex(update_tab_index)
                     if hasattr(self, 'update_perform_button') and self.update_perform_button.isVisible():
-                        self._handle_perform_update_thread() # Gọi trực tiếp hàm xử lý
+                        self._handle_perform_update_thread()
                     else:
                         self.update_logger.warning("Nút 'Cập nhật ngay' trên tab Update không hiển thị, không thể tự động kích hoạt.")
                 else:
@@ -5637,14 +5512,13 @@ class LotteryPredictionApp(QMainWindow):
                 self.update_logger.info("Người dùng chọn 'Bỏ qua' cập nhật.")
                 if notification_frequency == 'once_per_version':
                     self.config.set('UPDATE_CHECK', 'skipped_version', online_version_str)
-                    self.save_config("settings.ini") # Lưu lại config với phiên bản đã skip
+                    self.save_config("settings.ini")
                     self.update_logger.info(f"Đã lưu phiên bản {online_version_str} vào danh sách skip.")
             
             elif dont_notify_again_button and clicked_button == dont_notify_again_button:
                  self.update_logger.info(f"Người dùng chọn 'Không hỏi lại cho phiên bản này' ({online_version_str}).")
                  self.config.set('UPDATE_CHECK', 'notification_frequency', 'once_per_version')
                  self.config.set('UPDATE_CHECK', 'skipped_version', online_version_str)
-                 # Cập nhật UI của ComboBox trong tab Cài đặt
                  if hasattr(self, 'update_notification_combo'):
                     idx = self.update_notification_combo.findData('once_per_version')
                     if idx != -1: self.update_notification_combo.setCurrentIndex(idx)
@@ -5689,10 +5563,9 @@ class LotteryPredictionApp(QMainWindow):
             if hasattr(self, 'update_exit_after_update_button') and self.update_exit_after_update_button:
                 self.update_exit_after_update_button.setVisible(True)
         else:
-            # Lỗi đã được xử lý bởi error_signal, chỉ cần đảm bảo nút được bật lại nếu có
             if hasattr(self, 'update_perform_button') and self.update_perform_button:
                 self.update_perform_button.setEnabled(True)
-        self.perform_update_thread = None # Dọn dẹp
+        self.perform_update_thread = None
         self.perform_update_worker = None
 
 
@@ -5700,34 +5573,28 @@ class LotteryPredictionApp(QMainWindow):
         """Xử lý việc khởi động lại ứng dụng."""
         self.update_logger.info("Đang yêu cầu khởi động lại ứng dụng...")
         try:
-            self.close() # Đảm bảo closeEvent chạy để dọn dẹp
-            QApplication.processEvents() # Xử lý các sự kiện đóng
+            self.close()
+            QApplication.processEvents()
 
-            python_executable = sys.executable # Đường dẫn đến trình thông dịch Python đang chạy
+            python_executable = sys.executable
             script_path = Path(sys.argv[0] if hasattr(sys, 'frozen') else __file__).resolve()
 
-            # Đối với ứng dụng đóng gói bằng PyInstaller:
             if getattr(sys, 'frozen', False):
-                # sys.executable là đường dẫn đến file .exe
-                # sys.argv[0] cũng có thể là đường dẫn đến file .exe (cho one-file)
-                # hoặc script chính (cho one-dir).
-                # Cách đơn giản nhất là gọi lại chính file .exe
                 executable_to_run = sys.executable
-                args_for_run = sys.argv # Truyền lại các tham số dòng lệnh gốc
+                args_for_run = sys.argv
                 self.update_logger.info(f"Khởi động lại ứng dụng đóng gói: {executable_to_run} {' '.join(args_for_run)}")
                 if sys.platform == "win32":
                      subprocess.Popen([executable_to_run] + args_for_run[1:], creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
                 else:
-                    os.execv(executable_to_run, args_for_run) # Thay thế tiến trình hiện tại
+                    os.execv(executable_to_run, args_for_run)
             else:
-                # Nếu chạy dưới dạng script .py thông thường
                 self.update_logger.info(f"Khởi động lại script: {python_executable} {script_path} {' '.join(sys.argv[1:])}")
                 if sys.platform == "win32":
                     subprocess.Popen([python_executable, str(script_path)] + sys.argv[1:], creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP)
                 else:
                     os.execv(python_executable, [python_executable, str(script_path)] + sys.argv[1:])
 
-            QApplication.instance().quit() # Thoát ứng dụng hiện tại một cách sạch sẽ
+            QApplication.instance().quit()
 
         except Exception as e:
             self.update_logger.error(f"Không thể khởi động lại ứng dụng: {e}", exc_info=True)
@@ -5754,23 +5621,21 @@ class LotteryPredictionApp(QMainWindow):
             main_logger.error(f"Lỗi sao chép số tài khoản: {e}", exc_info=True)
             QMessageBox.warning(self, "Lỗi Sao Chép", f"Không thể sao chép: {e}")
             
-    def _display_qr_code(self, target_label: SquareQLabel): # <--- THÊM THAM SỐ target_label
+    def _display_qr_code(self, target_label: SquareQLabel):
         """Loads a Base64 QR code string and displays it in the target_label."""
-        if not target_label: # <--- SỬA ĐỔI
+        if not target_label:
             main_logger.error("target_label không tồn tại khi gọi _display_qr_code.")
             return
 
-        # Thay thế "PASTE_YOUR_BASE64_QR_CODE_DATA_HERE" bằng chuỗi Base64 dữ liệu ảnh QR của bạn.
-        # Chỉ phần dữ liệu, không bao gồm "data:image/png;base64,".
         base64_qr_data_only = "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"
 
         if base64_qr_data_only == "PASTE_YOUR_BASE64_QR_CODE_DATA_HERE" or not base64_qr_data_only:
             placeholder_text = ("<i><b>QR Code sẽ hiển thị ở đây.</b><br>"
                                 "Để thay đổi, sửa biến <b>base64_qr_data_only</b> trong file code Python, phương thức <b>_display_qr_code</b>.</i>")
-            target_label.setText(placeholder_text) # <--- SỬA ĐỔI
-            target_label.setFont(self.get_qfont("small")) # <--- SỬA ĐỔI
-            target_label.setStyleSheet("font-style: italic; color: #4A4A4A; border: 1px dashed #AAAAAA; padding: 10px; background-color: #F0F0F0;") # <--- SỬA ĐỔI
-            target_label.setWordWrap(True) # <--- SỬA ĐỔI
+            target_label.setText(placeholder_text)
+            target_label.setFont(self.get_qfont("small"))
+            target_label.setStyleSheet("font-style: italic; color: #4A4A4A; border: 1px dashed #AAAAAA; padding: 10px; background-color: #F0F0F0;")
+            target_label.setWordWrap(True)
             return
 
         try:
@@ -5778,24 +5643,24 @@ class LotteryPredictionApp(QMainWindow):
             pixmap = QPixmap()
             if not pixmap.loadFromData(image_data, "PNG"):
                 main_logger.error("Không thể tải QPixmap từ dữ liệu Base64.")
-                target_label.setText("Lỗi tải QR (dữ liệu Base64 không hợp lệ hoặc không phải PNG).") # <--- SỬA ĐỔI
-                target_label.setStyleSheet("color: red; font-weight: bold; border: 1px solid red;") # <--- SỬA ĐỔI
+                target_label.setText("Lỗi tải QR (dữ liệu Base64 không hợp lệ hoặc không phải PNG).")
+                target_label.setStyleSheet("color: red; font-weight: bold; border: 1px solid red;")
                 return
 
             if not pixmap.isNull():
-                target_label.setPixmap(pixmap) # <--- SỬA ĐỔI
-                target_label.setStyleSheet("") # <--- SỬA ĐỔI
+                target_label.setPixmap(pixmap)
+                target_label.setStyleSheet("")
                 main_logger.info("Đã hiển thị mã QR từ chuỗi Base64.")
             else:
                 main_logger.error("QPixmap bị null sau khi tải từ dữ liệu Base64.")
-                target_label.setText("Lỗi hiển thị QR (pixmap null).") # <--- SỬA ĐỔI
-                target_label.setStyleSheet("color: red; font-weight: bold; border: 1px solid red;") # <--- SỬA ĐỔI
+                target_label.setText("Lỗi hiển thị QR (pixmap null).")
+                target_label.setStyleSheet("color: red; font-weight: bold; border: 1px solid red;")
 
         except Exception as e:
             main_logger.error(f"Lỗi nghiêm trọng khi xử lý mã QR Base64: {e}", exc_info=True)
-            target_label.setText(f"Lỗi QR:\n{e}") # <--- SỬA ĐỔI
-            target_label.setStyleSheet("color: red; font-weight: bold; border: 1px solid red;") # <--- SỬA ĐỔI
-            target_label.setWordWrap(True) # <--- SỬA ĐỔI
+            target_label.setText(f"Lỗi QR:\n{e}")
+            target_label.setStyleSheet("color: red; font-weight: bold; border: 1px solid red;")
+            target_label.setWordWrap(True)
 
     def _populate_local_algorithms_management_list(self):
         algo_mgmnt_logger.info("Populating local algorithms list for management tab...")
@@ -6372,24 +6237,20 @@ class LotteryPredictionApp(QMainWindow):
 
             if hasattr(self, 'theme_font_family_base_combo'):
                 font_family_from_config = self.config.get('UI', 'font_family_base', fallback=default_font_family)
-                # self.font_family_base đã được cập nhật trong load_config
                 index = self.theme_font_family_base_combo.findText(self.font_family_base, Qt.MatchFixedString)
                 if index >= 0:
                      self.theme_font_family_base_combo.setCurrentIndex(index)
                 else:
-                     # Nếu font đã load (có thể từ file ui_theme.ini cũ) không có trong danh sách,
-                     # thì thử font từ settings.ini, rồi fallback
                      index_settings = self.theme_font_family_base_combo.findText(font_family_from_config, Qt.MatchFixedString)
                      if index_settings >=0: self.theme_font_family_base_combo.setCurrentIndex(index_settings)
                      else:
                         default_font_index = self.theme_font_family_base_combo.findText(default_font_family, Qt.MatchFixedString)
                         if default_font_index >= 0: self.theme_font_family_base_combo.setCurrentIndex(default_font_index)
-                        else: self.theme_font_family_base_combo.setCurrentIndex(0) # Fallback cuối cùng
+                        else: self.theme_font_family_base_combo.setCurrentIndex(0)
             else:
                  main_logger.warning("Widget 'theme_font_family_base_combo' không tìm thấy khi điền UI.")
 
             if hasattr(self, 'theme_font_size_base_spinbox'):
-                 # self.font_size_base đã được cập nhật trong load_config
                 self.theme_font_size_base_spinbox.setValue(self.font_size_base)
             else:
                  main_logger.warning("Widget 'theme_font_size_base_spinbox' không tìm thấy khi điền UI.")
@@ -6463,19 +6324,19 @@ class LotteryPredictionApp(QMainWindow):
                 read_files = self.config.read(config_path, encoding='utf-8')
                 if not read_files:
                      main_logger.error(f"ConfigParser failed to read file (but exists): {config_path}. Check permissions or format. Falling back to defaults.")
-                     self.set_default_config() # self.config sẽ được set lại ở đây
+                     self.set_default_config()
                      config_needs_saving = True
                 else:
                      main_logger.info(f"Read config from {config_path}")
             else:
                 main_logger.warning(f"Config file {config_path} not found. Setting defaults.")
-                self.set_default_config() # self.config sẽ được set lại ở đây
+                self.set_default_config()
                 config_needs_saving = True
 
             default_data_path = str(self.data_dir / "xsmb-2-digits.json")
             default_sync_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/data/xsmb-2-digits.json"
             default_algo_list_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa"
-            default_auto_sync = 'False' # Giá trị mặc định cho auto_sync
+            default_auto_sync = 'False'
 
             if not self.config.has_section('DATA'):
                 main_logger.warning("Config missing [DATA] section. Adding default.")
@@ -6491,13 +6352,13 @@ class LotteryPredictionApp(QMainWindow):
             if not self.config.has_option('DATA', 'algo_list_url'):
                 self.config.set('DATA','algo_list_url', default_algo_list_url)
                 config_needs_saving = True
-            if not self.config.has_option('DATA', 'auto_sync_on_startup'): # THÊM KIỂM TRA
+            if not self.config.has_option('DATA', 'auto_sync_on_startup'):
                 self.config.set('DATA', 'auto_sync_on_startup', default_auto_sync)
                 config_needs_saving = True
 
             default_width, default_height = 1200, 800
             default_font_family = 'Segoe UI'
-            default_font_size = 10 # Đã sửa từ 12 về 10 cho khớp với set_default_config
+            default_font_size = 10
             if not self.config.has_section('UI'):
                 main_logger.warning("Config missing [UI] section. Adding default.")
                 self.config.add_section('UI')
@@ -6721,7 +6582,7 @@ class LotteryPredictionApp(QMainWindow):
         }
         self.config['UPDATE_CHECK'] = {
             'auto_check_on_startup': 'False',
-            'notification_frequency': 'every_startup', # 'every_startup' hoặc 'once_per_version'
+            'notification_frequency': 'every_startup',
             'skipped_version': ''
         }
 
@@ -6811,7 +6672,6 @@ class LotteryPredictionApp(QMainWindow):
         """Lưu trạng thái hiện tại của các trường trong UI Cài đặt vào file settings.ini."""
         main_logger.info("Lưu cấu hình từ UI Cài đặt vào settings.ini...")
         try:
-            # DATA section
             if not self.config.has_section('DATA'): self.config.add_section('DATA')
             self.config.set('DATA', 'data_file', self.config_data_path_edit.text())
             self.config.set('DATA', 'sync_url', self.config_sync_url_edit.text())
@@ -6819,7 +6679,6 @@ class LotteryPredictionApp(QMainWindow):
             if hasattr(self, 'auto_sync_checkbox'):
                 self.config.set('DATA', 'auto_sync_on_startup', str(self.auto_sync_checkbox.isChecked()))
 
-            # UI section
             if not self.config.has_section('UI'): self.config.add_section('UI')
             width_str = self.window_width_edit.text().strip()
             height_str = self.window_height_edit.text().strip()
@@ -6835,16 +6694,13 @@ class LotteryPredictionApp(QMainWindow):
             self.config.set('UI', 'font_family_base', font_family)
             self.config.set('UI', 'font_size_base', font_size)
 
-            # UPDATE_CHECK section
             if not self.config.has_section('UPDATE_CHECK'):
                 self.config.add_section('UPDATE_CHECK')
             if hasattr(self, 'auto_check_update_checkbox'):
                 self.config.set('UPDATE_CHECK', 'auto_check_on_startup', str(self.auto_check_update_checkbox.isChecked()))
             if hasattr(self, 'update_notification_combo'):
                 self.config.set('UPDATE_CHECK', 'notification_frequency', self.update_notification_combo.currentData())
-            # skipped_version được quản lý tự động, không lấy từ UI
 
-            # Algorithm specific sections
             if hasattr(self, 'algorithms'):
                  for algo_name, algo_data in self.algorithms.items():
                      chk_enable = algo_data.get('chk_enable')
@@ -6852,7 +6708,7 @@ class LotteryPredictionApp(QMainWindow):
                      weight_entry = algo_data.get('weight_entry')
                      if not chk_enable or not chk_weight or not weight_entry: continue
 
-                     config_section_name = algo_name # Sử dụng tên đầy đủ của thuật toán làm tên section
+                     config_section_name = algo_name
                      if not self.config.has_section(config_section_name):
                          self.config.add_section(config_section_name)
 
@@ -6864,16 +6720,12 @@ class LotteryPredictionApp(QMainWindow):
 
             self.save_config("settings.ini")
 
-            # Cập nhật UI và biến instance sau khi lưu
-            if hasattr(self, 'sync_url_input'): # Cập nhật UI Main tab
+            if hasattr(self, 'sync_url_input'):
                 self.sync_url_input.setText(self.config_sync_url_edit.text())
             self._apply_window_size_from_config()
             
-            # Cập nhật font instance vars
             self.font_family_base = font_family
             self.font_size_base = int(font_size)
-            # Cân nhắc gọi lại self._setup_global_font() và self.apply_stylesheet() nếu muốn thay đổi font ngay
-            # Tuy nhiên, thông báo khởi động lại vẫn là tốt nhất.
 
             self.update_status("Đã lưu cấu hình vào settings.ini.")
             QMessageBox.information(self, "Lưu Thành Công",
@@ -6944,7 +6796,7 @@ class LotteryPredictionApp(QMainWindow):
                     temp_config_obj.set('UPDATE_CHECK', 'auto_check_on_startup', str(self.auto_check_update_checkbox.isChecked()))
                 if hasattr(self, 'update_notification_combo'):
                     temp_config_obj.set('UPDATE_CHECK', 'notification_frequency', self.update_notification_combo.currentData())
-                temp_config_obj.set('UPDATE_CHECK', 'skipped_version', '') # Để trống cho file mới
+                temp_config_obj.set('UPDATE_CHECK', 'skipped_version', '')
 
                 if hasattr(self, 'algorithms'):
                      for algo_name, algo_data in self.algorithms.items():
@@ -6979,21 +6831,20 @@ class LotteryPredictionApp(QMainWindow):
          data_file = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
          sync_url = self.config.get('DATA', 'sync_url', fallback="https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/data/xsmb-2-digits.json")
          algo_list_url = self.config.get('DATA', 'algo_list_url', fallback="https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa")
-         auto_sync_default = self.config.getboolean('DATA', 'auto_sync_on_startup', fallback=False) # THÊM MỚI
+         auto_sync_default = self.config.getboolean('DATA', 'auto_sync_on_startup', fallback=False)
 
 
          width_str = self.config.get('UI', 'width', fallback="1200")
-         height_str = self.config.get('UI', 'height', fallback="1000") # Sửa default height
+         height_str = self.config.get('UI', 'height', fallback="1000")
          self.font_family_base = self.config.get('UI', 'font_family_base', fallback='Segoe UI')
          self.font_size_base = self.config.getint('UI', 'font_size_base', fallback=10)
          self.loaded_width = int(width_str)
          self.loaded_height = int(height_str)
 
-         # Cập nhật UI trong tab Cài đặt
          if hasattr(self, 'config_data_path_edit'): self.config_data_path_edit.setText(data_file)
          if hasattr(self, 'config_sync_url_edit'): self.config_sync_url_edit.setText(sync_url)
          if hasattr(self, 'config_algo_list_url_edit'): self.config_algo_list_url_edit.setText(algo_list_url)
-         if hasattr(self, 'auto_sync_checkbox'): self.auto_sync_checkbox.setChecked(auto_sync_default) # THÊM MỚI
+         if hasattr(self, 'auto_sync_checkbox'): self.auto_sync_checkbox.setChecked(auto_sync_default)
          
          if hasattr(self, 'window_width_edit'): self.window_width_edit.setText(width_str)
          if hasattr(self, 'window_height_edit'): self.window_height_edit.setText(height_str)
@@ -7005,7 +6856,6 @@ class LotteryPredictionApp(QMainWindow):
          if hasattr(self, 'theme_font_size_base_spinbox'):
             self.theme_font_size_base_spinbox.setValue(self.font_size_base)
 
-        # Cập nhật UI trong tab Main
          if hasattr(self, 'sync_url_input'): self.sync_url_input.setText(sync_url)
          if hasattr(self, 'data_file_path_label'):
              self.data_file_path_label.setText(data_file)
@@ -7091,12 +6941,10 @@ class LotteryPredictionApp(QMainWindow):
                         QMessageBox.critical(self, "Lỗi Xóa", f"Không thể xóa file '{config_path.name}':\n{e}")
                         main_logger.error(f"Proceeding with reset despite failing to delete {config_path.name}.")
 
-                self.set_default_config() # Đã bao gồm section UPDATE_CHECK
-                self._save_default_config_if_needed(self.settings_file_path) # Lưu self.config hiện tại (đã default)
+                self.set_default_config()
+                self._save_default_config_if_needed(self.settings_file_path)
                 
-                # _apply_default_config_to_vars sẽ cập nhật các biến instance từ self.config
                 self._apply_default_config_to_vars()
-                # _populate_settings_tab_ui sẽ điền UI từ các biến instance đã được cập nhật
                 self._populate_settings_tab_ui()
 
                 self._apply_window_size_from_config()
@@ -7104,8 +6952,8 @@ class LotteryPredictionApp(QMainWindow):
                      sync_url = self.config.get('DATA', 'sync_url', fallback="")
                      self.sync_url_input.setText(sync_url)
 
-                self.reload_algorithms() # Sẽ tự động áp dụng lại trạng thái từ config mới
-                self.load_data()         # Sẽ tự động tải từ data_file trong config mới
+                self.reload_algorithms()
+                self.load_data()
 
                 if self.optimizer_app_instance:
                      default_data_path = self.config.get('DATA', 'data_file', fallback="")
@@ -7296,7 +7144,6 @@ class LotteryPredictionApp(QMainWindow):
         self.update_logger.info("Kích hoạt tự động kiểm tra cập nhật ứng dụng...")
         self.update_status("Đang tự động kiểm tra cập nhật ứng dụng...")
         QApplication.processEvents()
-        # Gọi hàm xử lý kiểm tra update đã có (sử dụng thread)
         self._handle_check_for_updates_thread()
 
     def _update_default_perf_dates(self, data_start_date, data_end_date):
@@ -7473,7 +7320,7 @@ class LotteryPredictionApp(QMainWindow):
 
     def perform_auto_sync_if_needed(self):
         main_logger.info("Kiểm tra điều kiện tự động đồng bộ khi khởi động...")
-        if not hasattr(self, 'config') or not self.config.has_section('DATA'): # Thêm kiểm tra self.config
+        if not hasattr(self, 'config') or not self.config.has_section('DATA'):
             main_logger.warning("Config chưa được tải hoặc thiếu section DATA, không thể kiểm tra auto-sync.")
             return
 
@@ -7486,11 +7333,11 @@ class LotteryPredictionApp(QMainWindow):
             main_logger.warning("Không có URL đồng bộ được cấu hình, không thể tự động đồng bộ.")
             return
 
-        if not self.results: # Chưa có dữ liệu hoặc load lỗi
+        if not self.results:
             main_logger.info("Không có dữ liệu local hoặc lỗi tải dữ liệu. Thử tự động đồng bộ...")
             self.update_status("Đang tự động đồng bộ do không có dữ liệu local...")
             QApplication.processEvents()
-            self.sync_data() # Giả sử sync_data đã được định nghĩa
+            self.sync_data()
             return
 
         try:
@@ -7498,7 +7345,7 @@ class LotteryPredictionApp(QMainWindow):
             current_datetime = datetime.datetime.now()
             today_date = current_datetime.date()
             yesterday_date = today_date - datetime.timedelta(days=1)
-            sync_time_threshold = datetime.time(18, 50) # 18h40
+            sync_time_threshold = datetime.time(18, 50)
 
             main_logger.info(f"Kiểm tra auto-sync: Local mới nhất={latest_local_date}, Hôm nay={today_date}, Ngưỡng giờ={sync_time_threshold}")
 
@@ -7516,14 +7363,14 @@ class LotteryPredictionApp(QMainWindow):
                     main_logger.info(f"Dữ liệu từ hôm qua và sau {sync_time_threshold}. Kích hoạt tự động đồng bộ.")
                     self.update_status(f"Đang tự động đồng bộ (dữ liệu hôm qua, sau {sync_time_threshold.strftime('%H:%M')})...")
                     QApplication.processEvents()
-                    self.sync_data() # Giả sử sync_data đã được định nghĩa
+                    self.sync_data()
                     return
 
             if latest_local_date < yesterday_date:
                 main_logger.info("Dữ liệu cũ hơn ngày hôm qua. Kích hoạt tự động đồng bộ.")
                 self.update_status("Đang tự động đồng bộ (dữ liệu cũ)...")
                 QApplication.processEvents()
-                self.sync_data() # Giả sử sync_data đã được định nghĩa
+                self.sync_data()
                 return
             
             if latest_local_date > today_date:
@@ -7535,7 +7382,7 @@ class LotteryPredictionApp(QMainWindow):
             main_logger.warning("Danh sách results rỗng khi kiểm tra auto-sync (sau khi check self.results ban đầu). Thử đồng bộ...")
             self.update_status("Đang tự động đồng bộ do dữ liệu local có vấn đề...")
             QApplication.processEvents()
-            self.sync_data() # Giả sử sync_data đã được định nghĩa
+            self.sync_data()
         except Exception as e:
             main_logger.error(f"Lỗi trong quá trình kiểm tra tự động đồng bộ: {e}", exc_info=True)
             self.update_status(f"Lỗi kiểm tra tự động đồng bộ: {e}")
@@ -9841,23 +9688,20 @@ class LotteryPredictionApp(QMainWindow):
         """Xử lý sự kiện đóng cửa sổ chính."""
         main_logger.info("Close event triggered for QMainWindow.")
 
-        # 1. Dừng các luồng worker (nếu đang chạy)
         if hasattr(self, 'check_update_thread') and self.check_update_thread and self.check_update_thread.isRunning():
             self.update_logger.info("Stopping update check thread...")
             self.check_update_thread.quit()
-            if not self.check_update_thread.wait(1000): # Chờ tối đa 1 giây
+            if not self.check_update_thread.wait(1000):
                 self.update_logger.warning("Update check thread did not finish in time.")
-                # self.check_update_thread.terminate() # Cân nhắc kỹ, có thể gây crash
-        self.check_update_thread = None # Dọn dẹp
+        self.check_update_thread = None
 
         if hasattr(self, 'perform_update_thread') and self.perform_update_thread and self.perform_update_thread.isRunning():
             self.update_logger.info("Stopping perform update thread...")
             self.perform_update_thread.quit()
             if not self.perform_update_thread.wait(1000):
                 self.update_logger.warning("Perform update thread did not finish in time.")
-        self.perform_update_thread = None # Dọn dẹp
+        self.perform_update_thread = None
 
-        # 2. Dừng các QTimer
         if hasattr(self, 'prediction_timer') and self.prediction_timer.isActive():
             self.prediction_timer.stop()
             main_logger.debug("Stopped prediction timer.")
@@ -9865,10 +9709,8 @@ class LotteryPredictionApp(QMainWindow):
             self.performance_timer.stop()
             main_logger.debug("Stopped performance timer.")
 
-        # 3. Xử lý Optimizer (nếu có và đang chạy)
         optimizer_was_running_and_cancelled_exit = False
         if hasattr(self, 'optimizer_app_instance') and self.optimizer_app_instance:
-            # Dừng timer của optimizer trước
             if hasattr(self.optimizer_app_instance, 'optimizer_timer') and self.optimizer_app_instance.optimizer_timer.isActive():
                 self.optimizer_app_instance.optimizer_timer.stop()
                 main_logger.debug("Stopped optimizer queue timer (from main app close).")
@@ -9884,22 +9726,17 @@ class LotteryPredictionApp(QMainWindow):
                     main_logger.info("User confirmed exit while optimizer running. Stopping optimizer.")
                     try:
                         self.optimizer_app_instance.stop_optimization(force_stop=True)
-                        # Chờ một chút để thread có cơ hội dừng
-                        # time.sleep(0.2) # Gây trễ UI, nên dùng QTimer nếu cần chờ lâu hơn
                     except Exception as stop_err:
                         main_logger.error(f"Error stopping optimizer on close: {stop_err}")
                 else:
                     main_logger.info("User cancelled exit due to running optimizer.")
-                    optimizer_was_running_and_cancelled_exit = True # Đánh dấu
-                    event.ignore() # Bỏ qua sự kiện đóng
-                    return       # Thoát khỏi closeEvent
+                    optimizer_was_running_and_cancelled_exit = True
+                    event.ignore()
+                    return
 
-        # Nếu người dùng hủy thoát ở bước optimizer, không làm gì thêm
         if optimizer_was_running_and_cancelled_exit:
             return
 
-        # Nếu không có lý do gì để ignore, chấp nhận sự kiện đóng
-        # việc gọi cleanup_on_quit sẽ được xử lý bởi signal aboutToQuit
         main_logger.info("Accepting close event. Application will now quit.")
         event.accept()
 
@@ -9949,17 +9786,16 @@ def main():
 
 class UpdateCheckWorker(QObject):
     finished_signal = pyqtSignal()
-    update_info_signal = pyqtSignal(str, str, bool) # current_html, online_html, update_available
-    commit_history_signal = pyqtSignal(str) # history_html
+    update_info_signal = pyqtSignal(str, str, bool)
+    commit_history_signal = pyqtSignal(str)
     error_signal = pyqtSignal(str)
 
     def __init__(self, main_app_ref):
         super().__init__()
         self.main_app = main_app_ref
 
-    @pyqtSlot() # Quan trọng: Đánh dấu là một slot nếu được kết nối từ thread khác
+    @pyqtSlot()
     def run_check(self):
-        # ... (Nội dung của run_check như đã cung cấp)
         try:
             app = self.main_app
             app.update_logger.info("UpdateCheckWorker: Bắt đầu kiểm tra.")
@@ -10007,7 +9843,7 @@ class UpdateCheckWorker(QObject):
             self.finished_signal.emit()
 
 class PerformUpdateWorker(QObject):
-    finished_signal = pyqtSignal(bool, str) # success, message
+    finished_signal = pyqtSignal(bool, str)
     error_signal = pyqtSignal(str)
 
     def __init__(self, main_app_ref):
@@ -10025,22 +9861,23 @@ class PerformUpdateWorker(QObject):
                 online_file_url_ui = app.update_file_url_edit.text().strip()
                 if not online_file_url_ui:
                     self.error_signal.emit("URL file cập nhật không hợp lệ.")
-                    self.finished_signal.emit(False, "Lỗi: URL file cập nhật không hợp lệ.") # Thêm emit finished
+                    self.finished_signal.emit(False, "Lỗi: URL file cập nhật không hợp lệ.")
                     return
                 app.update_logger.info(f"Tải lại nội dung từ: {online_file_url_ui}")
                 online_content = app._fetch_online_content(online_file_url_ui)
                 if online_content is None:
                     self.error_signal.emit(f"Không thể tải lại nội dung file cập nhật từ:\n{online_file_url_ui}")
-                    self.finished_signal.emit(False, f"Lỗi: Không thể tải lại nội dung file cập nhật.") # Thêm emit finished
+                    self.finished_signal.emit(False, f"Lỗi: Không thể tải lại nội dung file cập nhật.")
                     return
 
             target_filename_from_ui = app.update_save_filename_edit.text().strip()
             if not target_filename_from_ui:
                 self.error_signal.emit("Tên file lưu cập nhật không được để trống.")
-                self.finished_signal.emit(False, "Lỗi: Tên file lưu cập nhật không được để trống.") # Thêm emit finished
+                self.finished_signal.emit(False, "Lỗi: Tên file lưu cập nhật không được để trống.")
                 return
-            if not target_filename_from_ui.endswith((".py", ".pyw")):
-                target_filename_from_ui += ".py" # Giữ nguyên nếu người dùng cố tình không có extension
+            if not target_filename_from_ui.lower().endswith((".py", ".pyw")):
+                 app.update_logger.info(f"Tên file đích '{target_filename_from_ui}' không có đuôi .py hoặc .pyw chuẩn.")
+
 
             current_script_to_replace_path = None
             if getattr(sys, 'frozen', False):
@@ -10048,72 +9885,81 @@ class PerformUpdateWorker(QObject):
                 current_script_to_replace_path = app_dir / target_filename_from_ui
                 app.update_logger.warning(f"Ứng dụng đóng gói. Sẽ cố gắng cập nhật file tại: {current_script_to_replace_path}")
             else:
-                # Khi chạy từ source, __file__ là đường dẫn đến main.py
-                # Nếu target_filename_from_ui là "main.py", nó sẽ ghi đè đúng file đang chạy.
                 current_script_to_replace_path = Path(__file__).resolve().parent / target_filename_from_ui
-
-
+            
             app.update_logger.info(f"Đường dẫn file đích để cập nhật: {current_script_to_replace_path}")
 
+            backup_file_path = current_script_to_replace_path.with_name(current_script_to_replace_path.name + ".bank")
+            made_backup = False
+
             if current_script_to_replace_path.exists():
-                timestamp_backup = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_file_path = current_script_to_replace_path.with_name(
-                    f"{current_script_to_replace_path.stem}_{timestamp_backup}{current_script_to_replace_path.suffix}.bak"
-                )
+                app.update_logger.info(f"File đích '{current_script_to_replace_path.name}' tồn tại. Sẽ tiến hành đổi tên thành '{backup_file_path.name}'.")
+                if backup_file_path.exists():
+                    try:
+                        backup_file_path.unlink()
+                        app.update_logger.info(f"Đã xóa file .bank cũ trước khi sao lưu: {backup_file_path.name}")
+                    except OSError as e_del_old_bank:
+                        app.update_logger.warning(f"Không thể xóa file .bank cũ '{backup_file_path.name}': {e_del_old_bank}. Tiếp tục...")
+                
                 try:
-                    shutil.copy2(current_script_to_replace_path, backup_file_path)
-                    app.update_logger.info(f"Đã sao lưu '{current_script_to_replace_path.name}' tới '{backup_file_path.name}'")
-                except Exception as e_backup:
-                    app.update_logger.warning(f"Không thể tạo file sao lưu cho {current_script_to_replace_path.name}: {e_backup}")
+                    current_script_to_replace_path.rename(backup_file_path)
+                    app.update_logger.info(f"Đã đổi tên '{current_script_to_replace_path.name}' thành '{backup_file_path.name}'")
+                    made_backup = True
+                except Exception as e_rename_backup:
+                    app.update_logger.error(f"Không thể đổi tên file '{current_script_to_replace_path.name}' để tạo backup '.bank': {e_rename_backup}")
+                    self.error_signal.emit(f"Lỗi tạo file sao lưu '.bank' cho '{current_script_to_replace_path.name}':\n{e_rename_backup}")
+                    self.finished_signal.emit(False, f"Lỗi: Không thể tạo file sao lưu '.bank'.")
+                    return
+            else:
+                app.update_logger.info(f"File đích '{current_script_to_replace_path.name}' không tồn tại. Sẽ tạo file mới.")
+
             try:
-                # --- BẮT ĐẦU SỬA ĐỔI QUAN TRỌNG ---
                 if not isinstance(online_content, str):
                     app.update_logger.error(f"Nội dung tải về không phải là chuỗi, mà là: {type(online_content)}")
                     self.error_signal.emit("Lỗi: Nội dung tải về không hợp lệ (không phải dạng văn bản).")
                     self.finished_signal.emit(False, "Lỗi: Nội dung tải về không hợp lệ.")
+                    if made_backup and backup_file_path.exists() and not current_script_to_replace_path.exists():
+                        try: backup_file_path.rename(current_script_to_replace_path); app.update_logger.info(f"Khôi phục từ backup do nội dung tải về lỗi.")
+                        except: pass
                     return
 
-                # Bước 1: Chuẩn hóa tất cả các loại xuống dòng thành \n
                 normalized_newlines_content = online_content.replace('\r\n', '\n').replace('\r', '\n')
-
-                # Bước 2: Tách thành các dòng và loại bỏ dấu cách thừa ở *đầu* mỗi dòng.
-                # Giữ lại thụt đầu dòng bằng tab hoặc nhiều space nếu đó là indent hợp lệ của Python.
-                # Cách này có thể hơi mạnh tay nếu có trường hợp space ở đầu dòng là cố ý và không phải lỗi.
-                # Tuy nhiên, nếu lỗi là "thêm 1 dấu cách" thì đây là cách khắc phục trực tiếp.
-                
-                # Thận trọng hơn: chỉ loại bỏ một dấu cách ở đầu nếu nó thực sự tồn tại và không phải là phần của indent lớn hơn.
-                # Tạm thời chỉ chuẩn hóa newline vì đó là lỗi phổ biến hơn.
-                # Nếu vấn đề "thêm dấu cách" vẫn còn, có thể cần logic phức tạp hơn ở đây.
-                #
-                # cleaned_lines = []
-                # for line in normalized_newlines_content.splitlines(): # splitlines() giữ lại Universal Newlines
-                #     # Nếu bạn chắc chắn lỗi là 1 space ở đầu, có thể thử:
-                #     # if line.startswith(' ') and (len(line) == 1 or line[1] != ' '):
-                #     #    cleaned_lines.append(line[1:])
-                #     # else:
-                #     #    cleaned_lines.append(line)
-                #     # Tạm thời không lstrip() để tránh phá hỏng indent nếu không cần thiết.
-                #     cleaned_lines.append(line)
-                # final_content_to_write = "\n".join(cleaned_lines)
-                # Nếu file kết thúc bằng nhiều dòng trống, `join("\n")` sẽ thêm lại một newline cuối cùng.
-                # Để đảm bảo file kết thúc đúng 1 newline (hoặc không có nếu dòng cuối không trống):
-                # if normalized_newlines_content.endswith('\n'):
-                #    final_content_to_write += '\n'
-
-                # Sử dụng nội dung đã chuẩn hóa newline.
-                # Path.write_text sẽ xử lý việc chuyển đổi \n sang newline của OS.
                 final_content_to_write = normalized_newlines_content
-                # --- KẾT THÚC SỬA ĐỔI QUAN TRỌNG ---
 
                 current_script_to_replace_path.write_text(final_content_to_write, encoding='utf-8')
                 app.update_logger.info(f"Cập nhật thành công nội dung của {current_script_to_replace_path.name}")
+
+                if made_backup and backup_file_path.exists():
+                    try:
+                        backup_file_path.unlink()
+                        app.update_logger.info(f"Đã xóa file sao lưu '.bank': {backup_file_path.name}")
+                    except OSError as e_delete_bank:
+                        app.update_logger.warning(f"Không thể xóa file sao lưu '.bank' '{backup_file_path.name}' sau khi cập nhật thành công: {e_delete_bank}")
+                
                 self.finished_signal.emit(True, f"Đã cập nhật thành công file: {current_script_to_replace_path.name}\nVui lòng khởi động lại ứng dụng.")
+            
             except IOError as e_io:
                 app.update_logger.error(f"Lỗi IOError khi ghi nội dung cập nhật vào {current_script_to_replace_path.name}: {e_io}")
+                if made_backup and backup_file_path.exists():
+                    app.update_logger.info(f"Lỗi ghi file mới. Đang cố gắng khôi phục từ backup '{backup_file_path.name}'...")
+                    try:
+                        if current_script_to_replace_path.exists():
+                            current_script_to_replace_path.unlink()
+                        
+                        backup_file_path.rename(current_script_to_replace_path)
+                        app.update_logger.info(f"Đã khôi phục thành công file gốc từ '{backup_file_path.name}'.")
+                    except Exception as e_restore:
+                        app.update_logger.error(f"KHÔNG THỂ KHÔI PHỤC file gốc từ backup '{backup_file_path.name}': {e_restore}. Hệ thống có thể ở trạng thái không ổn định.")
                 self.error_signal.emit(f"Lỗi khi ghi file cập nhật ({current_script_to_replace_path.name}):\n{e_io}")
                 self.finished_signal.emit(False, f"Lỗi: Không thể ghi file cập nhật.")
             except Exception as e_write:
                 app.update_logger.error(f"Lỗi không mong muốn khi ghi nội dung cập nhật vào {current_script_to_replace_path.name}: {e_write}")
+                if made_backup and backup_file_path.exists():
+                    try:
+                        if current_script_to_replace_path.exists(): current_script_to_replace_path.unlink()
+                        backup_file_path.rename(current_script_to_replace_path)
+                        app.update_logger.info(f"Đã khôi phục từ backup do lỗi ghi không xác định.")
+                    except: pass
                 self.error_signal.emit(f"Lỗi không xác định khi ghi file cập nhật ({current_script_to_replace_path.name}):\n{e_write}")
                 self.finished_signal.emit(False, f"Lỗi: Không xác định khi ghi file cập nhật.")
         except Exception as e:
@@ -10121,9 +9967,7 @@ class PerformUpdateWorker(QObject):
             self.error_signal.emit(f"Lỗi không mong muốn trong quá trình cập nhật: {e}")
             self.finished_signal.emit(False, f"Lỗi: Không mong muốn trong quá trình cập nhật.")
 
-# --- Hàm main và phần chạy ứng dụng ---
 def main():
-    # ... (Nội dung hàm main của bạn)
     try:
         if hasattr(QtCore.Qt, 'AA_EnableHighDpiScaling'):
              QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
@@ -10149,7 +9993,7 @@ def main():
     except Exception as e:
         main_logger.critical(f"Unhandled critical error in main() execution: {e}", exc_info=True)
         traceback.print_exc()
-        if HAS_PYQT5: # Chỉ hiển thị QMessageBox nếu PyQt5 đã được import thành công
+        if HAS_PYQT5:
             QMessageBox.critical(
                 None,
                 "Lỗi Nghiêm Trọng",
@@ -10167,9 +10011,9 @@ def main():
 if __name__ == "__main__":
     print(f"Running Python: {sys.version.split()[0]}")
     print(f"Base Directory: {Path(__file__).parent.resolve()}")
-    print(f"Using PyQt5: {HAS_PYQT5}") # Giả định HAS_PYQT5 được định nghĩa ở đầu file
-    print(f"Using Astor (for Py<3.9 AST write): {HAS_ASTOR}") # Giả định HAS_ASTOR được định nghĩa
-    print(f"Log file: {log_file_path}") # Giả định log_file_path được định nghĩa
+    print(f"Using PyQt5: {HAS_PYQT5}")
+    print(f"Using Astor (for Py<3.9 AST write): {HAS_ASTOR}")
+    print(f"Log file: {log_file_path}")
 
     main()
 
