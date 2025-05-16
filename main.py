@@ -1,4 +1,4 @@
-# Version: 4.6
+# Version: 4.7
 # Date: 16/05/2025
 # Update: Sửa lỗi update, xoá file tạm, định dạng lại nhật ký hoạt động trong Repo. Tối ưu thuật toán hoạt động...
 import os
@@ -3764,7 +3764,7 @@ class SquareQLabel(QLabel):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (V4.6)")
+        self.setWindowTitle("Lottery Predictor (V4.7)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
 
         self.font_family_base = 'Segoe UI'
