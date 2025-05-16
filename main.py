@@ -3764,7 +3764,7 @@ class SquareQLabel(QLabel):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (V4.7)")
+        self.setWindowTitle("Lottery Predictor (V4.6)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
 
         self.font_family_base = 'Segoe UI'
