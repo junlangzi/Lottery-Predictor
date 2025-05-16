@@ -1,6 +1,6 @@
 # Version: 4.7
 # Date: 16/05/2025
-# Update: Sửa lỗi update, xoá file tạm, định dạng lại nhật ký hoạt động trong Repo. Tối ưu thuật toán hoạt động...
+# Update: <br>Sửa lỗi update, xoá file tạm.<br> Điều chỉnh khung hiển thị thuật toán trên máy trong tab Thuật toán<br> Định dạng lại nhật ký hoạt động trong Repo.<br> Fix nút copy lỗi.<br> Tối ưu thuật toán hoạt động...
 import os
 import sys
 import logging
@@ -5739,18 +5739,25 @@ class LotteryPredictionApp(QMainWindow):
                 name_label = QLabel(name_label_text)
                 name_label.setFont(self.get_qfont("bold"))
                 name_label.setWordWrap(True)
+                name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred) # MODIFIED
+                name_label.setMinimumWidth(1) # ADDED
                 card_layout.addWidget(name_label)
 
                 desc_label = QLabel(description)
                 desc_label.setFont(self.get_qfont("small"))
                 desc_label.setWordWrap(True)
+                desc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred) # MODIFIED
+                desc_label.setMinimumWidth(1) # ADDED
                 card_layout.addWidget(desc_label)
                 
-                file_info_text = f"File: {algo_path.name}"
-                if algo_date_str: file_info_text += f" - Ngày file: {algo_date_str}"
+                file_info_text = f"Tên File:<br> {algo_path.name}"
+                if algo_date_str: file_info_text += f" <br> Date update: {algo_date_str}"
                 file_label = QLabel(file_info_text)
                 file_label.setFont(self.get_qfont("italic_small"))
                 file_label.setStyleSheet("color: #6c757d;")
+                file_label.setWordWrap(True)
+                file_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred) # MODIFIED
+                file_label.setMinimumWidth(1) # ADDED
                 card_layout.addWidget(file_label)
 
                 button_container = QWidget()
@@ -9294,12 +9301,13 @@ class LotteryPredictionApp(QMainWindow):
     def setup_algo_management_tab(self):
         algo_mgmnt_logger.debug("Setting up Algorithm Management tab UI (PyQt5)...")
         tab_layout = QVBoxLayout(self.algo_management_tab_frame)
-        tab_layout.setContentsMargins(10, 10, 10, 10)
+        tab_layout.setContentsMargins(10, 40, 10, 10)
         tab_layout.setSpacing(10)
 
         control_frame = QFrame()
         control_frame_layout = QHBoxLayout(control_frame)
         control_frame_layout.setContentsMargins(0,0,0,0)
+        control_frame_layout.addStretch(3)
         self.algo_mgmnt_refresh_button = QPushButton("♻️Tải thuật toán online")
         self.algo_mgmnt_refresh_button.setToolTip("Tải lại danh sách thuật toán trên máy và danh sách thuật toán online.")
         self.algo_mgmnt_refresh_button.clicked.connect(self._refresh_algo_management_page)
@@ -9355,7 +9363,7 @@ class LotteryPredictionApp(QMainWindow):
 
         tab_layout.addWidget(splitter, 1)
 
-        QTimer.singleShot(0, lambda: splitter.setSizes([self.width() // 3, self.width() * 2 // 3]))
+        QTimer.singleShot(0, lambda: splitter.setSizes([(splitter.width() * 4) // 10, (splitter.width() * 6) // 10]))
 
         self.local_algorithms_managed_ui = {}
         self.online_algorithms_ui = {}
