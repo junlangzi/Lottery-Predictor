@@ -5607,15 +5607,16 @@ class LotteryPredictionApp(QMainWindow):
             account_number = "0987575432"
             clipboard.setText(account_number)
             self.update_status(f"Đã sao chép số tài khoản: {account_number}")
-            
-            original_text = self.copy_account_button.text()
 
-            self.copy_account_button.setText("COPY!")
-            self.copy_account_button.setEnabled(False)
-            
+            # SỬA ĐỔI Ở ĐÂY
+            original_text = self.copy_account_button_update_tab.text()
+            self.copy_account_button_update_tab.setText("COPY!")
+            self.copy_account_button_update_tab.setEnabled(False)
+
             QTimer.singleShot(2000, lambda: (
-                self.copy_account_button.setText(original_text),
-                self.copy_account_button.setEnabled(True)
+                # VÀ Ở ĐÂY
+                self.copy_account_button_update_tab.setText(original_text),
+                self.copy_account_button_update_tab.setEnabled(True)
             ))
         except Exception as e:
             main_logger.error(f"Lỗi sao chép số tài khoản: {e}", exc_info=True)
