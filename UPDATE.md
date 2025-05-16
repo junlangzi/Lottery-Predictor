@@ -1,5 +1,25 @@
 # Update list
 
+### 16/05/2025
+
+**Update ver 4.8**
+
+Sửa lỗi update, xoá file tạm. 
+
+Điều chỉnh khung hiển thị thuật toán trên máy trong tab Thuật toán
+
+Định dạng lại nhật ký hoạt động trong Repo.
+
+Fix nút copy lỗi.
+
+Tối ưu thuật toán hoạt động. 
+
+Di chuyển thanh Trạng thái hoạt động lên trên, hiển thị thông tin hệ thống xuống phía bên dưới...
+
+<br>
+
+
+
 ### 15/05/2025
 
 **Update ver 4.5**
