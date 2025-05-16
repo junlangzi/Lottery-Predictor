@@ -3833,7 +3833,7 @@ class LotteryPredictionApp(QMainWindow):
         self.system_ram_label = QLabel("Ram hệ thống: N/A GB")
 
         self.ram_usage_label.setStyleSheet("color: green;")
-        self.cpu_usage_label.setStyleSheet("color: orange;")
+        self.cpu_usage_label.setStyleSheet("color: purple;")
         self.system_ram_label.setStyleSheet("color: red;")
 
         self.system_stats_timer = QTimer(self)
@@ -4079,7 +4079,7 @@ class LotteryPredictionApp(QMainWindow):
         self.bottom_status_bar.addPermanentWidget(self.ram_usage_label)
         self.bottom_status_bar.addPermanentWidget(QLabel(" ⭐ "))
         self.bottom_status_bar.addPermanentWidget(self.cpu_usage_label)
-        self.bottom_status_bar.addPermanentWidget(QLabel(" (1 core ) "))
+        self.bottom_status_bar.addPermanentWidget(QLabel(" (⭐ ) "))
         self.bottom_status_bar.addPermanentWidget(self.system_ram_label)
         main_logger.info("Bottom status bar with system stats initialized.")
 
