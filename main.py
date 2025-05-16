@@ -1,6 +1,6 @@
-# Version: 4.5
-# Date: 15/05/2025
-# Update: Bổ sung phần Nhật ký hoạt động trong mục cài đặt, thêm chế độ tự động Sync file kết quả xổ số khi chương trình khởi động. Cập nhật thêm chế độ update khi có phiên bản mới.
+# Version: 4.6
+# Date: 16/05/2025
+# Update: Sửa lỗi update, xoá file tạm, định dạng lại nhật ký hoạt động trong Repo. Tối ưu thuật toán hoạt động...
 import os
 import sys
 import logging # logging nên được import sớm
@@ -5412,14 +5412,15 @@ class LotteryPredictionApp(QMainWindow):
                         utc_dt = datetime.datetime.strptime(updated_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
                         vn_tz = datetime.timezone(datetime.timedelta(hours=7))
                         vn_dt = utc_dt.astimezone(vn_tz)
-                        dt_display = vn_dt.strftime("%Y-%m-%d %H:%M:%S (VN)")
+                        dt_display = vn_dt.strftime("%d-%m-%Y %H:%M:%S (GMT+7)")
                     except ValueError:
                         dt_display = updated_str + " (UTC)"
 
                 title_escaped = title.replace('<', '<').replace('>', '>').replace('\n', '<br>                 ') # Thay newline bằng <br> với indent
 
-                formatted_history.append(f"<br><b>Ngày giờ:</b><br>  {dt_display}") # Tách dòng
-                formatted_history.append(f"<b>Thông điệp:</b><br>  {title_escaped}") # Tách dòng
+                formatted_history.append(f"<b>Ngày giờ:</b><br>  {dt_display}") # Tách dòng
+                formatted_history.append(f"<br>")
+                formatted_history.append(f"<b>Hoạt động</b><br>  {title_escaped}") # Tách dòng
                 formatted_history.append("<hr style='border:none; border-top:1px dashed #ccc; margin:3px 0;'>")
                 entries_found += 1
 
@@ -9964,7 +9965,7 @@ class UpdateCheckWorker(QObject):
             app.update_logger.info("UpdateCheckWorker: Bắt đầu kiểm tra.")
 
             current_html = app._format_version_info_for_display(
-                app.current_app_version_info, "Phiên bản đang chạy:"
+                app.current_app_version_info, "Phiên bản đang sử dụng"
             )
             update_file_url = app.update_file_url_edit.text().strip()
             commit_history_url = "https://github.com/junlangzi/Lottery-Predictor/commits/main.atom"
