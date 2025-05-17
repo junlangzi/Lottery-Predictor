@@ -1,6 +1,6 @@
-# Version: 4.8
-# Date: 16/05/2025
-# Update: <br><b>Sửa lỗi update</b>, xoá file tạm.<br> Điều chỉnh khung hiển thị thuật toán trên máy trong tab Thuật toán<br> Định dạng lại nhật ký hoạt động trong Repo.<br> Fix nút copy lỗi.<br> Tối ưu thuật toán hoạt động. <br> Di chuyển thanh Trạng thái hoạt động lên trên, hiển thị thông tin hệ thống xuống phía bên dưới...
+# Version: 4.9
+# Date: 17/05/2025
+# Update: <br> <b>Tối ưu việc sử dụng CPU và Ram<b>.<br> Người dùng có thể cài đặt sử dụng CPU hiệu quả hơn.<br> Bỏ hiển thị phần nhật ký hoạt động trong Cài đặt.
 import os
 import sys
 import logging
@@ -34,7 +34,7 @@ try:
     from PyQt5.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
         QFormLayout, QLabel, QLineEdit, QPushButton, QTabWidget, QGroupBox,
-        QComboBox, QSpinBox, QCheckBox, QScrollArea, QTextEdit, QProgressBar,
+        QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QScrollArea, QTextEdit, QProgressBar, # <--- SỬA DÒNG NÀY
         QListWidget, QListWidgetItem, QDialog, QCalendarWidget, QMessageBox,
         QFileDialog, QStatusBar, QSplitter, QSizePolicy, QFrame, QRadioButton,
         QButtonGroup
@@ -2451,10 +2451,11 @@ class OptimizerEmbedded(QWidget):
                              custom_steps_config, combination_algo_names,
                              initial_best_params=None, initial_best_score_tuple=None):
         start_time = time.time()
-        optimizer_worker_logger = logging.getLogger("OptimizerWorker")
+        optimizer_worker_logger = logging.getLogger("OptimizerWorker") # Đổi tên logger nếu muốn
         is_resuming = initial_best_params is not None and initial_best_score_tuple is not None
-        optimizer_worker_logger.info(f"Starting Auto/Custom optimization worker (Resuming: {is_resuming})...")
+        optimizer_worker_logger.info(f"Starting Auto/Custom optimization worker (Resuming: {is_resuming}). Target: {target_display_name}")
 
+        # --- Các hàm nội bộ để gửi tín hiệu lên queue ---
         def queue_log(level, text, tag=None):
             if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                 try: self.optimizer_queue.put({"type": "log", "payload": {"level": level, "text": text, "tag": tag}})
@@ -2463,7 +2464,7 @@ class OptimizerEmbedded(QWidget):
             if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "status", "payload": text})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (status): {q_err}")
-        def queue_progress(value):
+        def queue_progress(value): # value là float từ 0.0 đến 1.0
              if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "progress", "payload": min(max(0.0, value), 1.0)})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (progress): {q_err}")
@@ -2479,25 +2480,42 @@ class OptimizerEmbedded(QWidget):
              if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "error", "payload": text})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (error): {q_err}")
+        # --- Kết thúc hàm nội bộ ---
+
+        # --- Lấy cài đặt throttling ---
+        throttling_enabled_opt = False
+        sleep_duration_opt = 0.005
+        if hasattr(self.main_app, 'cpu_throttling_enabled'):
+            throttling_enabled_opt = self.main_app.cpu_throttling_enabled
+        if hasattr(self.main_app, 'throttle_sleep_duration'):
+            sleep_duration_opt = self.main_app.throttle_sleep_duration
+        optimizer_worker_logger.debug(f"_optimization_worker Throttling: Enabled={throttling_enabled_opt}, Duration={sleep_duration_opt}s")
+        # --- Kết thúc lấy cài đặt throttling ---
 
         finish_reason = "completed"
         try:
             if target_display_name not in self.loaded_algorithms:
-                 raise ValueError(f"Target algorithm '{target_display_name}' not loaded.")
+                 raise ValueError(f"Target algorithm '{target_display_name}' not loaded in worker.")
+            
             target_algo_data = self.loaded_algorithms[target_display_name]
-            original_path = target_algo_data['path']; class_name = target_algo_data['class_name']
+            original_path = target_algo_data['path']
+            class_name = target_algo_data['class_name']
             original_params = target_algo_data['config'].get('parameters', {})
+            
             try:
                 source_code = original_path.read_text(encoding='utf-8')
             except Exception as read_err:
-                raise RuntimeError(f"Failed to read source code for {original_path.name}: {read_err}")
+                raise RuntimeError(f"Worker failed to read source code for {original_path.name}: {read_err}")
 
+            if not hasattr(self, 'current_optimize_target_dir') or not self.current_optimize_target_dir:
+                 raise RuntimeError("Worker cannot determine optimize target directory for _optimization_worker.")
             target_dir = self.current_optimize_target_dir
+            
             params_to_optimize = {k: v for k, v in original_params.items() if isinstance(v, (int, float))}
             param_names_ordered = list(params_to_optimize.keys())
 
             if not param_names_ordered:
-                 queue_log("INFO", "Thuật toán đích không có tham số số học để tối ưu.")
+                 queue_log("INFO", "Thuật toán đích không có tham số số học để tối ưu (chế độ Auto/Custom).")
                  queue_finished("Thuật toán đích không có tham số số học.", success=False, reason="no_params")
                  return
 
@@ -2508,7 +2526,7 @@ class OptimizerEmbedded(QWidget):
                      test_start_date=start_dt, test_end_date=end_dt, optimize_target_dir=target_dir)
 
             def get_primary_score(perf_dict):
-                 if not perf_dict: return (-1.0, -1.0, -1.0, -100.0)
+                 if not perf_dict: return (-1.0, -1.0, -1.0, -100.0) # Đảm bảo trả về tuple 4 phần tử
                  return (perf_dict.get('acc_top_3_pct',0.0),
                          perf_dict.get('acc_top_5_pct',0.0),
                          perf_dict.get('acc_top_1_pct',0.0),
@@ -2520,7 +2538,7 @@ class OptimizerEmbedded(QWidget):
 
             if is_resuming:
                 queue_log("INFO", f"Tiếp tục tối ưu với tham số, điểm số đã tải.", tag="RESUME")
-                current_best_params = initial_best_params.copy()
+                current_best_params = initial_best_params.copy() # Đảm bảo là copy
                 queue_status("Kiểm tra hiệu suất tham số đã tải...")
                 queue_progress(0.0)
                 recalc_perf = run_combined_perf_test_wrapper(current_best_params, combination_algo_names, start_date, end_date)
@@ -2542,7 +2560,7 @@ class OptimizerEmbedded(QWidget):
                     queue_log("ERROR", "Lỗi khi kiểm tra lại hiệu suất của tham số đã tải.", tag="ERROR")
                     queue_finished("Lỗi kiểm tra lại hiệu suất tham số đã tải.", success=False, reason="resume_error")
                     return
-            else:
+            else: # Bắt đầu mới
                  queue_log("INFO", f"Bắt đầu tối ưu mới cho: {target_display_name}")
                  queue_status("Kiểm tra hiệu suất gốc...")
                  queue_progress(0.0)
@@ -2565,10 +2583,12 @@ class OptimizerEmbedded(QWidget):
                  queue_log("INFO", f"Hiệu suất gốc: Top3={current_best_perf.get('acc_top_3_pct', 0.0):.2f}%, Top5={current_best_perf.get('acc_top_5_pct', 0.0):.2f}%, Top1={current_best_perf.get('acc_top_1_pct', 0.0):.2f}%, Lặp TB={current_best_perf.get('avg_top10_repetition', 0.0):.2f}")
                  queue_best_update(current_best_params, current_best_score_tuple)
 
-            MAX_ITERATIONS_PER_PARAM_AUTO = 10
-            STALL_THRESHOLD = 2
-            MAX_FULL_CYCLES = 5
-            steps_done = 0
+            # --- Các hằng số cho Hill Climbing ---
+            MAX_ITERATIONS_PER_PARAM_AUTO = 10 # Số lần thử tăng/giảm mỗi hướng cho 1 tham số ở chế độ Auto
+            STALL_THRESHOLD = 2  # Dừng thử 1 hướng nếu không cải thiện sau N lần
+            MAX_FULL_CYCLES = 5  # Số chu kỳ lặp qua tất cả các tham số
+            # --- Kết thúc hằng số ---
+            steps_done_total = 0 # Đếm tổng số bước test đã thực hiện
 
             for cycle in range(MAX_FULL_CYCLES):
                 queue_log("INFO", f"--- Chu kỳ {cycle + 1}/{MAX_FULL_CYCLES} ---", tag="PROGRESS")
@@ -2576,221 +2596,245 @@ class OptimizerEmbedded(QWidget):
 
                 for param_idx, param_name in enumerate(param_names_ordered):
                     if self.optimizer_stop_event.is_set(): finish_reason = "stopped"; break
+                    
+                    # --- BEGIN THROTTLING LOGIC ---
+                    if throttling_enabled_opt and sleep_duration_opt > 0:
+                        time.sleep(sleep_duration_opt)
+                        if self.optimizer_stop_event.is_set(): finish_reason = "stopped"; break
+                        while self.optimizer_pause_event.is_set():
+                            if self.optimizer_stop_event.is_set(): finish_reason = "stopped"; break
+                            time.sleep(0.1)
+                        if self.optimizer_stop_event.is_set(): finish_reason = "stopped"; break
+                    # --- END THROTTLING LOGIC ---
+
                     while self.optimizer_pause_event.is_set():
                         if self.optimizer_stop_event.is_set(): finish_reason = "stopped"; break
                         time.sleep(0.5)
                     if finish_reason == "stopped": break
-                    elapsed_time = time.time() - start_time
-                    if elapsed_time >= time_limit_sec: finish_reason = "time_limit"; break
+                    
+                    elapsed_time_cycle = time.time() - start_time
+                    if elapsed_time_cycle >= time_limit_sec: finish_reason = "time_limit"; break
 
                     param_opt_config = custom_steps_config.get(param_name, {'mode': 'Auto', 'steps': []})
                     mode = param_opt_config['mode']
-                    custom_steps = param_opt_config['steps']
-                    original_value_for_turn = current_best_params[param_name]
-                    is_float = isinstance(original_value_for_turn, float)
+                    custom_steps_for_param = param_opt_config['steps']
+                    original_value_for_turn = current_best_params[param_name] # Giá trị hiện tại tốt nhất cho tham số này
+                    is_float_param = isinstance(original_value_for_turn, float)
 
-                    if mode == 'Custom' and custom_steps:
-                        queue_log("INFO", f"Tối ưu {param_name} (Chế độ: Custom, Các bước: {custom_steps})", tag="CUSTOM_STEP")
-                        best_value_this_param = current_best_params[param_name]
+                    if mode == 'Custom' and custom_steps_for_param:
+                        queue_log("INFO", f"Tối ưu {param_name} (Chế độ: Custom, Các bước: {custom_steps_for_param})", tag="CUSTOM_STEP")
+                        best_value_this_param_turn = current_best_params[param_name] # Giá trị bắt đầu cho lượt custom này
 
-                        for step_sign in [1, -1]:
-                            for step_val in custom_steps:
+                        for step_sign in [1, -1]: # Thử cả tăng (+) và giảm (-)
+                            for step_val_abs in custom_steps_for_param: # custom_steps_for_param đã được sort và unique
                                 if self.optimizer_stop_event.is_set(): finish_reason="stopped"; break
                                 if time.time() - start_time >= time_limit_sec: finish_reason="time_limit"; break
-                                if step_val == 0: continue
+                                if step_val_abs == 0: continue # Bỏ qua bước 0
 
-                                test_params = current_best_params.copy()
-                                new_value = best_value_this_param + (step_sign * step_val)
-                                test_params[param_name] = float(f"{new_value:.6g}") if is_float else int(round(new_value))
+                                test_params_custom = current_best_params.copy()
+                                new_value_custom = best_value_this_param_turn + (step_sign * step_val_abs)
+                                test_params_custom[param_name] = float(f"{new_value_custom:.6g}") if is_float_param else int(round(new_value_custom))
 
                                 sign_char = '+' if step_sign > 0 else '-'
-                                queue_status(f"Thử custom {sign_char}: {param_name}={test_params[param_name]} (bước {step_val})...")
+                                queue_status(f"Thử custom {sign_char}: {param_name}={test_params_custom[param_name]} (bước {step_val_abs})...")
 
-                                perf_result = run_combined_perf_test_wrapper(test_params, combination_algo_names, start_date, end_date)
-                                steps_done += 1
-                                queue_progress(min(0.95, (time.time() - start_time) / time_limit_sec))
+                                perf_result_custom = run_combined_perf_test_wrapper(test_params_custom, combination_algo_names, start_date, end_date)
+                                steps_done_total += 1
+                                queue_progress(min(0.95, (time.time() - start_time) / time_limit_sec if time_limit_sec > 0 else 0.0))
 
                                 if self.optimizer_stop_event.is_set(): finish_reason="stopped"; break
 
-                                if perf_result is not None:
-                                    new_score = get_primary_score(perf_result)
-                                    if new_score > current_best_score_tuple:
-                                        queue_log("BEST", f"  -> Cải thiện ({sign_char} custom)! {param_name}={test_params[param_name]}. Score mới: {new_score}", tag="BEST")
-                                        current_best_params = test_params.copy()
-                                        current_best_perf = perf_result
-                                        current_best_score_tuple = new_score
-                                        best_value_this_param = new_value
+                                if perf_result_custom is not None:
+                                    new_score_custom = get_primary_score(perf_result_custom)
+                                    if new_score_custom > current_best_score_tuple:
+                                        queue_log("BEST", f"  -> Cải thiện ({sign_char} custom)! {param_name}={test_params_custom[param_name]}. Score mới: {new_score_custom}", tag="BEST")
+                                        current_best_params = test_params_custom.copy() # Cập nhật bộ tham số tốt nhất chung
+                                        current_best_perf = perf_result_custom
+                                        current_best_score_tuple = new_score_custom
+                                        best_value_this_param_turn = new_value_custom # Cập nhật giá trị tốt nhất cho LƯỢT custom này
                                         queue_best_update(current_best_params, current_best_score_tuple)
                                         params_changed_in_cycle = True
                                 else:
-                                    queue_log("WARNING", f"  -> Lỗi Test {sign_char} custom {param_name}={test_params[param_name]}.", tag="WARNING")
+                                    queue_log("WARNING", f"  -> Lỗi Test {sign_char} custom {param_name}={test_params_custom[param_name]}.", tag="WARNING")
                             if finish_reason in ["stopped", "time_limit"]: break
                         if finish_reason in ["stopped", "time_limit"]: break
-
-                    else:
-                        step_base = abs(original_value_for_turn) * 0.05
-                        if not is_float:
-                            step = max(1, int(round(step_base)))
+                    
+                    else: # Chế độ Auto (Hill Climb đơn giản)
+                        step_base_auto = abs(original_value_for_turn) * 0.05 # 5% giá trị hiện tại
+                        if not is_float_param:
+                            step_auto = max(1, int(round(step_base_auto))) # Ít nhất là 1 cho int
                         else:
-                            if abs(original_value_for_turn) > 1e-9:
-                                step = max(1e-6, step_base)
+                            if abs(original_value_for_turn) > 1e-9: # Tránh step quá nhỏ nếu giá trị gần 0
+                                step_auto = max(1e-6, step_base_auto) # Giới hạn step tối thiểu cho float
                             else:
-                                step = 0.001
-                        queue_log("INFO", f"Tối ưu {param_name} (Chế độ: Auto, Giá trị hiện tại={current_best_params[param_name]:.4g}, Bước ~ {step:.4g})", tag="PROGRESS")
+                                step_auto = 0.001 # Step mặc định nếu giá trị là 0
+                        
+                        queue_log("INFO", f"Tối ưu {param_name} (Chế độ: Auto, Giá trị hiện tại={current_best_params[param_name]:.4g}, Bước ~ {step_auto:.4g})", tag="PROGRESS")
 
-                        for direction_sign in [1, -1]:
-                            no_improve_streak = 0
-                            params_at_dir_start = current_best_params.copy()
-                            current_val_dir = params_at_dir_start[param_name]
-                            dir_char = '+' if direction_sign > 0 else '-'; dir_text = 'tăng' if direction_sign > 0 else 'giảm'
+                        for direction_sign_auto in [1, -1]: # Thử tăng rồi thử giảm
+                            no_improve_streak_auto = 0
+                            params_at_dir_start_auto = current_best_params.copy() # Tham số khi bắt đầu hướng này
+                            current_val_for_dir_auto = params_at_dir_start_auto[param_name] # Giá trị tham số hiện tại cho hướng này
+                            
+                            dir_char_auto = '+' if direction_sign_auto > 0 else '-'; 
+                            dir_text_auto = 'tăng' if direction_sign_auto > 0 else 'giảm'
 
-                            for i in range(MAX_ITERATIONS_PER_PARAM_AUTO):
+                            for i_auto in range(MAX_ITERATIONS_PER_PARAM_AUTO):
                                 if self.optimizer_stop_event.is_set(): finish_reason="stopped"; break
                                 if time.time() - start_time >= time_limit_sec: finish_reason="time_limit"; break
 
-                                current_val_dir += (direction_sign * step)
-                                test_params = params_at_dir_start.copy()
-                                test_params[param_name] = float(f"{current_val_dir:.6g}") if is_float else int(round(current_val_dir))
+                                # Thử giá trị mới
+                                current_val_for_dir_auto += (direction_sign_auto * step_auto)
+                                test_params_auto = params_at_dir_start_auto.copy()
+                                test_params_auto[param_name] = float(f"{current_val_for_dir_auto:.6g}") if is_float_param else int(round(current_val_for_dir_auto))
 
-                                queue_status(f"Thử {dir_text} (auto): {param_name}={test_params[param_name]:.4g}...")
+                                queue_status(f"Thử {dir_text_auto} (auto): {param_name}={test_params_auto[param_name]:.4g}...")
 
-                                perf_result = run_combined_perf_test_wrapper(test_params, combination_algo_names, start_date, end_date)
-                                steps_done += 1
-                                queue_progress(min(0.95, (time.time() - start_time) / time_limit_sec))
+                                perf_result_auto = run_combined_perf_test_wrapper(test_params_auto, combination_algo_names, start_date, end_date)
+                                steps_done_total += 1
+                                queue_progress(min(0.95, (time.time() - start_time) / time_limit_sec if time_limit_sec > 0 else 0.0))
 
                                 if self.optimizer_stop_event.is_set(): finish_reason="stopped"; break
 
-                                if perf_result is not None:
-                                    new_score = get_primary_score(perf_result)
-                                    if new_score > current_best_score_tuple:
-                                        queue_log("BEST", f"  -> Cải thiện ({dir_char} auto)! {param_name}={test_params[param_name]:.4g}. Score mới: {new_score}", tag="BEST")
-                                        current_best_params = test_params.copy()
-                                        params_at_dir_start = test_params.copy()
-                                        current_val_dir = test_params[param_name]
+                                if perf_result_auto is not None:
+                                    new_score_auto = get_primary_score(perf_result_auto)
+                                    if new_score_auto > current_best_score_tuple:
+                                        queue_log("BEST", f"  -> Cải thiện ({dir_char_auto} auto)! {param_name}={test_params_auto[param_name]:.4g}. Score mới: {new_score_auto}", tag="BEST")
+                                        current_best_params = test_params_auto.copy() # Cập nhật bộ tốt nhất chung
+                                        params_at_dir_start_auto = test_params_auto.copy() # Cập nhật tham số BẮT ĐẦU cho hướng này
+                                        current_val_for_dir_auto = test_params_auto[param_name] # Cập nhật giá trị HIỆN TẠI cho hướng này
 
-                                        current_best_perf = perf_result
-                                        current_best_score_tuple = new_score
+                                        current_best_perf = perf_result_auto
+                                        current_best_score_tuple = new_score_auto
                                         queue_best_update(current_best_params, current_best_score_tuple)
                                         params_changed_in_cycle = True
-                                        no_improve_streak = 0
+                                        no_improve_streak_auto = 0 # Reset streak
                                     else:
-                                        no_improve_streak += 1
-                                        queue_log("DEBUG", f"  -> Không cải thiện ({dir_char} auto) {param_name}={test_params[param_name]:.4g}. Streak: {no_improve_streak}")
+                                        no_improve_streak_auto += 1
+                                        queue_log("DEBUG", f"  -> Không cải thiện ({dir_char_auto} auto) {param_name}={test_params_auto[param_name]:.4g}. Streak: {no_improve_streak_auto}")
 
-                                    if no_improve_streak >= STALL_THRESHOLD:
-                                        queue_log("DEBUG", f"    Dừng hướng {dir_char} cho {param_name} do không cải thiện {STALL_THRESHOLD} lần.")
-                                        break
-                                else:
-                                    no_improve_streak += 1
-                                    queue_log("WARNING", f"  -> Lỗi Test {dir_char} auto {param_name}={test_params[param_name]:.4g}. Streak: {no_improve_streak}", tag="WARNING")
-                                    if no_improve_streak >= STALL_THRESHOLD:
-                                        queue_log("DEBUG", f"    Dừng hướng {dir_char} cho {param_name} do lỗi test + không cải thiện.")
-                                        break
+                                    if no_improve_streak_auto >= STALL_THRESHOLD:
+                                        queue_log("DEBUG", f"    Dừng hướng {dir_char_auto} cho {param_name} do không cải thiện {STALL_THRESHOLD} lần.")
+                                        break # Dừng thử hướng này
+                                else: # perf_result_auto is None (lỗi test)
+                                    no_improve_streak_auto += 1 # Coi như không cải thiện
+                                    queue_log("WARNING", f"  -> Lỗi Test {dir_char_auto} auto {param_name}={test_params_auto[param_name]:.4g}. Streak: {no_improve_streak_auto}", tag="WARNING")
+                                    if no_improve_streak_auto >= STALL_THRESHOLD:
+                                        queue_log("DEBUG", f"    Dừng hướng {dir_char_auto} cho {param_name} do lỗi test + không cải thiện.")
+                                        break # Dừng thử hướng này
 
-                            if finish_reason in ["stopped", "time_limit"]: break
-                        if finish_reason in ["stopped", "time_limit"]: break
-                    if finish_reason in ["stopped", "time_limit"]: break
+                            if finish_reason in ["stopped", "time_limit"]: break # Thoát khỏi vòng lặp direction_sign_auto
+                        if finish_reason in ["stopped", "time_limit"]: break # Thoát khỏi vòng lặp param_name
+                
+                if finish_reason in ["stopped", "time_limit"]: break # Thoát khỏi vòng lặp cycle
 
-                if finish_reason in ["stopped", "time_limit"]: break
-
-                if not params_changed_in_cycle and cycle > 0:
+                if not params_changed_in_cycle and cycle > 0: # Nếu không có gì thay đổi trong 1 chu kỳ (trừ chu kỳ đầu)
                     queue_log("INFO", f"Không có cải thiện nào trong chu kỳ {cycle + 1}. Dừng tối ưu.", tag="PROGRESS")
                     finish_reason = "no_improvement"
                     break
+            
+            # --- Xử lý kết thúc tối ưu ---
+            queue_progress(1.0) # Hoàn thành
+            final_message_worker = ""
+            if finish_reason == "stopped": final_message_worker = "Dừng bởi người dùng."
+            elif finish_reason == "time_limit": final_message_worker = f"Đã hết thời gian tối ưu ({time_limit_sec/60:.0f} phút)."
+            elif finish_reason == "no_improvement": final_message_worker = "Tối ưu dừng sớm do không cải thiện thêm."
+            elif finish_reason == "no_params": final_message_worker = "Thuật toán không có tham số để tối ưu (Auto/Custom)."
+            elif finish_reason == "resume_error": final_message_worker = "Lỗi khi kiểm tra lại tham số đã tải."
+            elif finish_reason == "initial_test_error": final_message_worker = "Lỗi test hiệu suất ban đầu."
+            elif finish_reason == "critical_error": final_message_worker = "Lỗi nghiêm trọng trong worker." # Sẽ được gán trong except
+            else: final_message_worker = "Tối ưu hoàn tất."
 
-            queue_progress(1.0)
-            final_message = ""
-            if finish_reason == "stopped": final_message = "Dừng bởi người dùng."
-            elif finish_reason == "time_limit": final_message = f"Đã hết thời gian tối ưu ({time_limit_sec/60:.0f} phút)."
-            elif finish_reason == "no_improvement": final_message = "Tối ưu dừng sớm do không cải thiện thêm."
-            elif finish_reason == "no_params": final_message = "Thuật toán không có tham số để tối ưu."
-            elif finish_reason == "resume_error": final_message = "Lỗi khi kiểm tra lại tham số đã tải."
-            elif finish_reason == "initial_test_error": final_message = "Lỗi test hiệu suất ban đầu."
-            elif finish_reason == "critical_error": final_message = "Lỗi nghiêm trọng trong worker."
-            else: final_message = "Tối ưu hoàn tất."
+            # Chỉ ghi log và lưu file nếu có kết quả tốt hơn hoặc là lần chạy đầu
+            can_log_or_save_final = current_best_params is not None and finish_reason not in ["no_params", "resume_error", "initial_test_error", "critical_error"]
 
-            can_log_or_save = current_best_params is not None and finish_reason not in ["no_params", "resume_error", "initial_test_error", "critical_error"]
-
-            if can_log_or_save:
-                final_message += " Kết quả tốt nhất đã được lưu."
-                queue_log("BEST", "="*10 + " TỐI ƯU KẾT THÚC " + "="*10, tag="BEST")
+            if can_log_or_save_final:
+                final_message_worker += " Kết quả tốt nhất đã được lưu."
+                queue_log("BEST", "="*10 + " TỐI ƯU KẾT THÚC (AUTO/CUSTOM) " + "="*10, tag="BEST")
                 queue_log("BEST", f"Lý do kết thúc: {finish_reason}", tag="BEST")
                 queue_log("BEST", f"Tham số tốt nhất tìm được: {current_best_params}", tag="BEST")
-                score_desc = "(Top3%, Top5%, Top1%, -AvgRepT10)"
-                queue_log("BEST", f"Điểm số tốt nhất {score_desc}: ({', '.join(f'{s:.3f}' for s in current_best_score_tuple)})", tag="BEST")
+                score_desc_final = "(Top3%, Top5%, Top1%, -AvgRepT10)"
+                queue_log("BEST", f"Điểm số tốt nhất {score_desc_final}: ({', '.join(f'{s:.3f}' for s in current_best_score_tuple)})", tag="BEST")
                 if current_best_perf:
                      queue_log("BEST", f"Chi tiết hiệu suất tốt nhất: Top3={current_best_perf.get('acc_top_3_pct',0.0):.2f}%, Top5={current_best_perf.get('acc_top_5_pct',0.0):.2f}%, Top1={current_best_perf.get('acc_top_1_pct',0.0):.2f}%, Lặp TB={current_best_perf.get('avg_top10_repetition',0.0):.2f}", tag="BEST")
 
-                try:
-                    final_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    success_dir = target_dir / "success"
-                    success_dir.mkdir(parents=True, exist_ok=True)
+                try: # Lưu file .py và .json
+                    final_timestamp_save = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    success_dir_save = target_dir / "success"
+                    success_dir_save.mkdir(parents=True, exist_ok=True)
 
-                    perf_metric_for_name = current_best_perf.get('acc_top_3_pct', 0.0) if current_best_perf else 0.0
-                    perf_str = f"top3_{perf_metric_for_name:.1f}"
+                    perf_metric_for_filename = current_best_perf.get('acc_top_3_pct', 0.0) if current_best_perf else 0.0
+                    perf_str_filename = f"top3_{perf_metric_for_filename:.1f}"
+                    
+                    # Sử dụng stem từ path gốc của thuật toán
+                    base_algo_stem = target_algo_data['path'].stem
+                    success_filename_base_save = f"optimized_{base_algo_stem}_{perf_str_filename}_{final_timestamp_save}"
 
-                    success_filename_base = f"optimized_{target_algo_data['path'].stem}_{perf_str}_{final_timestamp}"
-
-                    success_filename_py = success_filename_base + ".py"
-                    final_py_path = success_dir / success_filename_py
-                    final_mod_src = self.modify_algorithm_source_ast(source_code, class_name, current_best_params)
-                    if final_mod_src:
-                        final_py_path.write_text(final_mod_src, encoding='utf-8')
+                    # Lưu file .py
+                    success_filename_py_save = success_filename_base_save + ".py"
+                    final_py_path_save = success_dir_save / success_filename_py_save
+                    final_modified_source_save = self.modify_algorithm_source_ast(source_code, class_name, current_best_params)
+                    if final_modified_source_save:
+                        final_py_path_save.write_text(final_modified_source_save, encoding='utf-8')
                     else:
                          queue_log("ERROR", "Lỗi khi tạo source code đã chỉnh sửa để lưu file .py cuối cùng.", tag="ERROR")
-
-
-                    success_filename_json = success_filename_base + ".json"
-                    final_json_path = success_dir / success_filename_json
-                    final_save_data = {
-                        "optimization_mode": "auto_hill_climb",
+                    
+                    # Lưu file .json
+                    success_filename_json_save = success_filename_base_save + ".json"
+                    final_json_path_save = success_dir_save / success_filename_json_save
+                    final_save_data_json = {
+                        "optimization_mode": "auto_hill_climb", # Hoặc "custom_steps" nếu có
                         "target_algorithm": target_display_name,
                         "params": current_best_params,
                         "performance": current_best_perf if current_best_perf else "N/A",
                         "score_tuple": list(current_best_score_tuple),
-                        "combination_algorithms": combination_algo_names,
+                        "combination_algorithms": combination_algo_names, # Lưu danh sách tên thuật toán kết hợp
                         "optimization_range": f"{start_date:%Y-%m-%d}_to_{end_date:%Y-%m-%d}",
                         "optimization_duration_seconds": round(time.time() - start_time, 1),
                         "finish_reason": finish_reason,
                         "finish_timestamp": datetime.datetime.now().isoformat()
                     }
                     try:
-                        final_json_path.write_text(json.dumps(final_save_data, indent=4, ensure_ascii=False), encoding='utf-8')
-                        queue_log("BEST", f"Đã lưu kết quả tối ưu vào thư mục: {success_dir.relative_to(self.base_dir)}", tag="BEST")
-                    except Exception as json_save_err:
-                         queue_log("ERROR", f"Lỗi lưu file JSON kết quả cuối: {json_save_err}", tag="ERROR")
-                         final_message += "\n(Lỗi lưu file JSON kết quả!)"
+                        final_json_path_save.write_text(json.dumps(final_save_data_json, indent=4, ensure_ascii=False), encoding='utf-8')
+                        queue_log("BEST", f"Đã lưu kết quả tối ưu vào thư mục: {success_dir_save.relative_to(self.base_dir)}", tag="BEST")
+                    except Exception as json_save_err_final:
+                         queue_log("ERROR", f"Lỗi lưu file JSON kết quả cuối: {json_save_err_final}", tag="ERROR")
+                         final_message_worker += "\n(Lỗi lưu file JSON kết quả!)"
 
-                except Exception as final_save_err:
-                    queue_log("ERROR", f"Lỗi lưu kết quả cuối cùng: {final_save_err}", tag="ERROR")
-                    final_message += "\n(Lỗi lưu file kết quả!)"
-            elif not can_log_or_save and finish_reason not in ["no_params", "resume_error", "initial_test_error", "critical_error"]:
-                 final_message = "Không tìm thấy tham số nào tốt hơn trạng thái bắt đầu hoặc đã xảy ra lỗi."
-                 queue_log("INFO", "Không tìm thấy tham số tốt hơn hoặc đã xảy ra lỗi trong quá trình tối ưu.", tag="INFO")
+                except Exception as final_save_err_overall:
+                    queue_log("ERROR", f"Lỗi lưu kết quả cuối cùng: {final_save_err_overall}", tag="ERROR")
+                    final_message_worker += "\n(Lỗi lưu file kết quả!)"
+            elif not can_log_or_save_final and finish_reason not in ["no_params", "resume_error", "initial_test_error", "critical_error"]:
+                 # Trường hợp không có cải thiện so với ban đầu (nếu is_resuming=False và initial_perf là tốt nhất)
+                 # hoặc không có tham số nào thực sự được test (ví dụ lỗi config custom_steps)
+                 final_message_worker = "Không tìm thấy tham số nào tốt hơn trạng thái bắt đầu, hoặc không có thay đổi nào được áp dụng."
+                 queue_log("INFO", "Không tìm thấy tham số tốt hơn hoặc không có thay đổi nào được áp dụng trong quá trình tối ưu.", tag="INFO")
+            
+            is_successful_run_final = finish_reason in ["completed", "time_limit", "no_improvement"] and can_log_or_save_final
+            
+            queue_finished(final_message_worker, success=is_successful_run_final, reason=finish_reason)
 
-            is_successful_run = finish_reason in ["completed", "time_limit", "no_improvement"] and can_log_or_save
-
-            queue_finished(final_message, success=is_successful_run, reason=finish_reason)
-
-        except Exception as worker_err:
-            finish_reason = "critical_error"
-            optimizer_worker_logger.critical(f"Worker exception (Auto/Custom): {worker_err}", exc_info=True)
-            queue_error(f"Lỗi nghiêm trọng trong luồng tối ưu: {worker_err}")
-            queue_finished(f"Lỗi nghiêm trọng: {worker_err}", success=False, reason=finish_reason)
+        except Exception as worker_err_critical:
+            finish_reason = "critical_error" # Đảm bảo finish_reason được cập nhật
+            optimizer_worker_logger.critical(f"Worker exception (Auto/Custom Mode): {worker_err_critical}", exc_info=True)
+            # Gửi lỗi cụ thể hơn lên queue
+            error_detail = f"Lỗi nghiêm trọng trong luồng tối ưu (Auto/Custom): {type(worker_err_critical).__name__} - {str(worker_err_critical)[:100]}"
+            queue_error(error_detail) 
+            # Queue finished vẫn được gọi để UI biết luồng đã kết thúc
+            queue_finished(f"Lỗi nghiêm trọng: {worker_err_critical}", success=False, reason=finish_reason)
+        finally:
+            optimizer_worker_logger.info(f"_optimization_worker finished. Reason: {finish_reason}")
 
     def _combination_optimization_worker(self, target_display_name, start_date, end_date, time_limit_sec,
-                                         generation_params,
+                                         generation_params, # Dict chứa 'original_params', 'num_values', 'method'
                                          combination_algo_names,
-                                         initial_best_params=None,
-                                         initial_best_score_tuple=None):
-        """
-        Worker thread for the 'Generated Combinations' optimization mode.
-        Generates parameter combinations first, then tests their performance.
-        """
+                                         initial_best_params=None, # Thường là None cho mode này
+                                         initial_best_score_tuple=None): # Thường là None
         start_time = time.time()
         optimizer_worker_logger = logging.getLogger("OptimizerWorker.Combo")
-        optimizer_worker_logger.info("Starting Generated Combinations optimization worker...")
+        optimizer_worker_logger.info(f"Starting Generated Combinations optimization worker. Target: {target_display_name}")
 
+        # --- Các hàm nội bộ để gửi tín hiệu lên queue (Tương tự như worker trên) ---
         def queue_log(level, text, tag=None):
             if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                 try: self.optimizer_queue.put({"type": "log", "payload": {"level": level, "text": text, "tag": tag}})
@@ -2799,10 +2843,10 @@ class OptimizerEmbedded(QWidget):
             if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "status", "payload": text})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (status): {q_err}")
-        def queue_progress(current, total):
+        def queue_progress(current, total): # Gửi cả current và total
              if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "progress", "payload": {"current": current, "total": total}})
-                 except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (progress): {q_err}")
+                 except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (progress dict): {q_err}")
         def queue_best_update(params, score_tuple):
              if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "best_update", "payload": {"params": params, "score_tuple": score_tuple}})
@@ -2815,221 +2859,245 @@ class OptimizerEmbedded(QWidget):
              if hasattr(self, 'optimizer_queue') and self.optimizer_queue:
                  try: self.optimizer_queue.put({"type": "error", "payload": text})
                  except Exception as q_err: optimizer_worker_logger.warning(f"Failed queue put (error): {q_err}")
+        # --- Kết thúc hàm nội bộ ---
+
+        # --- Lấy cài đặt throttling ---
+        throttling_enabled_opt = False
+        sleep_duration_opt = 0.005
+        if hasattr(self.main_app, 'cpu_throttling_enabled'):
+            throttling_enabled_opt = self.main_app.cpu_throttling_enabled
+        if hasattr(self.main_app, 'throttle_sleep_duration'):
+            sleep_duration_opt = self.main_app.throttle_sleep_duration
+        optimizer_worker_logger.debug(f"_combination_optimization_worker Throttling: Enabled={throttling_enabled_opt}, Duration={sleep_duration_opt}s")
+        # --- Kết thúc lấy cài đặt throttling ---
 
         finish_reason = "completed"
-        generated_combinations = []
-        total_combinations = 0
-        current_best_params = None
-        current_best_perf = None
-        current_best_score_tuple = (-1.0, -1.0, -1.0, -100.0)
+        generated_combinations_list = [] # Đổi tên để rõ ràng hơn
+        total_combinations_count = 0
+        current_best_params_combo = None # Đổi tên để tránh nhầm lẫn
+        current_best_perf_combo = None
+        current_best_score_tuple_combo = (-1.0, -1.0, -1.0, -100.0) # Giá trị khởi tạo
 
         try:
-            optimizer_worker_logger.debug(f"Setting up worker for target: {target_display_name}")
+            optimizer_worker_logger.debug(f"Setting up combo worker for target: {target_display_name}")
             if target_display_name not in self.loaded_algorithms:
-                 raise ValueError(f"Target algorithm '{target_display_name}' not loaded in worker.")
+                 raise ValueError(f"Target algorithm '{target_display_name}' not loaded in combo worker.")
 
-            target_algo_data = self.loaded_algorithms[target_display_name]
-            original_path = target_algo_data['path']
-            class_name = target_algo_data['class_name']
+            target_algo_data_combo = self.loaded_algorithms[target_display_name]
+            original_path_combo = target_algo_data_combo['path']
+            class_name_combo = target_algo_data_combo['class_name']
+            
             try:
-                source_code = original_path.read_text(encoding='utf-8')
-                optimizer_worker_logger.debug(f"Successfully read source code for {original_path.name}")
-            except Exception as read_err:
-                raise RuntimeError(f"Worker failed to read source code for {original_path.name}: {read_err}")
+                source_code_combo = original_path_combo.read_text(encoding='utf-8')
+                optimizer_worker_logger.debug(f"Successfully read source code for {original_path_combo.name}")
+            except Exception as read_err_combo:
+                raise RuntimeError(f"Combo worker failed to read source code for {original_path_combo.name}: {read_err_combo}")
 
             if not hasattr(self, 'current_optimize_target_dir') or not self.current_optimize_target_dir:
-                 raise RuntimeError("Worker cannot determine optimize target directory.")
-            target_dir = self.current_optimize_target_dir
-            optimizer_worker_logger.debug(f"Using optimize target directory: {target_dir}")
-
-
+                 raise RuntimeError("Combo worker cannot determine optimize target directory.")
+            target_dir_combo = self.current_optimize_target_dir
+            optimizer_worker_logger.debug(f"Using optimize target directory: {target_dir_combo}")
+            
+            # --- Tạo bộ tham số ---
             optimizer_worker_logger.info("Starting parameter combination generation phase...")
             queue_status("Đang tạo bộ tham số...")
             queue_log("INFO", "Bắt đầu tạo các bộ tham số kết hợp...", tag="GEN_COMBO")
-            queue_progress(0, 1)
+            queue_progress(0, 1) # Progress ban đầu (0/1 vì chưa biết tổng số)
 
             if not generation_params or not isinstance(generation_params, dict):
-                raise ValueError("Worker received invalid generation_params.")
-            orig_params_for_gen = generation_params.get('original_params')
-            num_values_for_gen = generation_params.get('num_values')
-            method_for_gen = generation_params.get('method')
-            if not orig_params_for_gen or not num_values_for_gen or not method_for_gen:
-                 raise ValueError("Worker missing detailed generation parameters (params, num_values, method).")
-            optimizer_worker_logger.debug(f"Generation params: num_values={num_values_for_gen}, method='{method_for_gen}'")
+                raise ValueError("Combo worker received invalid generation_params.")
+            
+            orig_params_for_gen_combo = generation_params.get('original_params')
+            num_values_for_gen_combo = generation_params.get('num_values')
+            method_for_gen_combo = generation_params.get('method')
+            
+            if not orig_params_for_gen_combo or not isinstance(num_values_for_gen_combo, int) or not method_for_gen_combo:
+                 raise ValueError("Combo worker missing detailed generation parameters (original_params, num_values, method).")
+            optimizer_worker_logger.debug(f"Generation params: num_values={num_values_for_gen_combo}, method='{method_for_gen_combo}'")
 
-            generation_start_time = time.time()
-            generated_combinations = self._generate_parameter_combinations(
-                orig_params_for_gen, num_values_for_gen, method_for_gen
-            )
-            generation_duration = time.time() - generation_start_time
-            optimizer_worker_logger.info(f"Parameter combination generation finished in {generation_duration:.2f} seconds.")
+            generation_start_time_combo = time.time()
+            generated_combinations_list = self._generate_parameter_combinations(
+                orig_params_for_gen_combo, num_values_for_gen_combo, method_for_gen_combo
+            ) # Hàm này đã được cung cấp
+            generation_duration_combo = time.time() - generation_start_time_combo
+            optimizer_worker_logger.info(f"Parameter combination generation finished in {generation_duration_combo:.2f} seconds.")
 
-            if not generated_combinations:
+            if not generated_combinations_list: # Kiểm tra nếu danh sách rỗng
                 optimizer_worker_logger.error("Parameter generation returned an empty list.")
                 queue_log("ERROR", "Không thể tạo bộ tham số nào (kết quả trống).", tag="ERROR")
                 queue_finished("Tạo bộ tham số thất bại.", success=False, reason="combo_generation_failed")
                 return
 
-            total_combinations = len(generated_combinations)
-            if total_combinations == 0:
+            total_combinations_count = len(generated_combinations_list)
+            if total_combinations_count == 0: # Kiểm tra lại sau khi gán, dù hơi thừa
                  optimizer_worker_logger.error("Generated combinations list is empty after generation.")
                  queue_log("ERROR", "Danh sách bộ tham số rỗng sau khi tạo.", tag="ERROR")
                  queue_finished("Tạo bộ tham số thất bại (danh sách rỗng).", success=False, reason="combo_generation_failed_empty")
                  return
+            
+            queue_status(f"Đã tạo {total_combinations_count} bộ. Bắt đầu kiểm tra...")
+            queue_log("INFO", f"Đã tạo thành công {total_combinations_count} bộ tham số.", tag="GEN_COMBO")
+            # --- Kết thúc tạo bộ tham số ---
 
-            queue_status(f"Đã tạo {total_combinations} bộ. Bắt đầu kiểm tra...")
-            queue_log("INFO", f"Đã tạo thành công {total_combinations} bộ tham số.", tag="GEN_COMBO")
-
-
-            def run_combined_perf_test_wrapper(params_to_test_in_wrapper, combo_names_in_wrapper, start_dt_in_wrapper, end_dt_in_wrapper):
-                 """Calls the main performance test function with necessary arguments."""
+            def run_combined_perf_test_wrapper_combo(params_to_test_in_wrapper, combo_names_in_wrapper, start_dt_in_wrapper, end_dt_in_wrapper):
                  optimizer_worker_logger.debug(f"Calling run_combined_performance_test for params: {list(params_to_test_in_wrapper.keys())}")
                  return self.run_combined_performance_test(
                      target_display_name=target_display_name,
-                     target_algo_source=source_code,
-                     target_class_name=class_name,
+                     target_algo_source=source_code_combo, # Source code của thuật toán đích
+                     target_class_name=class_name_combo,   # Tên class của thuật toán đích
                      target_params_to_test=params_to_test_in_wrapper,
-                     combination_algo_display_names=combo_names_in_wrapper,
+                     combination_algo_display_names=combo_names_in_wrapper, # Thuật toán +
                      test_start_date=start_dt_in_wrapper,
                      test_end_date=end_dt_in_wrapper,
-                     optimize_target_dir=target_dir
+                     optimize_target_dir=target_dir_combo
                  )
 
-            def get_primary_score(perf_dict):
-                 """Calculates the primary score tuple from performance dictionary."""
+            def get_primary_score_combo(perf_dict): # Tương tự như worker trên
                  if not perf_dict: return (-1.0, -1.0, -1.0, -100.0)
                  return (perf_dict.get('acc_top_3_pct',0.0),
                          perf_dict.get('acc_top_5_pct',0.0),
                          perf_dict.get('acc_top_1_pct',0.0),
                          -perf_dict.get('avg_top10_repetition',100.0))
 
+            optimizer_worker_logger.info(f"Starting performance testing for {total_combinations_count} parameter combinations...")
+            queue_progress(0, total_combinations_count) # Cập nhật progress với tổng số thực tế
 
-            optimizer_worker_logger.info(f"Starting performance testing for {total_combinations} parameter combinations...")
-            queue_progress(0, total_combinations)
-
-            for idx, test_params in enumerate(generated_combinations):
-                current_progress_idx = idx + 1
+            for idx_combo, test_params_combo in enumerate(generated_combinations_list):
+                current_progress_idx_combo = idx_combo + 1
 
                 if self.optimizer_stop_event.is_set():
                     finish_reason = "stopped"
-                    optimizer_worker_logger.info("Stop event detected during testing loop.")
+                    optimizer_worker_logger.info("Stop event detected during testing loop (Generated Combinations).")
                     break
+                
+                # --- BEGIN THROTTLING LOGIC ---
+                if throttling_enabled_opt and sleep_duration_opt > 0:
+                    time.sleep(sleep_duration_opt)
+                    if self.optimizer_stop_event.is_set(): finish_reason = "stopped"; break
+                    while self.optimizer_pause_event.is_set():
+                        if self.optimizer_stop_event.is_set(): finish_reason = "stopped"; break
+                        time.sleep(0.1)
+                    if self.optimizer_stop_event.is_set(): finish_reason = "stopped"; break
+                # --- END THROTTLING LOGIC ---
+
                 while self.optimizer_pause_event.is_set():
-                    queue_status(f"Đã tạm dừng (đang ở bộ {current_progress_idx}/{total_combinations})")
-                    if self.optimizer_stop_event.is_set():
-                        finish_reason = "stopped"
-                        optimizer_worker_logger.info("Stop event detected during pause.")
-                        break
+                    queue_status(f"Đã tạm dừng (đang ở bộ {current_progress_idx_combo}/{total_combinations_count})")
+                    if self.optimizer_stop_event.is_set(): finish_reason = "stopped"; break
                     time.sleep(0.5)
-                if finish_reason == "stopped":
-                    break
+                if finish_reason == "stopped": break
 
-                elapsed_time = time.time() - start_time
-                if elapsed_time >= time_limit_sec:
+                elapsed_time_combo = time.time() - start_time
+                if elapsed_time_combo >= time_limit_sec:
                     finish_reason = "time_limit"
-                    optimizer_worker_logger.info("Time limit reached during testing loop.")
+                    optimizer_worker_logger.info("Time limit reached during testing loop (Generated Combinations).")
                     break
 
-                queue_status(f"Kiểm tra bộ {current_progress_idx}/{total_combinations}...")
-                queue_progress(current_progress_idx, total_combinations)
+                queue_status(f"Kiểm tra bộ {current_progress_idx_combo}/{total_combinations_count}...")
+                queue_progress(current_progress_idx_combo, total_combinations_count)
 
-                optimizer_worker_logger.debug(f"Running performance test for combination {current_progress_idx}")
-                perf_result = run_combined_perf_test_wrapper(
-                    params_to_test_in_wrapper=test_params,
+                optimizer_worker_logger.debug(f"Running performance test for combination {current_progress_idx_combo}")
+                perf_result_combo = run_combined_perf_test_wrapper_combo(
+                    params_to_test_in_wrapper=test_params_combo,
                     combo_names_in_wrapper=combination_algo_names,
                     start_dt_in_wrapper=start_date,
                     end_dt_in_wrapper=end_date
                 )
-                optimizer_worker_logger.debug(f"Performance test for combo {current_progress_idx} completed.")
+                optimizer_worker_logger.debug(f"Performance test for combo {current_progress_idx_combo} completed.")
 
-                if self.optimizer_stop_event.is_set():
+                if self.optimizer_stop_event.is_set(): # Kiểm tra lại ngay sau khi test
                     finish_reason="stopped"
-                    optimizer_worker_logger.info("Stop event detected immediately after performance test.")
+                    optimizer_worker_logger.info("Stop event detected immediately after performance test (Generated Combinations).")
                     break
 
-                if perf_result is not None:
-                    new_score = get_primary_score(perf_result)
-                    optimizer_worker_logger.debug(f"Combo {current_progress_idx} score: {new_score}")
-                    if new_score > current_best_score_tuple:
-                        queue_log("BEST", f"Tìm thấy bộ tốt hơn! Bộ {current_progress_idx}/{total_combinations}. Score: {new_score}", tag="BEST")
-                        optimizer_worker_logger.info(f"New best score found: {new_score} > {current_best_score_tuple} at index {idx}")
-                        optimizer_worker_logger.debug(f"  Best Params Updated: {test_params}")
-                        queue_log("DEBUG", f"  Params: {test_params}")
+                if perf_result_combo is not None:
+                    new_score_combo = get_primary_score_combo(perf_result_combo)
+                    optimizer_worker_logger.debug(f"Combo {current_progress_idx_combo} score: {new_score_combo}")
+                    if new_score_combo > current_best_score_tuple_combo:
+                        queue_log("BEST", f"Tìm thấy bộ tốt hơn! Bộ {current_progress_idx_combo}/{total_combinations_count}. Score: {new_score_combo}", tag="BEST")
+                        optimizer_worker_logger.info(f"New best score found (Generated Combinations): {new_score_combo} > {current_best_score_tuple_combo} at index {idx_combo}")
+                        optimizer_worker_logger.debug(f"  Best Params Updated: {test_params_combo}")
+                        queue_log("DEBUG", f"  Params: {test_params_combo}")
 
-                        current_best_params = test_params.copy()
-                        current_best_perf = perf_result
-                        current_best_score_tuple = new_score
-                        queue_best_update(current_best_params, current_best_score_tuple)
+                        current_best_params_combo = test_params_combo.copy()
+                        current_best_perf_combo = perf_result_combo
+                        current_best_score_tuple_combo = new_score_combo
+                        queue_best_update(current_best_params_combo, current_best_score_tuple_combo)
                     else:
-                        optimizer_worker_logger.debug(f"Combination {current_progress_idx} score {new_score} not better than current best {current_best_score_tuple}")
+                        optimizer_worker_logger.debug(f"Combination {current_progress_idx_combo} score {new_score_combo} not better than current best {current_best_score_tuple_combo}")
                 else:
-                    queue_log("WARNING", f"Lỗi khi kiểm tra bộ tham số {current_progress_idx}.", tag="WARNING")
-                    optimizer_worker_logger.warning(f"Performance test returned None for combination {current_progress_idx}.")
+                    queue_log("WARNING", f"Lỗi khi kiểm tra bộ tham số {current_progress_idx_combo}.", tag="WARNING")
+                    optimizer_worker_logger.warning(f"Performance test returned None for combination {current_progress_idx_combo}.")
 
-            optimizer_worker_logger.info(f"Finished testing loop. Reason: {finish_reason}")
+            optimizer_worker_logger.info(f"Finished testing loop (Generated Combinations). Reason: {finish_reason}")
 
-            queue_progress(total_combinations, total_combinations)
+            queue_progress(total_combinations_count, total_combinations_count) # Đảm bảo progress 100%
 
-            final_message = ""
-            if finish_reason == "stopped":
-                final_message = "Dừng bởi người dùng."
-            elif finish_reason == "time_limit":
-                final_message = f"Đã hết thời gian tối ưu ({time_limit_sec/60:.0f} phút)."
-            elif finish_reason == "critical_error":
-                final_message = "Lỗi nghiêm trọng trong worker."
-            elif finish_reason == "combo_generation_failed":
-                final_message = "Tạo bộ tham số thất bại."
-            elif current_best_params is None:
-                final_message = "Hoàn thành kiểm tra nhưng không tìm thấy bộ tham số nào cho kết quả hợp lệ."
-                finish_reason = "combo_mode_no_results"
+            # --- Xử lý kết thúc ---
+            final_message_combo = ""
+            if finish_reason == "stopped": final_message_combo = "Dừng bởi người dùng."
+            elif finish_reason == "time_limit": final_message_combo = f"Đã hết thời gian tối ưu ({time_limit_sec/60:.0f} phút)."
+            elif finish_reason == "critical_error": final_message_combo = "Lỗi nghiêm trọng trong worker."
+            elif finish_reason == "combo_generation_failed": final_message_combo = "Tạo bộ tham số thất bại."
+            elif finish_reason == "combo_generation_failed_empty": final_message_combo = "Tạo bộ tham số thất bại (danh sách rỗng)."
+            elif current_best_params_combo is None: # Nếu không có bộ nào cho kết quả tốt
+                final_message_combo = "Hoàn thành kiểm tra nhưng không tìm thấy bộ tham số nào cho kết quả hợp lệ."
+                finish_reason = "combo_mode_no_results" # Lý do riêng cho trường hợp này
             else:
-                final_message = "Hoàn thành kiểm tra các bộ tham số."
+                final_message_combo = "Hoàn thành kiểm tra các bộ tham số."
 
-            can_log_or_save = current_best_params is not None and finish_reason not in [
-                "critical_error", "combo_mode_no_results", "combo_generation_failed"
+            can_log_or_save_combo = current_best_params_combo is not None and finish_reason not in [
+                "critical_error", "combo_mode_no_results", "combo_generation_failed", "combo_generation_failed_empty"
             ]
 
-            if can_log_or_save:
-                final_message += " Kết quả tốt nhất đã được lưu."
-                queue_log("BEST", "="*10 + " TỐI ƯU KẾT THÚC (Bộ Tham Số) " + "="*10, tag="BEST")
+            if can_log_or_save_combo:
+                final_message_combo += " Kết quả tốt nhất đã được lưu."
+                queue_log("BEST", "="*10 + " TỐI ƯU KẾT THÚC (BỘ THAM SỐ) " + "="*10, tag="BEST")
                 queue_log("BEST", f"Lý do kết thúc: {finish_reason}", tag="BEST")
-                queue_log("BEST", f"Đã tạo và kiểm tra tổng cộng: {total_combinations} bộ", tag="BEST")
-                queue_log("BEST", f"Tham số tốt nhất tìm được: {current_best_params}", tag="BEST")
-                score_desc = "(Top3%, Top5%, Top1%, -AvgRepT10)"
-                queue_log("BEST", f"Điểm số tốt nhất {score_desc}: ({', '.join(f'{s:.3f}' for s in current_best_score_tuple)})", tag="BEST")
-                if current_best_perf:
-                     queue_log("BEST", f"Chi tiết hiệu suất tốt nhất: Top3={current_best_perf.get('acc_top_3_pct',0.0):.2f}%, Top5={current_best_perf.get('acc_top_5_pct',0.0):.2f}%, Top1={current_best_perf.get('acc_top_1_pct',0.0):.2f}%, Lặp TB={current_best_perf.get('avg_top10_repetition',0.0):.2f}", tag="BEST")
+                queue_log("BEST", f"Đã tạo và kiểm tra tổng cộng: {total_combinations_count} bộ", tag="BEST")
+                queue_log("BEST", f"Tham số tốt nhất tìm được: {current_best_params_combo}", tag="BEST")
+                score_desc_combo = "(Top3%, Top5%, Top1%, -AvgRepT10)"
+                queue_log("BEST", f"Điểm số tốt nhất {score_desc_combo}: ({', '.join(f'{s:.3f}' for s in current_best_score_tuple_combo)})", tag="BEST")
+                if current_best_perf_combo:
+                     queue_log("BEST", f"Chi tiết hiệu suất tốt nhất: Top3={current_best_perf_combo.get('acc_top_3_pct',0.0):.2f}%, Top5={current_best_perf_combo.get('acc_top_5_pct',0.0):.2f}%, Top1={current_best_perf_combo.get('acc_top_1_pct',0.0):.2f}%, Lặp TB={current_best_perf_combo.get('avg_top10_repetition',0.0):.2f}", tag="BEST")
 
-                try:
-                    optimizer_worker_logger.info("Saving best results found...")
-                    final_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    success_dir = target_dir / "success"
-                    perf_metric_for_name = current_best_perf.get('acc_top_3_pct', 0.0) if current_best_perf else 0.0
-                    perf_str = f"top3_{perf_metric_for_name:.1f}"
-                    success_filename_base = f"optimized_combo_{target_algo_data['path'].stem}_{perf_str}_{final_timestamp}"
-                    optimizer_worker_logger.debug(f"Base filename for saving: {success_filename_base}")
+                try: # Lưu file
+                    optimizer_worker_logger.info("Saving best results found (Generated Combinations)...")
+                    final_timestamp_combo_save = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                    success_dir_combo_save = target_dir_combo / "success"
+                    success_dir_combo_save.mkdir(parents=True, exist_ok=True) # Đảm bảo thư mục tồn tại
 
-                    success_filename_py = success_filename_base + ".py"
-                    final_py_path = success_dir / success_filename_py
-                    optimizer_worker_logger.debug(f"Attempting to save Python file: {final_py_path}")
-                    final_mod_src = self.modify_algorithm_source_ast(source_code, class_name, current_best_params)
-                    if final_mod_src:
-                        final_py_path.write_text(final_mod_src, encoding='utf-8')
-                        optimizer_worker_logger.info(f"Saved best parameters to Python file: {final_py_path.name}")
+                    perf_metric_combo_filename = current_best_perf_combo.get('acc_top_3_pct', 0.0) if current_best_perf_combo else 0.0
+                    perf_str_combo_filename = f"top3_{perf_metric_combo_filename:.1f}"
+                    
+                    base_algo_stem_combo = target_algo_data_combo['path'].stem
+                    success_filename_base_combo_save = f"optimized_combo_{base_algo_stem_combo}_{perf_str_combo_filename}_{final_timestamp_combo_save}"
+                    optimizer_worker_logger.debug(f"Base filename for saving (Generated Combinations): {success_filename_base_combo_save}")
+
+                    # Lưu file .py
+                    success_filename_py_combo_save = success_filename_base_combo_save + ".py"
+                    final_py_path_combo_save = success_dir_combo_save / success_filename_py_combo_save
+                    optimizer_worker_logger.debug(f"Attempting to save Python file: {final_py_path_combo_save}")
+                    final_mod_src_combo_save = self.modify_algorithm_source_ast(source_code_combo, class_name_combo, current_best_params_combo)
+                    if final_mod_src_combo_save:
+                        final_py_path_combo_save.write_text(final_mod_src_combo_save, encoding='utf-8')
+                        optimizer_worker_logger.info(f"Saved best parameters to Python file: {final_py_path_combo_save.name}")
                     else:
-                         queue_log("ERROR", "Lỗi khi tạo source code đã chỉnh sửa để lưu file .py cuối cùng.", tag="ERROR")
-                         optimizer_worker_logger.error("Failed to generate modified source code for saving.")
+                         queue_log("ERROR", "Lỗi khi tạo source code đã chỉnh sửa để lưu file .py cuối cùng (Generated Combinations).", tag="ERROR")
+                         optimizer_worker_logger.error("Failed to generate modified source code for saving (Generated Combinations).")
 
-                    success_filename_json = success_filename_base + ".json"
-                    final_json_path = success_dir / success_filename_json
-                    optimizer_worker_logger.debug(f"Attempting to save JSON file: {final_json_path}")
-                    final_save_data = {
+                    # Lưu file .json
+                    success_filename_json_combo_save = success_filename_base_combo_save + ".json"
+                    final_json_path_combo_save = success_dir_combo_save / success_filename_json_combo_save
+                    optimizer_worker_logger.debug(f"Attempting to save JSON file: {final_json_path_combo_save}")
+                    final_save_data_json_combo = {
                         "optimization_mode": "generated_combinations",
                         "target_algorithm": target_display_name,
-                        "total_combinations_generated": total_combinations,
-                        "params": current_best_params,
-                        "performance": current_best_perf if current_best_perf else "N/A",
-                        "score_tuple": list(current_best_score_tuple),
+                        "total_combinations_generated": total_combinations_count,
+                        "generation_method": method_for_gen_combo,
+                        "generation_num_values_per_param": num_values_for_gen_combo,
+                        "params": current_best_params_combo,
+                        "performance": current_best_perf_combo if current_best_perf_combo else "N/A",
+                        "score_tuple": list(current_best_score_tuple_combo),
                         "combination_algorithms": combination_algo_names,
                         "optimization_range": f"{start_date:%Y-%m-%d}_to_{end_date:%Y-%m-%d}",
                         "optimization_duration_seconds": round(time.time() - start_time, 1),
@@ -3037,29 +3105,29 @@ class OptimizerEmbedded(QWidget):
                         "finish_timestamp": datetime.datetime.now().isoformat()
                     }
                     try:
-                        final_json_path.write_text(json.dumps(final_save_data, indent=4, ensure_ascii=False), encoding='utf-8')
-                        queue_log("BEST", f"Đã lưu kết quả tối ưu vào thư mục: {success_dir.relative_to(self.base_dir)}", tag="BEST")
-                        optimizer_worker_logger.info(f"Saved optimization details to JSON file: {final_json_path.name}")
-                    except Exception as json_save_err:
-                         queue_log("ERROR", f"Lỗi lưu file JSON kết quả cuối: {json_save_err}", tag="ERROR")
-                         optimizer_worker_logger.error(f"Failed to save JSON results file: {json_save_err}", exc_info=True)
-                         final_message += "\n(Lỗi lưu file JSON kết quả!)"
+                        final_json_path_combo_save.write_text(json.dumps(final_save_data_json_combo, indent=4, ensure_ascii=False), encoding='utf-8')
+                        queue_log("BEST", f"Đã lưu kết quả tối ưu vào thư mục: {success_dir_combo_save.relative_to(self.base_dir)}", tag="BEST")
+                        optimizer_worker_logger.info(f"Saved optimization details to JSON file: {final_json_path_combo_save.name}")
+                    except Exception as json_save_err_combo:
+                         queue_log("ERROR", f"Lỗi lưu file JSON kết quả cuối (Generated Combinations): {json_save_err_combo}", tag="ERROR")
+                         optimizer_worker_logger.error(f"Failed to save JSON results file (Generated Combinations): {json_save_err_combo}", exc_info=True)
+                         final_message_combo += "\n(Lỗi lưu file JSON kết quả!)"
 
-                except Exception as final_save_err:
-                    queue_log("ERROR", f"Lỗi lưu kết quả cuối cùng: {final_save_err}", tag="ERROR")
-                    optimizer_worker_logger.error(f"Error during final result saving: {final_save_err}", exc_info=True)
-                    final_message += "\n(Lỗi lưu file kết quả!)"
+                except Exception as final_save_err_combo_overall:
+                    queue_log("ERROR", f"Lỗi lưu kết quả cuối cùng (Generated Combinations): {final_save_err_combo_overall}", tag="ERROR")
+                    optimizer_worker_logger.error(f"Error during final result saving (Generated Combinations): {final_save_err_combo_overall}", exc_info=True)
+                    final_message_combo += "\n(Lỗi lưu file kết quả!)"
 
-            is_successful_run = finish_reason in ["completed", "time_limit"] and can_log_or_save
-            optimizer_worker_logger.info(f"Worker sending finished signal. Success: {is_successful_run}, Reason: {finish_reason}")
-            queue_finished(final_message, success=is_successful_run, reason=finish_reason)
+            is_successful_run_combo = finish_reason in ["completed", "time_limit"] and can_log_or_save_combo
+            optimizer_worker_logger.info(f"Combo Worker sending finished signal. Success: {is_successful_run_combo}, Reason: {finish_reason}")
+            queue_finished(final_message_combo, success=is_successful_run_combo, reason=finish_reason)
 
-        except Exception as worker_err:
+        except Exception as worker_err_critical_combo:
             finish_reason = "critical_error"
-            optimizer_worker_logger.critical(f"Worker encountered a critical exception: {worker_err}", exc_info=True)
-            queue_error(f"Lỗi nghiêm trọng trong luồng tối ưu: {worker_err}")
-            queue_finished(f"Lỗi nghiêm trọng: {worker_err}", success=False, reason=finish_reason)
-
+            optimizer_worker_logger.critical(f"Combo Worker encountered a critical exception: {worker_err_critical_combo}", exc_info=True)
+            error_detail_combo = f"Lỗi nghiêm trọng trong luồng tạo bộ tham số: {type(worker_err_critical_combo).__name__} - {str(worker_err_critical_combo)[:100]}"
+            queue_error(error_detail_combo)
+            queue_finished(f"Lỗi nghiêm trọng: {worker_err_critical_combo}", success=False, reason=finish_reason)
         finally:
             optimizer_worker_logger.info("Combination optimization worker thread finished.")
 
@@ -3105,57 +3173,86 @@ class OptimizerEmbedded(QWidget):
                                        target_params_to_test, combination_algo_display_names,
                                        test_start_date, test_end_date, optimize_target_dir):
         target_instance = None
-        combo_instances = {}
-        temp_target_module_name = None
-        temp_target_filepath = None
+        combo_instances = {} # Dict để lưu các instance của thuật toán kết hợp
+        temp_target_module_name = None # Tên module tạm thời cho thuật toán đích
+        temp_target_filepath = None    # Đường dẫn file tạm thời cho thuật toán đích
+        
+        # Sử dụng logger riêng cho hàm này để dễ debug
         worker_logger = logging.getLogger("OptimizerWorker.CombinedPerfTest")
 
-        def queue_error_local(text):
+        def queue_error_local(text): # Hàm helper để gửi lỗi lên queue chính (nếu cần)
              if hasattr(self, 'optimizer_queue') and isinstance(self.optimizer_queue, queue.Queue):
                  try: self.optimizer_queue.put({"type": "error", "payload": text})
-                 except Exception as q_err: worker_logger.error(f"PerfTest: Failed to queue error '{text}': {q_err}")
+                 except Exception as q_err_local: worker_logger.error(f"PerfTest: Failed to queue error '{text}': {q_err_local}")
+
+        # --- Lấy cài đặt throttling ---
+        throttling_enabled_opt = False
+        sleep_duration_opt = 0.005
+        if hasattr(self.main_app, 'cpu_throttling_enabled'):
+            throttling_enabled_opt = self.main_app.cpu_throttling_enabled
+        if hasattr(self.main_app, 'throttle_sleep_duration'):
+            sleep_duration_opt = self.main_app.throttle_sleep_duration
+        # Không log ở đây vì hàm này được gọi nhiều lần.
+        # --- Kết thúc lấy cài đặt throttling ---
 
         try:
             worker_logger.debug(f"Starting combined performance test for {target_class_name} with params: {target_params_to_test}")
+            
+            # --- Tạo và load thuật toán đích với tham số mới ---
             try:
-                if self.optimizer_stop_event.is_set():
-                    worker_logger.info("Stop event detected before AST modification.")
-                    return None
+                if self.optimizer_stop_event.is_set(): # Kiểm tra event trước khi làm việc nặng
+                    worker_logger.info("Stop event detected before AST modification in perf_test.")
+                    return None # Báo cho worker cha biết đã dừng
 
                 modified_source = self.modify_algorithm_source_ast(target_algo_source, target_class_name, target_params_to_test)
                 if not modified_source:
                     worker_logger.error("AST modification failed for performance test, returned no source.")
-                    raise RuntimeError("AST modification failed for performance test.")
+                    raise RuntimeError("AST modification failed for performance test (modify_algorithm_source_ast returned None).")
 
                 if self.optimizer_stop_event.is_set():
-                    worker_logger.info("Stop event detected after AST modification.")
+                    worker_logger.info("Stop event detected after AST modification in perf_test.")
                     return None
 
-                timestamp = int(time.time() * 10000) + random.randint(0, 9999)
-                temp_target_filename = f"temp_perf_target_{target_class_name}_{timestamp}.py"
+                # Tạo file .py tạm thời với source code đã chỉnh sửa
+                timestamp_suffix = int(time.time() * 10000) + random.randint(0, 9999) # Đảm bảo tên file duy nhất
+                temp_target_filename = f"temp_perf_target_{target_class_name}_{timestamp_suffix}.py"
+                
+                # Đảm bảo optimize_target_dir được truyền vào và hợp lệ
+                if not optimize_target_dir or not isinstance(optimize_target_dir, Path):
+                    worker_logger.error("optimize_target_dir is invalid or not provided to run_combined_performance_test.")
+                    # Nếu đang trong luồng tối ưu, có thể gửi lỗi lên queue
+                    # queue_error_local("Lỗi thư mục tạm cho performance test.")
+                    return None # Hoặc raise Exception tùy logic xử lý lỗi của bạn
+                
+                optimize_target_dir.mkdir(parents=True, exist_ok=True) # Đảm bảo thư mục tồn tại
                 temp_target_filepath = optimize_target_dir / temp_target_filename
                 temp_target_filepath.write_text(modified_source, encoding='utf-8')
                 worker_logger.debug(f"Temporary target file created: {temp_target_filepath}")
 
-
-                optimize_target_dir.mkdir(parents=True, exist_ok=True)
+                # Tạo tên module động dựa trên cấu trúc thư mục optimize
+                # Ví dụ: optimize.algo_stem.temp_perf_target_...
+                # Cần đảm bảo các thư mục optimize và optimize/algo_stem có file __init__.py
                 if not (optimize_target_dir / "__init__.py").exists():
                     (optimize_target_dir / "__init__.py").touch()
-                if not (self.optimize_dir / "__init__.py").exists():
+                if not (self.optimize_dir / "__init__.py").exists(): # self.optimize_dir là thư mục optimize gốc
                     (self.optimize_dir / "__init__.py").touch()
+                
+                # Tên module phải tương đối với một thư mục trong sys.path
+                # Giả sử self.base_dir (thư mục gốc của app) nằm trong sys.path
+                # Và optimize_target_dir là optimize_dir / algo_stem
+                relative_module_path = optimize_target_dir.relative_to(self.base_dir).parts
+                temp_target_module_name = ".".join(relative_module_path) + "." + temp_target_filename[:-3]
 
 
-                temp_target_module_name = f"optimize.{optimize_target_dir.name}.{temp_target_filename[:-3]}"
-
-                worker_logger.debug(f"Importing temporary target module: {temp_target_module_name}")
+                worker_logger.debug(f"Attempting to import temporary target module: {temp_target_module_name}")
                 if self.optimizer_stop_event.is_set():
-                    worker_logger.info("Stop event detected before importing temporary module.")
+                    worker_logger.info("Stop event detected before importing temporary module in perf_test.")
                     return None
 
                 target_instance = self._import_and_instantiate_temp_algo(temp_target_filepath, temp_target_module_name, target_class_name)
 
                 if self.optimizer_stop_event.is_set():
-                    worker_logger.info("Stop event detected after importing temporary module.")
+                    worker_logger.info("Stop event detected after importing temporary module in perf_test.")
                     return None
 
                 if not target_instance:
@@ -3164,207 +3261,235 @@ class OptimizerEmbedded(QWidget):
                 worker_logger.debug(f"Successfully loaded temporary target instance: {type(target_instance)}")
 
             except Exception as target_load_err:
-                worker_logger.error(f"Failed loading TARGET {target_class_name} for perf test: {target_load_err}", exc_info=True)
-                raise
+                worker_logger.error(f"Failed loading TARGET algorithm '{target_class_name}' for performance test: {target_load_err}", exc_info=True)
+                # Không re-raise ngay, để finally dọn dẹp, sau đó hàm sẽ trả về None
+                return None # Báo lỗi cho worker cha
+            # --- Kết thúc load thuật toán đích ---
 
-            worker_logger.debug(f"Loading {len(combination_algo_display_names)} combination algorithms.")
-            data_copy_for_combo = copy.deepcopy(self.results_data) if self.results_data else []
-            for combo_name in combination_algo_display_names:
+            # --- Load các thuật toán kết hợp (nếu có) ---
+            worker_logger.debug(f"Loading {len(combination_algo_display_names)} combination algorithms for perf test.")
+            data_copy_for_combo_perf = copy.deepcopy(self.results_data) if self.results_data else []
+            
+            for combo_name_perf in combination_algo_display_names:
                 if self.optimizer_stop_event.is_set():
-                    worker_logger.info("Stop event detected during combination algorithm loading.")
+                    worker_logger.info("Stop event detected during combination algorithm loading in perf_test.")
                     return None
-                if combo_name not in self.loaded_algorithms:
-                    worker_logger.warning(f"Skipping unknown combination algorithm: {combo_name}")
+                if combo_name_perf not in self.loaded_algorithms: # self.loaded_algorithms là của OptimizerEmbedded
+                    worker_logger.warning(f"Skipping unknown combination algorithm in perf_test: {combo_name_perf}")
                     continue
                 try:
-                     combo_data = self.loaded_algorithms[combo_name]
-                     combo_instance = combo_data['instance'].__class__(
-                         data_results_list=data_copy_for_combo,
-                         cache_dir=self.calculate_dir
+                     combo_data_perf = self.loaded_algorithms[combo_name_perf]
+                     # Tạo instance mới của thuật toán kết hợp để đảm bảo trạng thái sạch
+                     # Sử dụng class gốc từ module đã load, không phải instance đã có sẵn
+                     combo_class_perf = combo_data_perf['instance'].__class__ 
+                     combo_instance_perf = combo_class_perf(
+                         data_results_list=data_copy_for_combo_perf, # Dữ liệu gốc
+                         cache_dir=self.calculate_dir # Cache chung của app
                      )
-                     combo_instances[combo_name] = combo_instance
-                     worker_logger.debug(f"Loaded combination instance: {combo_name}")
-                except Exception as combo_load_err:
-                     worker_logger.error(f"Failed loading COMBO instance {combo_name} for perf test: {combo_load_err}", exc_info=True)
-                     if combo_name in combo_instances: del combo_instances[combo_name]
+                     combo_instances[combo_name_perf] = combo_instance_perf
+                     worker_logger.debug(f"Loaded combination instance for perf_test: {combo_name_perf}")
+                except Exception as combo_load_err_perf:
+                     worker_logger.error(f"Failed loading COMBO instance '{combo_name_perf}' for perf test: {combo_load_err_perf}", exc_info=True)
+                     if combo_name_perf in combo_instances: del combo_instances[combo_name_perf] # Xóa nếu đã thêm một phần
+            # --- Kết thúc load thuật toán kết hợp ---
 
 
             worker_logger.debug(f"Starting performance loop from {test_start_date} to {test_end_date}")
-            results_map = {r['date']: r['result'] for r in self.results_data} if self.results_data else {}
-            history_cache = {}
+            results_map_perf = {r['date']: r['result'] for r in self.results_data} if self.results_data else {}
+            history_cache_perf = {} # Cache lịch sử cho mỗi ngày dự đoán
             if self.results_data:
-                sorted_results_for_cache = sorted(self.results_data, key=lambda x: x['date'])
-                for i, r in enumerate(sorted_results_for_cache):
-                     history_cache[r['date']] = sorted_results_for_cache[:i]
+                sorted_results_for_cache_perf = sorted(self.results_data, key=lambda x: x['date'])
+                for i, r_perf in enumerate(sorted_results_for_cache_perf):
+                     history_cache_perf[r_perf['date']] = sorted_results_for_cache_perf[:i]
 
-            stats = {'total_days_tested': 0, 'hits_top_1': 0, 'hits_top_3': 0, 'hits_top_5': 0, 'hits_top_10': 0, 'errors': 0, 'avg_top10_repetition': 0.0, 'max_top10_repetition_count': 0, 'top10_repetition_details': {}}
-            all_top_10_combined_numbers = []
+            stats_perf = {'total_days_tested': 0, 'hits_top_1': 0, 'hits_top_3': 0, 'hits_top_5': 0, 
+                          'hits_top_10': 0, 'errors': 0, 'avg_top10_repetition': 0.0, 
+                          'max_top10_repetition_count': 0, 'top10_repetition_details': {}}
+            all_top_10_combined_numbers_perf = []
 
-            current_date = test_start_date
-            while current_date <= test_end_date:
+            current_date_perf = test_start_date
+            while current_date_perf <= test_end_date:
                 if self.optimizer_stop_event.is_set():
                     worker_logger.info("Performance test stopped by event (start of date loop).")
                     return None
-                while self.optimizer_pause_event.is_set():
+                
+                # --- BEGIN THROTTLING LOGIC ---
+                if throttling_enabled_opt and sleep_duration_opt > 0:
+                    time.sleep(sleep_duration_opt)
+                    if self.optimizer_stop_event.is_set(): worker_logger.info("Performance test stopped by event (after sleep)."); return None
+                    while self.optimizer_pause_event.is_set():
+                        if self.optimizer_stop_event.is_set(): worker_logger.info("Performance test stopped during pause (inside sleep block)."); return None
+                        time.sleep(0.1)
+                    if self.optimizer_stop_event.is_set(): worker_logger.info("Performance test stopped by event (after pause check in sleep block)."); return None
+                # --- END THROTTLING LOGIC ---
+
+                while self.optimizer_pause_event.is_set(): # Vòng lặp pause chính
                     if self.optimizer_stop_event.is_set():
-                        worker_logger.info("Performance test stopped during pause.")
+                        worker_logger.info("Performance test stopped during pause (main loop).")
                         return None
-                    time.sleep(0.2)
+                    time.sleep(0.2) # Hoặc 0.5
 
-                predict_date = current_date
-                check_date = predict_date + datetime.timedelta(days=1)
+                predict_date_perf = current_date_perf
+                check_date_perf = predict_date_perf + datetime.timedelta(days=1)
 
-                actual_result_dict = results_map.get(check_date)
-                hist_data = history_cache.get(predict_date)
+                actual_result_dict_perf = results_map_perf.get(check_date_perf)
+                hist_data_perf = history_cache_perf.get(predict_date_perf)
 
-                if actual_result_dict is None or hist_data is None:
-                    worker_logger.debug(f"Skipping {predict_date}: actual_result_dict is {actual_result_dict is None}, hist_data is {hist_data is None}")
-                    current_date += datetime.timedelta(days=1)
+                if actual_result_dict_perf is None or hist_data_perf is None:
+                    worker_logger.debug(f"Skipping {predict_date_perf}: actual_result is {actual_result_dict_perf is None}, hist_data is {hist_data_perf is None}")
+                    stats_perf['errors'] +=1 # Coi như lỗi nếu thiếu dữ liệu cần thiết
+                    current_date_perf += datetime.timedelta(days=1)
                     continue
 
-                actual_numbers_set = set()
-                if target_instance:
-                    actual_numbers_set = target_instance.extract_numbers_from_dict(actual_result_dict)
-                else:
-                    worker_logger.error(f"Target instance is None for {predict_date}, cannot extract actual numbers. This shouldn't happen if import was successful.")
-                    stats['errors'] += 1
-                    current_date += datetime.timedelta(days=1)
+                actual_numbers_set_perf = set()
+                # Phải dùng target_instance (instance tạm thời) để extract, không phải BaseAlgorithm tĩnh
+                if target_instance: 
+                    actual_numbers_set_perf = target_instance.extract_numbers_from_dict(actual_result_dict_perf)
+                else: # Trường hợp này không nên xảy ra nếu target_instance được load thành công
+                    worker_logger.error(f"target_instance is None for {predict_date_perf} in perf_test. This indicates a critical loading error.")
+                    stats_perf['errors'] += 1
+                    current_date_perf += datetime.timedelta(days=1)
+                    continue
+                
+                if not actual_numbers_set_perf: # Nếu không có số nào trong kết quả thực tế
+                    worker_logger.debug(f"No actual numbers extracted for check_date {check_date_perf}.")
+                    stats_perf['errors'] += 1
+                    current_date_perf += datetime.timedelta(days=1)
                     continue
 
-                if not actual_numbers_set:
-                    worker_logger.debug(f"No actual numbers extracted for {check_date}.")
-                    stats['errors'] += 1
-                    current_date += datetime.timedelta(days=1)
-                    continue
+                all_predictions_for_day_perf = {}
+                hist_copy_for_day_perf = copy.deepcopy(hist_data_perf) # Quan trọng: copy cho mỗi ngày
 
-                all_predictions_for_day = {}
-                hist_copy_for_day = copy.deepcopy(hist_data)
-
+                # Dự đoán từ thuật toán đích
                 if target_instance:
                     try:
-                        if self.optimizer_stop_event.is_set(): worker_logger.info("Stop event before target predict."); return None
-                        all_predictions_for_day[target_display_name] = target_instance.predict(predict_date, hist_copy_for_day)
-                    except Exception as target_pred_err:
-                        worker_logger.error(f"Error predicting TARGET {target_display_name} for {predict_date}: {target_pred_err}", exc_info=False)
-                        all_predictions_for_day[target_display_name] = {}
-                        stats['errors'] += 1
-                else:
-                    all_predictions_for_day[target_display_name] = {}
-                    stats['errors'] += 1
+                        if self.optimizer_stop_event.is_set(): worker_logger.info("Stop event before target predict in perf_test."); return None
+                        all_predictions_for_day_perf[target_display_name] = target_instance.predict(predict_date_perf, hist_copy_for_day_perf)
+                    except Exception as target_pred_err_perf:
+                        worker_logger.error(f"Error predicting TARGET '{target_display_name}' for {predict_date_perf} in perf_test: {target_pred_err_perf}", exc_info=False)
+                        all_predictions_for_day_perf[target_display_name] = {} # Trả về dict rỗng nếu lỗi
+                        stats_perf['errors'] += 1
+                else: # Không nên xảy ra
+                    all_predictions_for_day_perf[target_display_name] = {}
+                    stats_perf['errors'] += 1
 
-
-                for combo_name, combo_inst in combo_instances.items():
+                # Dự đoán từ các thuật toán kết hợp
+                for combo_name_p, combo_inst_p in combo_instances.items():
                     try:
-                        if self.optimizer_stop_event.is_set(): worker_logger.info("Stop event before combo predict."); return None
-                        all_predictions_for_day[combo_name] = combo_inst.predict(predict_date, hist_copy_for_day)
-                    except Exception as combo_pred_err:
-                        worker_logger.error(f"Error predicting COMBO {combo_name} for {predict_date}: {combo_pred_err}", exc_info=False)
-                        all_predictions_for_day[combo_name] = {}
-                        stats['errors'] += 1
+                        if self.optimizer_stop_event.is_set(): worker_logger.info("Stop event before combo predict in perf_test."); return None
+                        all_predictions_for_day_perf[combo_name_p] = combo_inst_p.predict(predict_date_perf, hist_copy_for_day_perf)
+                    except Exception as combo_pred_err_p:
+                        worker_logger.error(f"Error predicting COMBO '{combo_name_p}' for {predict_date_perf} in perf_test: {combo_pred_err_p}", exc_info=False)
+                        all_predictions_for_day_perf[combo_name_p] = {}
+                        stats_perf['errors'] += 1
 
+                # Kết hợp điểm số (sử dụng hàm của OptimizerEmbedded)
+                combined_scores_raw_perf = {f"{i:02d}": 0.0 for i in range(100)} # Khởi tạo delta = 0
+                valid_algo_count_day = 0
 
-                combined_scores_raw = {f"{i:02d}": 0.0 for i in range(100)}
-                valid_algo_count = 0
+                for algo_name_day, scores_dict_day in all_predictions_for_day_perf.items():
+                    if not isinstance(scores_dict_day, dict) or not scores_dict_day:
+                        continue # Bỏ qua nếu không phải dict hoặc rỗng
 
-                for algo_name, scores_dict in all_predictions_for_day.items():
-                    if not isinstance(scores_dict, dict) or not scores_dict:
-                        continue
-
-                    valid_algo_count += 1
-                    for num_str, delta_val in scores_dict.items():
-                        if isinstance(num_str, str) and len(num_str)==2 and num_str.isdigit():
+                    valid_algo_count_day += 1
+                    # Ở đây không áp dụng weight từ UI chính, vì đang test hiệu năng "thuần"
+                    # Nếu muốn test cả weight, logic weight cần được đưa vào đây
+                    for num_str_day, delta_val_day in scores_dict_day.items():
+                        if isinstance(num_str_day, str) and len(num_str_day)==2 and num_str_day.isdigit():
                             try:
-                                combined_scores_raw[num_str] += float(delta_val)
+                                combined_scores_raw_perf[num_str_day] += float(delta_val_day)
                             except (ValueError, TypeError):
-                                worker_logger.warning(f"Invalid delta value '{delta_val}' for number '{num_str}' from {algo_name} on {predict_date}")
-                                stats['errors'] += 1
-
-
-                if valid_algo_count == 0:
-                    worker_logger.warning(f"No valid algorithm results for {predict_date}")
-                    stats['errors'] += 1
-                    current_date += datetime.timedelta(days=1)
+                                worker_logger.warning(f"Invalid delta value '{delta_val_day}' for number '{num_str_day}' from {algo_name_day} on {predict_date_perf}")
+                                stats_perf['errors'] += 1
+                
+                if valid_algo_count_day == 0: # Nếu không có thuật toán nào cho kết quả hợp lệ
+                    worker_logger.warning(f"No valid algorithm results for {predict_date_perf} in perf_test.")
+                    stats_perf['errors'] += 1
+                    current_date_perf += datetime.timedelta(days=1)
                     continue
-
-                combined_scores_list = []
-                base_score = 100.0
-                for num_str, delta in combined_scores_raw.items():
+                
+                # Chuyển từ delta sang score cuối cùng
+                base_score_perf = 100.0
+                combined_scores_list_perf = []
+                for num_str_s, delta_s in combined_scores_raw_perf.items():
                      try:
-                         final_score = base_score + float(delta)
-                         combined_scores_list.append((int(num_str), final_score))
+                         final_score_s = base_score_perf + float(delta_s)
+                         combined_scores_list_perf.append((int(num_str_s), final_score_s))
                      except (ValueError, TypeError):
-                         worker_logger.warning(f"Could not convert final score for '{num_str}' ({delta}) on {predict_date}")
-                         stats['errors'] += 1
-
-                if not combined_scores_list:
-                    worker_logger.warning(f"No valid scores after combining for {predict_date}")
-                    stats['errors'] += 1
-                    current_date += datetime.timedelta(days=1)
+                         worker_logger.warning(f"Could not convert final score for '{num_str_s}' (delta: {delta_s}) on {predict_date_perf}")
+                         stats_perf['errors'] += 1
+                
+                if not combined_scores_list_perf:
+                    worker_logger.warning(f"No valid scores after combining for {predict_date_perf} in perf_test")
+                    stats_perf['errors'] += 1
+                    current_date_perf += datetime.timedelta(days=1)
                     continue
 
-                sorted_preds = sorted(combined_scores_list, key=lambda x: x[1], reverse=True)
+                sorted_preds_perf = sorted(combined_scores_list_perf, key=lambda x: x[1], reverse=True)
 
-                pred_top_1 = {sorted_preds[0][0]} if sorted_preds else set()
-                pred_top_3 = {p[0] for p in sorted_preds[:3]}
-                pred_top_5 = {p[0] for p in sorted_preds[:5]}
-                pred_top_10 = {p[0] for p in sorted_preds[:10]}
+                # So sánh với kết quả thực tế
+                pred_top_1_p = {sorted_preds_perf[0][0]} if sorted_preds_perf else set()
+                pred_top_3_p = {p[0] for p in sorted_preds_perf[:3]}
+                pred_top_5_p = {p[0] for p in sorted_preds_perf[:5]}
+                pred_top_10_p = {p[0] for p in sorted_preds_perf[:10]}
 
-                if pred_top_1.intersection(actual_numbers_set): stats['hits_top_1'] += 1
-                if pred_top_3.intersection(actual_numbers_set): stats['hits_top_3'] += 1
-                if pred_top_5.intersection(actual_numbers_set): stats['hits_top_5'] += 1
-                if pred_top_10.intersection(actual_numbers_set): stats['hits_top_10'] += 1
+                if pred_top_1_p.intersection(actual_numbers_set_perf): stats_perf['hits_top_1'] += 1
+                if pred_top_3_p.intersection(actual_numbers_set_perf): stats_perf['hits_top_3'] += 1
+                if pred_top_5_p.intersection(actual_numbers_set_perf): stats_perf['hits_top_5'] += 1
+                if pred_top_10_p.intersection(actual_numbers_set_perf): stats_perf['hits_top_10'] += 1
 
-                all_top_10_combined_numbers.extend(list(pred_top_10))
+                all_top_10_combined_numbers_perf.extend(list(pred_top_10_p))
+                stats_perf['total_days_tested'] += 1
+                current_date_perf += datetime.timedelta(days=1)
+            
+            # --- Kết thúc vòng lặp qua các ngày ---
+            total_tested_perf = stats_perf['total_days_tested']
+            worker_logger.info(f"Performance loop finished for perf_test. Total days successfully tested: {total_tested_perf}")
 
-                stats['total_days_tested'] += 1
+            if total_tested_perf > 0:
+                stats_perf['acc_top_1_pct'] = (stats_perf['hits_top_1'] / total_tested_perf) * 100.0
+                stats_perf['acc_top_3_pct'] = (stats_perf['hits_top_3'] / total_tested_perf) * 100.0
+                stats_perf['acc_top_5_pct'] = (stats_perf['hits_top_5'] / total_tested_perf) * 100.0
+                stats_perf['acc_top_10_pct'] = (stats_perf['hits_top_10'] / total_tested_perf) * 100.0
 
-                current_date += datetime.timedelta(days=1)
+                if all_top_10_combined_numbers_perf:
+                    top10_counts_perf = Counter(all_top_10_combined_numbers_perf)
+                    total_predictions_in_top10_p = len(all_top_10_combined_numbers_perf)
+                    unique_predictions_in_top10_p = len(top10_counts_perf)
+                    stats_perf['avg_top10_repetition'] = total_predictions_in_top10_p / unique_predictions_in_top10_p if unique_predictions_in_top10_p > 0 else 0.0
+                    stats_perf['max_top10_repetition_count'] = max(top10_counts_perf.values()) if top10_counts_perf else 0
+                    stats_perf['top10_repetition_details'] = dict(top10_counts_perf.most_common(5)) # Lưu top 5 số lặp nhiều nhất
+                else: # Xử lý trường hợp không có số nào trong top 10 (rất hiếm nếu có ngày test)
+                    stats_perf['avg_top10_repetition'] = 0.0
+                    stats_perf['max_top10_repetition_count'] = 0
+                    stats_perf['top10_repetition_details'] = {}
+            else: # Nếu không có ngày nào được test thành công
+                stats_perf['acc_top_1_pct'] = 0.0; stats_perf['acc_top_3_pct'] = 0.0; 
+                stats_perf['acc_top_5_pct'] = 0.0; stats_perf['acc_top_10_pct'] = 0.0; 
+                stats_perf['avg_top10_repetition'] = 0.0
+            
+            worker_logger.info(f"Performance test calculation complete. Stats: {stats_perf}")
+            return stats_perf
 
-            total_tested = stats['total_days_tested']
-            worker_logger.info(f"Performance loop finished. Total days successfully tested: {total_tested}")
-
-            if total_tested > 0:
-                stats['acc_top_1_pct'] = (stats['hits_top_1'] / total_tested) * 100.0
-                stats['acc_top_3_pct'] = (stats['hits_top_3'] / total_tested) * 100.0
-                stats['acc_top_5_pct'] = (stats['hits_top_5'] / total_tested) * 100.0
-                stats['acc_top_10_pct'] = (stats['hits_top_10'] / total_tested) * 100.0
-
-                if all_top_10_combined_numbers:
-                    top10_counts = Counter(all_top_10_combined_numbers)
-                    total_predictions_in_top10 = len(all_top_10_combined_numbers)
-                    unique_predictions_in_top10 = len(top10_counts)
-                    stats['avg_top10_repetition'] = total_predictions_in_top10 / unique_predictions_in_top10 if unique_predictions_in_top10 > 0 else 0.0
-                    stats['max_top10_repetition_count'] = max(top10_counts.values()) if top10_counts else 0
-                    stats['top10_repetition_details'] = dict(top10_counts.most_common(5))
-                else:
-                    stats['avg_top10_repetition'] = 0.0
-                    stats['max_top10_repetition_count'] = 0
-                    stats['top10_repetition_details'] = {}
-            else:
-                stats['acc_top_1_pct'] = 0.0; stats['acc_top_3_pct'] = 0.0; stats['acc_top_5_pct'] = 0.0; stats['acc_top_10_pct'] = 0.0; stats['avg_top10_repetition'] = 0.0
-
-            worker_logger.info(f"Performance test calculation complete. Stats: {stats}")
-            return stats
-
-        except Exception as e:
-            worker_logger.error(f"Performance test failed critically: {e}", exc_info=True)
-            return None
+        except Exception as e_perf_critical:
+            worker_logger.error(f"Performance test failed critically: {e_perf_critical}", exc_info=True)
+            return None # Trả về None khi có lỗi nghiêm trọng
         finally:
-            worker_logger.debug("Cleaning up performance test resources.")
-            target_instance = None
-            combo_instances.clear()
+            worker_logger.debug("Cleaning up performance test resources (temp files, modules)...")
+            target_instance = None # Giải phóng instance
+            combo_instances.clear() # Xóa dict
             if temp_target_module_name and temp_target_module_name in sys.modules:
                 try:
                     del sys.modules[temp_target_module_name]
-                    worker_logger.debug(f"Removed temporary module: {temp_target_module_name}")
-                except (KeyError, Exception) as del_err:
-                     worker_logger.warning(f"Could not delete temp module {temp_target_module_name}: {del_err}")
+                    worker_logger.debug(f"Removed temporary module from sys.modules: {temp_target_module_name}")
+                except (KeyError, Exception) as del_err_module:
+                     worker_logger.warning(f"Could not delete temp module '{temp_target_module_name}' from sys.modules: {del_err_module}")
             if temp_target_filepath and temp_target_filepath.exists():
                 try:
-                    temp_target_filepath.unlink()
-                    worker_logger.debug(f"Deleted temporary file: {temp_target_filepath}")
-                except OSError as unlink_err:
-                    worker_logger.warning(f"Could not delete temp file {temp_target_filepath}: {unlink_err}")
+                    temp_target_filepath.unlink() # Xóa file .py tạm
+                    worker_logger.debug(f"Deleted temporary python file: {temp_target_filepath}")
+                except OSError as unlink_err_file:
+                    worker_logger.warning(f"Could not delete temp python file '{temp_target_filepath}': {unlink_err_file}")
 
     def _import_and_instantiate_temp_algo(self, temp_filepath, temp_module_name, class_name_hint):
 
@@ -3772,8 +3897,10 @@ class SquareQLabel(QLabel):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v4.8)")
+        self.setWindowTitle("Lottery Predictor (v4.9)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
+        self.signalling_log_handler = None
+        self.root_logger_instance = None
 
         self.font_family_base = 'Segoe UI'
         self.font_size_base = 10
@@ -3825,6 +3952,8 @@ class LotteryPredictionApp(QMainWindow):
         self.optimizer_app_instance = None
 
         self.current_process = psutil.Process(os.getpid()) if HAS_PSUTIL else None
+        self.cpu_throttling_enabled = False
+        self.throttle_sleep_duration = 0.005 # Giá trị mặc định
 
         self.algo_count_label = QLabel("Thuật toán: 0")
         self.tool_count_label = QLabel("Công cụ: 0")
@@ -3866,24 +3995,9 @@ class LotteryPredictionApp(QMainWindow):
         self._setup_validators()
 
         self.load_config()
-
+        self._apply_performance_settings()
         self._setup_global_font()
         self.setup_main_ui_structure()
-
-        if hasattr(self, 'settings_log_display') and self.settings_log_display:
-            self.signalling_log_handler = SignallingLogHandler()
-            global formatter
-            self.signalling_log_handler.setFormatter(formatter)
-            self.signalling_log_handler.setLevel(logging.DEBUG)
-            self.signalling_log_handler.log_updated.connect(self._append_log_to_settings_display)
-
-            self.root_logger_instance = logging.getLogger('')
-            self.root_logger_instance.addHandler(self.signalling_log_handler)
-            main_logger.info("UI Log Handler for Settings tab initialized and added to root logger.")
-        else:
-            self.signalling_log_handler = None
-            self.root_logger_instance = None
-            main_logger.error("settings_log_display widget not found AFTER setup_main_ui_structure. Cannot initialize UI Log Handler.")
 
         self.apply_stylesheet()
         self._apply_window_size_from_config()
@@ -3992,6 +4106,49 @@ class LotteryPredictionApp(QMainWindow):
 
         main_logger.info("Chấp nhận sự kiện đóng trong QMainWindow.")
         event.accept()
+
+    def _apply_performance_settings(self):
+        main_logger.info("Applying performance settings from config...")
+        if not self.config.has_section('PERFORMANCE'):
+            main_logger.warning("PERFORMANCE section not found in config. Using defaults.")
+            # Có thể tạo section mặc định ở đây nếu muốn
+            self.config.add_section('PERFORMANCE')
+            self.config.set('PERFORMANCE', 'set_process_priority', 'True')
+            self.config.set('PERFORMANCE', 'priority_level_windows', 'BELOW_NORMAL_PRIORITY_CLASS')
+            self.config.set('PERFORMANCE', 'priority_level_unix', '5')
+            self.config.set('PERFORMANCE', 'enable_cpu_throttling', 'True')
+            self.config.set('PERFORMANCE', 'throttle_sleep_duration', '0.005')
+            try:
+                self.save_config("settings.ini") # Lưu lại config với section mới
+            except Exception as e:
+                main_logger.error(f"Failed to save config with default PERFORMANCE section: {e}")
+
+
+        set_priority = self.config.getboolean('PERFORMANCE', 'set_process_priority', fallback=True)
+        
+        if HAS_PSUTIL and self.current_process and set_priority:
+            try:
+                if sys.platform == "win32":
+                    priority_str = self.config.get('PERFORMANCE', 'priority_level_windows', fallback='BELOW_NORMAL_PRIORITY_CLASS')
+                    priority_val = getattr(psutil, priority_str, psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                else: # Unix-like
+                    priority_val = self.config.getint('PERFORMANCE', 'priority_level_unix', fallback=5)
+                
+                self.current_process.nice(priority_val)
+                main_logger.info(f"Set process priority to: {priority_val} (Platform: {sys.platform})")
+            except Exception as e:
+                main_logger.error(f"Failed to set process priority: {e}")
+        
+        self.cpu_throttling_enabled = self.config.getboolean('PERFORMANCE', 'enable_cpu_throttling', fallback=True)
+        try:
+            self.throttle_sleep_duration = self.config.getfloat('PERFORMANCE', 'throttle_sleep_duration', fallback=0.005)
+            if self.throttle_sleep_duration < 0: self.throttle_sleep_duration = 0.0
+            if self.throttle_sleep_duration > 1: self.throttle_sleep_duration = 1.0 # Giới hạn trên để tránh ngủ quá lâu
+        except ValueError:
+            main_logger.warning("Invalid throttle_sleep_duration in config, using default.")
+            self.throttle_sleep_duration = 0.005
+        
+        main_logger.info(f"CPU Throttling: {'Enabled' if self.cpu_throttling_enabled else 'Disabled'}, Sleep Duration: {self.throttle_sleep_duration}s")
 
     def _setup_global_font(self):
 
@@ -4582,6 +4739,13 @@ class LotteryPredictionApp(QMainWindow):
                      padding: 3px; 
                      border-radius: 3px;
                  }}
+
+                /* ADDED: Specific style for taller URL LineEdits in Settings */
+                QLineEdit#SettingsUrlLineEdit {{
+                    padding-top: 6px;    /* Increase top padding */
+                    padding-bottom: 6px; /* Increase bottom padding */
+                    min-height: 28px;    /* Ensure minimum height accommodates new padding and font */
+                }}
             """
 
             self.setStyleSheet(stylesheet)
@@ -4890,17 +5054,17 @@ class LotteryPredictionApp(QMainWindow):
 
         settings_group_layout.addWidget(QLabel("🔗 URL đồng bộ dữ liệu:"), 1, 0, Qt.AlignLeft)
         self.config_sync_url_edit = QLineEdit()
+        self.config_sync_url_edit.setObjectName("SettingsUrlLineEdit") # ADDED
         self.config_sync_url_edit.setToolTip("URL để tải dữ liệu mới khi nhấn nút 'Sync' ở tab Main.")
         settings_group_layout.addWidget(self.config_sync_url_edit, 1, 1, 1, 3)
 
         self.auto_sync_checkbox = QCheckBox("  Tự động đồng bộ kết quả quay thưởng hàng ngày 📅  ")
-        self.auto_sync_checkbox.setToolTip(
-            "Nếu bật, chương trình sẽ tự động kiểm tra và đồng bộ dữ liệu từ URL trên khi khởi động."
-        )
+        # ... rest of auto_sync_checkbox setup ...
         settings_group_layout.addWidget(self.auto_sync_checkbox, 2, 1, 1, 3, Qt.AlignLeft)
 
         settings_group_layout.addWidget(QLabel("🔗 Link danh sách thuật toán:"), 3, 0, Qt.AlignLeft)
         self.config_algo_list_url_edit = QLineEdit()
+        self.config_algo_list_url_edit.setObjectName("SettingsUrlLineEdit") # ADDED
         self.config_algo_list_url_edit.setToolTip("URL của file text chứa danh sách thuật toán online.")
         settings_group_layout.addWidget(self.config_algo_list_url_edit, 3, 1, 1, 3)
 
@@ -4976,12 +5140,73 @@ class LotteryPredictionApp(QMainWindow):
         separator.setFrameShadow(QFrame.Sunken)
         settings_group_layout.addWidget(separator, 7, 0, 1, 4)
 
-        settings_group_layout.addWidget(QLabel("⚙️ Quản lý file cấu hình khác:"), 8, 0, Qt.AlignLeft)
-        self.config_listwidget = QListWidget()
-        self.config_listwidget.setFixedHeight(80)
-        self.config_listwidget.setToolTip("Double-click để tải file cấu hình đã chọn.")
-        self.config_listwidget.itemDoubleClicked.connect(self.load_selected_config_qt)
-        settings_group_layout.addWidget(self.config_listwidget, 9, 0, 1, 4)
+        settings_group_layout.addWidget(QLabel("🚀 Hiệu năng CPU:"), 7, 0, Qt.AlignLeft | Qt.AlignTop) # Điều chỉnh row index nếu cần
+
+        perf_frame = QFrame()
+        perf_layout = QVBoxLayout(perf_frame)
+        perf_layout.setContentsMargins(0,0,0,0)
+        perf_layout.setSpacing(5)
+
+        self.set_priority_checkbox = QCheckBox("Giảm ưu tiên tiến trình (nhường CPU cho app khác)")
+        self.set_priority_checkbox.setToolTip(
+            "Nếu bật, ứng dụng sẽ chạy với ưu tiên thấp hơn, có thể giúp hệ thống mượt hơn khi app chạy nền.\n"
+            "Thay đổi có hiệu lực sau khi lưu và khởi động lại app."
+        )
+        perf_layout.addWidget(self.set_priority_checkbox)
+
+        priority_details_frame = QWidget()
+        priority_details_layout = QHBoxLayout(priority_details_frame)
+        priority_details_layout.setContentsMargins(20,0,0,0) # Thụt vào
+        priority_details_layout.addWidget(QLabel("Mức ưu tiên Windows:"))
+        self.priority_windows_combo = QComboBox()
+        win_priorities = ['IDLE_PRIORITY_CLASS', 'BELOW_NORMAL_PRIORITY_CLASS', 'NORMAL_PRIORITY_CLASS', 
+                          'ABOVE_NORMAL_PRIORITY_CLASS', 'HIGH_PRIORITY_CLASS', 'REALTIME_PRIORITY_CLASS']
+        self.priority_windows_combo.addItems(win_priorities)
+        priority_details_layout.addWidget(self.priority_windows_combo)
+        priority_details_layout.addWidget(QLabel("Unix (nice):"))
+        self.priority_unix_spinbox = QSpinBox()
+        self.priority_unix_spinbox.setRange(-20, 19) # nice values
+        priority_details_layout.addWidget(self.priority_unix_spinbox)
+        priority_details_layout.addStretch(1)
+        perf_layout.addWidget(priority_details_frame)
+
+        self.set_priority_checkbox.toggled.connect(priority_details_frame.setEnabled)
+
+
+        self.enable_throttling_checkbox = QCheckBox("Bật điều tiết CPU (chèn sleep)")
+        self.enable_throttling_checkbox.setToolTip(
+            "Nếu bật, ứng dụng sẽ chèn một khoảng nghỉ nhỏ vào các vòng lặp tính toán nặng để giảm tải CPU.\n"
+            "Có thể làm chậm một chút các tác vụ đó. Thay đổi có hiệu lực ngay."
+        )
+        perf_layout.addWidget(self.enable_throttling_checkbox)
+
+        throttle_details_frame = QWidget()
+        throttle_details_layout = QHBoxLayout(throttle_details_frame)
+        throttle_details_layout.setContentsMargins(20,0,0,0) # Thụt vào
+        throttle_details_layout.addWidget(QLabel("Thời gian sleep (giây):"))
+        self.throttle_duration_spinbox = QDoubleSpinBox()
+        self.throttle_duration_spinbox.setDecimals(4)
+        self.throttle_duration_spinbox.setRange(0.0000, 1.0) # Từ 0ms đến 1s
+        self.throttle_duration_spinbox.setSingleStep(0.001)
+        self.throttle_duration_spinbox.setValue(0.005) # Mặc định 5ms
+        self.throttle_duration_spinbox.setToolTip("Thời gian nghỉ (tính bằng giây) sẽ được chèn vào. Càng lớn CPU càng giảm, app càng chậm.")
+        throttle_details_layout.addWidget(self.throttle_duration_spinbox)
+        throttle_details_layout.addStretch(1)
+        perf_layout.addWidget(throttle_details_frame)
+
+        self.enable_throttling_checkbox.toggled.connect(throttle_details_frame.setEnabled)
+
+        settings_group_layout.addWidget(perf_frame, 7, 1, 1, 3) # Điều chỉnh row index
+
+        # Dịch các row index tiếp theo xuống (ví dụ, separator từ 7 thành 8, v.v.)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        settings_group_layout.addWidget(separator, 8, 0, 1, 4) # Đổi row index
+
+        settings_group_layout.addWidget(QLabel("⚙️ Quản lý file cấu hình khác:"), 9, 0, Qt.AlignLeft) # Đổi row index
+        self.config_listwidget = QListWidget() # ... giữ nguyên
+        settings_group_layout.addWidget(self.config_listwidget, 10, 0, 1, 4)
         self.update_config_list()
 
         settings_tab_layout.addWidget(settings_group)
@@ -5018,47 +5243,12 @@ class LotteryPredictionApp(QMainWindow):
         button_layout.addStretch(1)
         settings_tab_layout.addWidget(button_frame)
 
-        log_display_group = QGroupBox("Nhật Ký Hoạt Động Chương Trình")
-        log_display_group_layout = QVBoxLayout(log_display_group)
-        log_display_group_layout.setContentsMargins(5, 10, 5, 5)
-
-        self.settings_log_display = QTextEdit()
-        self.settings_log_display.setReadOnly(True)
-        log_font = self.get_qfont("code")
-        if log_font:
-             self.settings_log_display.setFont(log_font)
-        else:
-             fallback_font = QFont("Courier New", 9)
-             self.settings_log_display.setFont(fallback_font)
-             main_logger.warning("Could not get 'code' font from get_qfont, using fallback for settings log display.")
-
-        self.settings_log_display.setMinimumHeight(150)
-        self.settings_log_display.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.settings_log_display.setStyleSheet("""
-            QTextEdit {
-                background-color: #F0F0F0;
-                color: #111111;
-                border: 1px solid #C0C0C0;
-                font-family: Consolas, 'Courier New', monospace;
-            }
-        """)
-        log_display_group_layout.addWidget(self.settings_log_display)
-        settings_tab_layout.addWidget(log_display_group, 1)
+        
 
         self._populate_settings_tab_ui() 
         main_logger.debug("Hoàn tất thiết lập giao diện tab Cài đặt.")
 
-    def _append_log_to_settings_display(self, message: str):
-        if hasattr(self, 'settings_log_display') and self.settings_log_display:
-            try:
-                cursor = self.settings_log_display.textCursor()
-                cursor.movePosition(QTextCursor.End)
-                self.settings_log_display.setTextCursor(cursor)
-                self.settings_log_display.insertPlainText(message + '\n')
-                self.settings_log_display.ensureCursorVisible()
-            except Exception as e:
-                print(f"ERROR updating settings_log_display: {e}", file=sys.stderr)
-
+    
     def setup_update_tab(self):
         self.update_logger.info("Setting up Update tab UI...")
         update_tab_overall_layout = QVBoxLayout(self.update_tab_frame)
@@ -6282,95 +6472,150 @@ class LotteryPredictionApp(QMainWindow):
         """Điền dữ liệu từ config vào các widget trên tab Cài đặt."""
         main_logger.debug("Điền dữ liệu từ config vào giao diện tab Cài đặt...")
         try:
+            # Giá trị mặc định cho các trường hợp không có trong config
             default_data_path = str(self.data_dir / "xsmb-2-digits.json")
             default_sync_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/data/xsmb-2-digits.json"
             default_algo_list_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa"
             default_auto_sync = False
             default_width = 1200
-            default_height = 1000
+            default_height = 1000 # Hoặc giá trị bạn đã dùng trong __init__
             default_font_family = 'Segoe UI'
             default_font_size = 10
             default_auto_check_update = False
             default_update_notification_frequency = 'every_startup'
+            default_set_process_priority = True
+            default_priority_windows = 'BELOW_NORMAL_PRIORITY_CLASS'
+            default_priority_unix = 5
+            default_enable_cpu_throttling = True
+            default_throttle_sleep_duration = 0.005
+
+            # Đảm bảo các section tồn tại trong self.config
+            if not self.config.has_section('DATA'):
+                self.config.add_section('DATA')
+            if not self.config.has_section('UI'):
+                self.config.add_section('UI')
+            if not self.config.has_section('UPDATE_CHECK'):
+                self.config.add_section('UPDATE_CHECK')
+            if not self.config.has_section('PERFORMANCE'):
+                self.config.add_section('PERFORMANCE')
 
 
+            # --- DATA Section ---
             if hasattr(self, 'config_data_path_edit'):
                 data_file = self.config.get('DATA', 'data_file', fallback=default_data_path)
                 self.config_data_path_edit.setText(data_file)
-            else:
-                main_logger.warning("Widget 'config_data_path_edit' không tìm thấy khi điền UI.")
+            else: main_logger.warning("Widget 'config_data_path_edit' không tìm thấy.")
 
             if hasattr(self, 'config_sync_url_edit'):
                 sync_url = self.config.get('DATA', 'sync_url', fallback=default_sync_url)
                 self.config_sync_url_edit.setText(sync_url)
-            else:
-                main_logger.warning("Widget 'config_sync_url_edit' không tìm thấy khi điền UI.")
+            else: main_logger.warning("Widget 'config_sync_url_edit' không tìm thấy.")
 
             if hasattr(self, 'config_algo_list_url_edit'):
                 algo_list_url = self.config.get('DATA', 'algo_list_url', fallback=default_algo_list_url)
                 self.config_algo_list_url_edit.setText(algo_list_url)
-            else:
-                main_logger.warning("Widget 'config_algo_list_url_edit' không tìm thấy khi điền UI.")
+            else: main_logger.warning("Widget 'config_algo_list_url_edit' không tìm thấy.")
 
             if hasattr(self, 'auto_sync_checkbox'):
                 auto_sync = self.config.getboolean('DATA', 'auto_sync_on_startup', fallback=default_auto_sync)
                 self.auto_sync_checkbox.setChecked(auto_sync)
-            else:
-                main_logger.warning("Widget 'auto_sync_checkbox' không tìm thấy khi điền UI.")
+            else: main_logger.warning("Widget 'auto_sync_checkbox' không tìm thấy.")
 
+            # --- UI Section ---
             if hasattr(self, 'window_width_edit'):
                 width_str = self.config.get('UI', 'width', fallback=str(default_width))
                 self.window_width_edit.setText(width_str)
-            else:
-                main_logger.warning("Widget 'window_width_edit' không tìm thấy khi điền UI.")
+            else: main_logger.warning("Widget 'window_width_edit' không tìm thấy.")
 
             if hasattr(self, 'window_height_edit'):
                 height_str = self.config.get('UI', 'height', fallback=str(default_height))
                 self.window_height_edit.setText(height_str)
-            else:
-                main_logger.warning("Widget 'window_height_edit' không tìm thấy khi điền UI.")
+            else: main_logger.warning("Widget 'window_height_edit' không tìm thấy.")
 
+            # Font settings - sử dụng giá trị đã load vào self.font_family_base và self.font_size_base
             if hasattr(self, 'theme_font_family_base_combo'):
-                font_family_from_config = self.config.get('UI', 'font_family_base', fallback=default_font_family)
-                index = self.theme_font_family_base_combo.findText(self.font_family_base, Qt.MatchFixedString)
+                font_family_to_set = self.font_family_base # Đã được load và validate trong load_config
+                index = self.theme_font_family_base_combo.findText(font_family_to_set, Qt.MatchFixedString)
                 if index >= 0:
-                     self.theme_font_family_base_combo.setCurrentIndex(index)
+                    self.theme_font_family_base_combo.setCurrentIndex(index)
                 else:
-                     index_settings = self.theme_font_family_base_combo.findText(font_family_from_config, Qt.MatchFixedString)
-                     if index_settings >=0: self.theme_font_family_base_combo.setCurrentIndex(index_settings)
-                     else:
-                        default_font_index = self.theme_font_family_base_combo.findText(default_font_family, Qt.MatchFixedString)
-                        if default_font_index >= 0: self.theme_font_family_base_combo.setCurrentIndex(default_font_index)
-                        else: self.theme_font_family_base_combo.setCurrentIndex(0)
-            else:
-                 main_logger.warning("Widget 'theme_font_family_base_combo' không tìm thấy khi điền UI.")
+                    main_logger.warning(f"Font '{font_family_to_set}' không tìm thấy trong combo, dùng index 0.")
+                    self.theme_font_family_base_combo.setCurrentIndex(0) # Fallback
+            else: main_logger.warning("Widget 'theme_font_family_base_combo' không tìm thấy.")
 
             if hasattr(self, 'theme_font_size_base_spinbox'):
-                self.theme_font_size_base_spinbox.setValue(self.font_size_base)
-            else:
-                 main_logger.warning("Widget 'theme_font_size_base_spinbox' không tìm thấy khi điền UI.")
-            
+                font_size_to_set = self.font_size_base # Đã được load và validate trong load_config
+                self.theme_font_size_base_spinbox.setValue(font_size_to_set)
+            else: main_logger.warning("Widget 'theme_font_size_base_spinbox' không tìm thấy.")
+
+            # --- UPDATE_CHECK Section ---
             if hasattr(self, 'auto_check_update_checkbox'):
                 auto_check = self.config.getboolean('UPDATE_CHECK', 'auto_check_on_startup', fallback=default_auto_check_update)
                 self.auto_check_update_checkbox.setChecked(auto_check)
                 if hasattr(self, 'update_notification_combo'):
                     self.update_notification_combo.setEnabled(auto_check)
-            else:
-                main_logger.warning("Widget 'auto_check_update_checkbox' không tìm thấy khi điền UI.")
+            else: main_logger.warning("Widget 'auto_check_update_checkbox' không tìm thấy.")
 
             if hasattr(self, 'update_notification_combo'):
                 freq = self.config.get('UPDATE_CHECK', 'notification_frequency', fallback=default_update_notification_frequency)
-                idx = self.update_notification_combo.findData(freq)
+                idx = self.update_notification_combo.findData(freq) # Giả sử bạn dùng findData
                 if idx != -1:
                     self.update_notification_combo.setCurrentIndex(idx)
                 else:
                     idx_fallback = self.update_notification_combo.findData(default_update_notification_frequency)
                     if idx_fallback != -1: self.update_notification_combo.setCurrentIndex(idx_fallback)
-            else:
-                main_logger.warning("Widget 'update_notification_combo' không tìm thấy khi điền UI.")
+                    else: self.update_notification_combo.setCurrentIndex(0) # Fallback an toàn
+            else: main_logger.warning("Widget 'update_notification_combo' không tìm thấy.")
+            
+            # --- PERFORMANCE Section ---
+            if hasattr(self, 'set_priority_checkbox'):
+                set_prio = self.config.getboolean('PERFORMANCE', 'set_process_priority', fallback=default_set_process_priority)
+                self.set_priority_checkbox.setChecked(set_prio)
+                # Kích hoạt/vô hiệu hóa các widget chi tiết dựa trên checkbox chính
+                priority_details_widget = self.priority_windows_combo.parentWidget() if hasattr(self, 'priority_windows_combo') else None
+                if priority_details_widget:
+                    priority_details_widget.setEnabled(set_prio)
+            else: main_logger.warning("Widget 'set_priority_checkbox' không tìm thấy.")
 
+            if hasattr(self, 'priority_windows_combo'):
+                prio_win_str = self.config.get('PERFORMANCE', 'priority_level_windows', fallback=default_priority_windows)
+                idx_win = self.priority_windows_combo.findText(prio_win_str, Qt.MatchFixedString)
+                if idx_win != -1: self.priority_windows_combo.setCurrentIndex(idx_win)
+                else: self.priority_windows_combo.setCurrentText(default_priority_windows) # Fallback
+            else: main_logger.warning("Widget 'priority_windows_combo' không tìm thấy.")
+            
+            if hasattr(self, 'priority_unix_spinbox'):
+                prio_unix_val = self.config.getint('PERFORMANCE', 'priority_level_unix', fallback=default_priority_unix)
+                self.priority_unix_spinbox.setValue(prio_unix_val)
+            else: main_logger.warning("Widget 'priority_unix_spinbox' không tìm thấy.")
+
+            if hasattr(self, 'enable_throttling_checkbox'):
+                enable_th = self.config.getboolean('PERFORMANCE', 'enable_cpu_throttling', fallback=default_enable_cpu_throttling)
+                self.enable_throttling_checkbox.setChecked(enable_th)
+                 # Kích hoạt/vô hiệu hóa widget chi tiết dựa trên checkbox chính
+                throttle_details_widget = self.throttle_duration_spinbox.parentWidget() if hasattr(self, 'throttle_duration_spinbox') else None
+                if throttle_details_widget:
+                    throttle_details_widget.setEnabled(enable_th)
+            else: main_logger.warning("Widget 'enable_throttling_checkbox' không tìm thấy.")
+
+            if hasattr(self, 'throttle_duration_spinbox'):
+                try:
+                    th_dur_str = self.config.get('PERFORMANCE', 'throttle_sleep_duration', fallback=str(default_throttle_sleep_duration))
+                    th_dur = float(th_dur_str) # Thử chuyển đổi sang float
+                except ValueError:
+                    main_logger.warning(f"Invalid float value for throttle_sleep_duration: '{th_dur_str}'. Using default.")
+                    th_dur = default_throttle_sleep_duration
+                self.throttle_duration_spinbox.setValue(th_dur)
+            else: main_logger.warning("Widget 'throttle_duration_spinbox' không tìm thấy.")
+
+        except (configparser.NoSectionError, configparser.NoOptionError) as e:
+            main_logger.error(f"Lỗi config (section/option) khi điền tab Cài đặt: {e}. Có thể cần tạo lại config.", exc_info=True)
+            QMessageBox.warning(self, "Lỗi Config", f"Thiếu section/option trong file config:\n{e}\nMột số cài đặt có thể không được tải đúng.")
+        except ValueError as e:
+            main_logger.error(f"Lỗi giá trị (ValueError) khi điền tab Cài đặt: {e}. Kiểm tra kiểu dữ liệu trong config.", exc_info=True)
+            QMessageBox.warning(self, "Lỗi Giá Trị Config", f"Giá trị không hợp lệ trong file config:\n{e}\nMột số cài đặt có thể không được tải đúng.")
         except Exception as e:
-            main_logger.error(f"Lỗi khi điền dữ liệu vào tab Cài đặt: {e}", exc_info=True)
+            main_logger.error(f"Lỗi không mong muốn khi điền tab Cài đặt: {e}", exc_info=True)
             QMessageBox.warning(self, "Lỗi UI", f"Không thể cập nhật đầy đủ giao diện cài đặt:\n{e}")
 
     def _setup_performance_text_formats(self):
@@ -6680,6 +6925,13 @@ class LotteryPredictionApp(QMainWindow):
             'notification_frequency': 'every_startup',
             'skipped_version': ''
         }
+        self.config['PERFORMANCE'] = {
+            'set_process_priority': 'True',
+            'priority_level_windows': 'BELOW_NORMAL_PRIORITY_CLASS',
+            'priority_level_unix': '5',
+            'enable_cpu_throttling': 'True',
+            'throttle_sleep_duration': '0.005'
+        }
 
     def save_config_from_settings_ui(self):
          """Saves the current state of the Settings UI fields to settings.ini."""
@@ -6767,65 +7019,113 @@ class LotteryPredictionApp(QMainWindow):
         """Lưu trạng thái hiện tại của các trường trong UI Cài đặt vào file settings.ini."""
         main_logger.info("Lưu cấu hình từ UI Cài đặt vào settings.ini...")
         try:
+            # --- DATA Section ---
             if not self.config.has_section('DATA'): self.config.add_section('DATA')
-            self.config.set('DATA', 'data_file', self.config_data_path_edit.text())
-            self.config.set('DATA', 'sync_url', self.config_sync_url_edit.text())
-            self.config.set('DATA', 'algo_list_url', self.config_algo_list_url_edit.text())
+            if hasattr(self, 'config_data_path_edit'):
+                self.config.set('DATA', 'data_file', self.config_data_path_edit.text().strip())
+            if hasattr(self, 'config_sync_url_edit'):
+                self.config.set('DATA', 'sync_url', self.config_sync_url_edit.text().strip())
+            if hasattr(self, 'config_algo_list_url_edit'):
+                self.config.set('DATA', 'algo_list_url', self.config_algo_list_url_edit.text().strip())
             if hasattr(self, 'auto_sync_checkbox'):
                 self.config.set('DATA', 'auto_sync_on_startup', str(self.auto_sync_checkbox.isChecked()))
 
+            # --- UI Section ---
             if not self.config.has_section('UI'): self.config.add_section('UI')
-            width_str = self.window_width_edit.text().strip()
-            height_str = self.window_height_edit.text().strip()
-            try: w = int(width_str) if width_str else 1200
-            except ValueError: w = 1200
-            try: h = int(height_str) if height_str else 1000
-            except ValueError: h = 1000
+            width_str = self.window_width_edit.text().strip() if hasattr(self, 'window_width_edit') else str(self.loaded_width)
+            height_str = self.window_height_edit.text().strip() if hasattr(self, 'window_height_edit') else str(self.loaded_height)
+            try: w = int(width_str) if width_str.isdigit() else self.loaded_width
+            except ValueError: w = self.loaded_width
+            try: h = int(height_str) if height_str.isdigit() else self.loaded_height
+            except ValueError: h = self.loaded_height
             self.config.set('UI', 'width', str(w))
             self.config.set('UI', 'height', str(h))
+            self.loaded_width = w # Cập nhật lại giá trị đã load
+            self.loaded_height = h
 
-            font_family = self.theme_font_family_base_combo.currentText()
-            font_size = str(self.theme_font_size_base_spinbox.value())
+            font_family = self.theme_font_family_base_combo.currentText() if hasattr(self, 'theme_font_family_base_combo') else self.font_family_base
+            font_size = str(self.theme_font_size_base_spinbox.value()) if hasattr(self, 'theme_font_size_base_spinbox') else str(self.font_size_base)
             self.config.set('UI', 'font_family_base', font_family)
             self.config.set('UI', 'font_size_base', font_size)
+            # Cập nhật biến instance để thay đổi font có hiệu lực (một phần) hoặc cho lần khởi động sau
+            self.font_family_base = font_family
+            self.font_size_base = int(font_size)
 
-            if not self.config.has_section('UPDATE_CHECK'):
-                self.config.add_section('UPDATE_CHECK')
+
+            # --- UPDATE_CHECK Section ---
+            if not self.config.has_section('UPDATE_CHECK'): self.config.add_section('UPDATE_CHECK')
             if hasattr(self, 'auto_check_update_checkbox'):
                 self.config.set('UPDATE_CHECK', 'auto_check_on_startup', str(self.auto_check_update_checkbox.isChecked()))
             if hasattr(self, 'update_notification_combo'):
                 self.config.set('UPDATE_CHECK', 'notification_frequency', self.update_notification_combo.currentData())
+            # skipped_version thường được quản lý bởi logic update, không nên set ở đây trừ khi có UI riêng
 
+            # --- PERFORMANCE Section ---
+            if not self.config.has_section('PERFORMANCE'): self.config.add_section('PERFORMANCE')
+            if hasattr(self, 'set_priority_checkbox'):
+                self.config.set('PERFORMANCE', 'set_process_priority', str(self.set_priority_checkbox.isChecked()))
+            if hasattr(self, 'priority_windows_combo'):
+                self.config.set('PERFORMANCE', 'priority_level_windows', self.priority_windows_combo.currentText())
+            if hasattr(self, 'priority_unix_spinbox'):
+                self.config.set('PERFORMANCE', 'priority_level_unix', str(self.priority_unix_spinbox.value()))
+            
+            if hasattr(self, 'enable_throttling_checkbox'):
+                enable_throttle_val = self.enable_throttling_checkbox.isChecked()
+                self.config.set('PERFORMANCE', 'enable_cpu_throttling', str(enable_throttle_val))
+                self.cpu_throttling_enabled = enable_throttle_val # Cập nhật biến instance ngay
+            if hasattr(self, 'throttle_duration_spinbox'):
+                throttle_duration_val = self.throttle_duration_spinbox.value()
+                self.config.set('PERFORMANCE', 'throttle_sleep_duration', f"{throttle_duration_val:.4f}") # Lưu với 4 chữ số thập phân
+                self.throttle_sleep_duration = throttle_duration_val # Cập nhật biến instance ngay
+            
+            if self.cpu_throttling_enabled:
+                main_logger.info(f"CPU Throttling applied from settings: Enabled, Duration={self.throttle_sleep_duration:.4f}s")
+            else:
+                main_logger.info(f"CPU Throttling applied from settings: Disabled")
+
+
+            # --- Algorithm-specific sections (ENABLED/WEIGHT) ---
             if hasattr(self, 'algorithms'):
                  for algo_name, algo_data in self.algorithms.items():
                      chk_enable = algo_data.get('chk_enable')
                      chk_weight = algo_data.get('chk_weight')
                      weight_entry = algo_data.get('weight_entry')
-                     if not chk_enable or not chk_weight or not weight_entry: continue
+                     if not chk_enable or not chk_weight or not weight_entry:
+                         main_logger.warning(f"Thiếu widget UI cho thuật toán '{algo_name}' khi lưu config.")
+                         continue
 
-                     config_section_name = algo_name
+                     config_section_name = algo_name # Tên section là tên thuật toán
                      if not self.config.has_section(config_section_name):
                          self.config.add_section(config_section_name)
 
                      self.config.set(config_section_name, 'enabled', str(chk_enable.isChecked()))
                      self.config.set(config_section_name, 'weight_enabled', str(chk_weight.isChecked()))
+                     
                      value_to_save = weight_entry.text().strip()
-                     value_to_save = value_to_save if self._is_valid_float_str(value_to_save) else "1.0"
+                     # Validate lại lần nữa trước khi lưu
+                     if not self._is_valid_float_str(value_to_save):
+                         value_to_save = "1.0" # Fallback nếu không hợp lệ
+                         weight_entry.setText(value_to_save) # Cập nhật UI nếu sửa
                      self.config.set(config_section_name, 'weight_value', value_to_save)
 
-            self.save_config("settings.ini")
+            # Save the entire config object to settings.ini
+            self.save_config("settings.ini") # Gọi hàm save_config chung
 
-            if hasattr(self, 'sync_url_input'):
-                self.sync_url_input.setText(self.config_sync_url_edit.text())
+            # Cập nhật các widget ở tab Main nếu cần
+            if hasattr(self, 'sync_url_input') and hasattr(self, 'config_sync_url_edit'):
+                self.sync_url_input.setText(self.config_sync_url_edit.text().strip())
+            
+            # Áp dụng kích thước cửa sổ mới (nếu thay đổi)
             self._apply_window_size_from_config()
             
-            self.font_family_base = font_family
-            self.font_size_base = int(font_size)
+            # Áp dụng mức ưu tiên tiến trình (cần khởi động lại để có hiệu lực hoàn toàn)
+            # self._apply_performance_settings() # Gọi lại để áp dụng priority nếu logic cho phép
 
             self.update_status("Đã lưu cấu hình vào settings.ini.")
             QMessageBox.information(self, "Lưu Thành Công",
                                     "Cấu hình đã được lưu vào settings.ini.\n"
-                                    "Lưu ý: Thay đổi font chữ yêu cầu khởi động lại ứng dụng để có hiệu lực đầy đủ.")
+                                    "Lưu ý: Một số thay đổi (font, ưu tiên tiến trình) yêu cầu khởi động lại ứng dụng để có hiệu lực đầy đủ.\n"
+                                    "Điều tiết CPU có hiệu lực ngay.")
 
         except Exception as e:
             main_logger.error(f"Lỗi khi lưu cấu hình từ UI Cài đặt: {e}", exc_info=True)
@@ -8979,120 +9279,139 @@ class LotteryPredictionApp(QMainWindow):
         self.update_status(f"Bắt đầu tính hiệu suất ({total_days_to_test} ngày)...")
 
 
-    def _performance_worker(self, active_instances, results_map, history_cache,
-                           predict_dates_list, start_date_str, end_date_str, total_days):
-        """Worker thread for calculating combined performance (logic identical)."""
-        perf_logger = logging.getLogger("PerfWorker")
-        perf_logger.info(f"Worker started for {len(predict_dates_list)} days.")
+    def _performance_worker(self, active_instances_main, results_map_main, history_cache_main,
+                           predict_dates_list_main, start_date_str_main, end_date_str_main, total_days_main):
+        """Worker thread for calculating combined performance (Tab Main)."""
+        perf_logger_main = logging.getLogger("MainTabPerfWorker")
+        perf_logger_main.info(f"MainTab PerfWorker started for {len(predict_dates_list_main)} days. Active Algos: {list(active_instances_main.keys())}")
 
-        stats = {
+        stats_main = {
             'total_days_tested': 0, 'hits_top_1': 0, 'hits_top_3': 0, 'hits_top_5': 0, 'hits_top_10': 0,
             'special_hits_top_1': 0, 'special_hits_top_5': 0, 'special_hits_top_10': 0
         }
-        errors_in_worker = 0
-        date_range_str_for_status = f"{start_date_str} - {end_date_str}"
+        errors_in_worker_main = 0
+        date_range_str_for_status_main = f"{start_date_str_main} - {end_date_str_main}"
+
+        # --- Lấy cài đặt throttling từ self của LotteryPredictionApp ---
+        throttling_enabled_main_tab = self.cpu_throttling_enabled
+        sleep_duration_main_tab = self.throttle_sleep_duration
+        perf_logger_main.debug(f"MainTab PerfWorker Throttling: Enabled={throttling_enabled_main_tab}, Duration={sleep_duration_main_tab}s")
+        # --- Kết thúc lấy cài đặt throttling ---
 
         try:
-            for i, predict_dt in enumerate(predict_dates_list):
+            for i_main, predict_dt_main in enumerate(predict_dates_list_main):
                 try:
-                    perf_logger.debug(f"Worker processing predict_dt: {predict_dt}")
-                    check_dt = predict_dt + datetime.timedelta(days=1)
-                    actual_res = results_map.get(check_dt)
-                    hist_data = history_cache.get(predict_dt)
+                    # --- BEGIN THROTTLING LOGIC (Main Tab) ---
+                    if throttling_enabled_main_tab and sleep_duration_main_tab > 0:
+                        time.sleep(sleep_duration_main_tab)
+                    # Không có stop/pause event ở đây cho worker của tab Main (trừ khi bạn thêm)
+                    # --- END THROTTLING LOGIC (Main Tab) ---
 
-                    if actual_res is None or hist_data is None:
-                        perf_logger.warning(f"Worker skipping day {predict_dt}: Missing actual ({actual_res is None}) or history ({hist_data is None}).")
-                        errors_in_worker += 1
+                    perf_logger_main.debug(f"MainTab PerfWorker processing predict_dt: {predict_dt_main}")
+                    check_dt_main = predict_dt_main + datetime.timedelta(days=1)
+                    actual_res_main = results_map_main.get(check_dt_main)
+                    hist_data_main = history_cache_main.get(predict_dt_main)
+
+                    if actual_res_main is None or hist_data_main is None:
+                        perf_logger_main.warning(f"MainTab PerfWorker skipping day {predict_dt_main}: Missing actual ({actual_res_main is None}) or history ({hist_data_main is None}).")
+                        errors_in_worker_main += 1
                         continue
 
-                    day_results = {}
-                    hist_copy_for_day = copy.deepcopy(hist_data)
+                    day_results_main = {}
+                    hist_copy_for_day_main = copy.deepcopy(hist_data_main) # Quan trọng
 
-                    for name, inst in active_instances.items():
+                    for name_main, inst_main in active_instances_main.items():
                         try:
-                            day_results[name] = inst.predict(predict_dt, hist_copy_for_day)
-                        except Exception as algo_e:
-                            perf_logger.error(f"Worker error in {name}.predict() on {predict_dt}: {algo_e}", exc_info=False)
-                            day_results[name] = {}
-                            errors_in_worker += 1
+                            day_results_main[name_main] = inst_main.predict(predict_dt_main, hist_copy_for_day_main)
+                        except Exception as algo_e_main:
+                            perf_logger_main.error(f"MainTab PerfWorker error in {name_main}.predict() on {predict_dt_main}: {algo_e_main}", exc_info=False)
+                            day_results_main[name_main] = {} # Trả về dict rỗng nếu lỗi
+                            errors_in_worker_main += 1
+                    
+                    # Gọi hàm combine_algorithm_scores của LotteryPredictionApp
+                    comb_scores_main = self.combine_algorithm_scores(day_results_main)
+                    if not comb_scores_main:
+                        perf_logger_main.warning(f"Combined scores empty for {predict_dt_main} in MainTab PerfWorker")
+                        errors_in_worker_main += 1
+                        continue
+                    
+                    valid_preds_day_main = []
+                    for n_str_m, s_val_m in comb_scores_main.items():
+                         if isinstance(n_str_m, str) and len(n_str_m)==2 and n_str_m.isdigit() and isinstance(s_val_m, (int,float)):
+                              try: valid_preds_day_main.append((int(n_str_m), float(s_val_m)))
+                              except (ValueError, TypeError): errors_in_worker_main += 1
+                         else: errors_in_worker_main += 1 # Nếu key hoặc value không hợp lệ
+                    
+                    if not valid_preds_day_main:
+                        perf_logger_main.warning(f"No valid combined predictions for {predict_dt_main} (MainTab) after validation.")
+                        errors_in_worker_main += 1
+                        continue
+                    
+                    sorted_preds_main = sorted(valid_preds_day_main, key=lambda x: x[1], reverse=True)
 
-                    comb_scores = self.combine_algorithm_scores(day_results)
-                    if not comb_scores:
-                        perf_logger.warning(f"Combined scores empty for {predict_dt}")
-                        errors_in_worker += 1
+                    actual_set_main = self.extract_numbers_from_result_dict(actual_res_main)
+                    if not actual_set_main:
+                        perf_logger_main.warning(f"Could not extract actual numbers for check_dt {check_dt_main} (MainTab)")
+                        errors_in_worker_main += 1
                         continue
 
-                    valid_preds_day = []
-                    for n_str, s_val in comb_scores.items():
-                         if isinstance(n_str, str) and len(n_str)==2 and n_str.isdigit() and isinstance(s_val, (int,float)):
-                              try: valid_preds_day.append((int(n_str), float(s_val)))
-                              except (ValueError, TypeError): errors_in_worker += 1
-                         else: errors_in_worker += 1
-                    if not valid_preds_day:
-                        perf_logger.warning(f"No valid combined predictions for {predict_dt} after validation.")
-                        errors_in_worker += 1
-                        continue
-                    sorted_preds = sorted(valid_preds_day, key=lambda x: x[1], reverse=True)
-
-                    actual_set = self.extract_numbers_from_result_dict(actual_res)
-                    if not actual_set:
-                        perf_logger.warning(f"Could not extract actual numbers for check_dt {check_dt}")
-                        errors_in_worker += 1
-                        continue
-
-                    spec_val = actual_res.get('special', actual_res.get('dac_biet'))
-                    actual_spec = -1
-                    if spec_val is not None:
+                    spec_val_main = actual_res_main.get('special', actual_res_main.get('dac_biet'))
+                    actual_spec_main = -1
+                    if spec_val_main is not None:
                          try:
-                             s = str(spec_val).strip()
-                             if len(s) >= 2 and s[-2:].isdigit(): actual_spec = int(s[-2:])
-                             elif len(s) == 1 and s.isdigit(): actual_spec = int(s)
-                         except (ValueError, TypeError): actual_spec = -1
+                             s_main = str(spec_val_main).strip()
+                             if len(s_main) >= 2 and s_main[-2:].isdigit(): actual_spec_main = int(s_main[-2:])
+                             elif len(s_main) == 1 and s_main.isdigit(): actual_spec_main = int(s_main)
+                         except (ValueError, TypeError): actual_spec_main = -1 # Không parse được
 
-                    pred_top_1 = sorted_preds[0][0] if sorted_preds else -1
-                    pred_top_3 = {p[0] for p in sorted_preds[:3]}
-                    pred_top_5 = {p[0] for p in sorted_preds[:5]}
-                    pred_top_10 = {p[0] for p in sorted_preds[:10]}
+                    # So sánh và tính stats
+                    pred_top_1_main_num = sorted_preds_main[0][0] if sorted_preds_main else -1
+                    pred_top_3_main_set = {p[0] for p in sorted_preds_main[:3]}
+                    pred_top_5_main_set = {p[0] for p in sorted_preds_main[:5]}
+                    pred_top_10_main_set = {p[0] for p in sorted_preds_main[:10]}
 
-                    if pred_top_1 != -1 and pred_top_1 in actual_set: stats['hits_top_1'] += 1
-                    if actual_set.intersection(pred_top_3): stats['hits_top_3'] += 1
-                    if actual_set.intersection(pred_top_5): stats['hits_top_5'] += 1
-                    if actual_set.intersection(pred_top_10): stats['hits_top_10'] += 1
+                    if pred_top_1_main_num != -1 and pred_top_1_main_num in actual_set_main: stats_main['hits_top_1'] += 1
+                    if actual_set_main.intersection(pred_top_3_main_set): stats_main['hits_top_3'] += 1
+                    if actual_set_main.intersection(pred_top_5_main_set): stats_main['hits_top_5'] += 1
+                    if actual_set_main.intersection(pred_top_10_main_set): stats_main['hits_top_10'] += 1
 
-                    if actual_spec != -1:
-                        if pred_top_1 == actual_spec: stats['special_hits_top_1'] += 1
-                        if actual_spec in pred_top_5: stats['special_hits_top_5'] += 1
-                        if actual_spec in pred_top_10: stats['special_hits_top_10'] += 1
+                    if actual_spec_main != -1: # Nếu có số đặc biệt thực tế
+                        if pred_top_1_main_num == actual_spec_main: stats_main['special_hits_top_1'] += 1
+                        if actual_spec_main in pred_top_5_main_set: stats_main['special_hits_top_5'] += 1
+                        if actual_spec_main in pred_top_10_main_set: stats_main['special_hits_top_10'] += 1
+                    
+                    stats_main['total_days_tested'] += 1
 
-                    stats['total_days_tested'] += 1
-
-                except Exception as day_e:
-                    perf_logger.error(f"Worker unexpected error processing day {predict_dt}: {day_e}", exc_info=True)
-                    errors_in_worker += 1
-
-                if (i + 1) % 10 == 0 or (i + 1) == total_days:
-                    progress_payload = {
-                        'current': i + 1, 'total': total_days,
-                        'errors': errors_in_worker, 'range_str': date_range_str_for_status
+                except Exception as day_e_main:
+                    perf_logger_main.error(f"MainTab PerfWorker unexpected error processing day {predict_dt_main}: {day_e_main}", exc_info=True)
+                    errors_in_worker_main += 1
+                
+                # Gửi tín hiệu tiến trình lên queue
+                if (i_main + 1) % 5 == 0 or (i_main + 1) == total_days_main: # Gửi thường xuyên hơn
+                    progress_payload_main = {
+                        'current': i_main + 1, 'total': total_days_main,
+                        'errors': errors_in_worker_main, 'range_str': date_range_str_for_status_main
                     }
-                    if hasattr(self, 'perf_queue') and self.perf_queue:
-                        try: self.perf_queue.put({'type': 'progress', 'payload': progress_payload})
-                        except Exception as q_put_err: perf_logger.error(f"Error putting progress to queue: {q_put_err}")
-                    else: perf_logger.warning("perf_queue not found in worker, cannot send progress.")
+                    if hasattr(self, 'perf_queue') and self.perf_queue: # Kiểm tra perf_queue của LotteryPredictionApp
+                        try: self.perf_queue.put({'type': 'progress', 'payload': progress_payload_main})
+                        except Exception as q_put_err_main: perf_logger_main.error(f"Error putting progress to MainTab queue: {q_put_err_main}")
+                    else: perf_logger_main.warning("MainTab perf_queue not found in LotteryPredictionApp, cannot send progress.")
 
-            finished_payload = {'stats': stats, 'errors': errors_in_worker}
+            # --- Kết thúc vòng lặp qua các ngày ---
+            finished_payload_main = {'stats': stats_main, 'errors': errors_in_worker_main}
             if hasattr(self, 'perf_queue') and self.perf_queue:
-                try: self.perf_queue.put({'type': 'finished', 'payload': finished_payload})
-                except Exception as q_put_err: perf_logger.error(f"Error putting finished payload to queue: {q_put_err}")
-            else: perf_logger.warning("perf_queue not found in worker, cannot send finished signal.")
-            perf_logger.info(f"Worker finished. Days successfully tested: {stats['total_days_tested']}, Total Errors: {errors_in_worker}")
+                try: self.perf_queue.put({'type': 'finished', 'payload': finished_payload_main})
+                except Exception as q_put_err_main_fin: perf_logger_main.error(f"Error putting finished payload to MainTab queue: {q_put_err_main_fin}")
+            else: perf_logger_main.warning("MainTab perf_queue not found, cannot send finished signal.")
 
-        except Exception as worker_err:
-            perf_logger.critical(f"Worker failed critically: {worker_err}", exc_info=True)
+            perf_logger_main.info(f"MainTab PerfWorker finished. Days successfully tested: {stats_main['total_days_tested']}, Total Errors: {errors_in_worker_main}")
+
+        except Exception as worker_err_main_critical:
+            perf_logger_main.critical(f"MainTab PerfWorker failed critically: {worker_err_main_critical}", exc_info=True)
             if hasattr(self, 'perf_queue') and self.perf_queue:
-                try: self.perf_queue.put({'type': 'error', 'payload': f"Lỗi nghiêm trọng worker: {worker_err}"})
-                except Exception as q_put_err: perf_logger.error(f"Error putting critical error to queue: {q_put_err}")
-            else: perf_logger.warning("perf_queue not found in worker, cannot send critical error.")
+                try: self.perf_queue.put({'type': 'error', 'payload': f"Lỗi nghiêm trọng worker (MainTab): {worker_err_main_critical}"})
+                except Exception as q_put_err_main_crit: perf_logger_main.error(f"Error putting critical error to MainTab queue: {q_put_err_main_crit}")
+            else: perf_logger_main.warning("MainTab perf_queue not found, cannot send critical error.")
 
 
     def _check_perf_queue(self):
