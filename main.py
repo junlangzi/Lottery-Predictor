@@ -1,6 +1,6 @@
 # Version: 4.9
 # Date: 17/05/2025
-# Update: <br> <b>Tối ưu việc sử dụng CPU và Ram<b>.<br> Người dùng có thể cài đặt sử dụng CPU hiệu quả hơn.<br> Bỏ hiển thị phần nhật ký hoạt động trong Cài đặt.
+# Update: <br> <b>Tối ưu việc sử dụng CPU và Ram</b>.<br> Người dùng có thể cài đặt sử dụng CPU hiệu quả hơn.<br> Bỏ hiển thị phần nhật ký hoạt động trong Cài đặt.
 import os
 import sys
 import logging
