@@ -1,6 +1,6 @@
-# Version: 5.0
+# Version: 5.1
 # Date: 18/05/2025
-# Update: <br> <b> Update lại phần tối ưu trong mục tối ưu thuật toán, giới hạn bộ số để tránh việc chiếm dụng nhiều ram </b>.<br> Tuỳ chỉnh lại giao diện cho đồng nhất.<br> cập nhật lại phần trạng thái chương trình dưới phần mềm.
+# Update: <br><b> Cập nhật phần tạo thuật toán online trực tiếp qua Gemini API </b><br>Tuỳ chỉnh chế độ tối ưu thuật toán, thêm lựa chọn xoá thuật toán cũ khi tìm thấy thuật toán có thông số tốt hơn.<br>Di chuyển nút Mở thư mục tối ưu lên trên để mở rộng không gian cho nhật ký tối ưu.<br> 
 import os
 import sys
 import logging
@@ -29,6 +29,17 @@ import itertools
 import xml.etree.ElementTree as ET
 from packaging.version import parse as parse_version
 import math
+import base64
+from PyQt5.QtGui import QSyntaxHighlighter, QTextCharFormat
+
+
+try:
+    import google.generativeai as genai
+    HAS_GEMINI = True
+    print("google.generativeai library found.")
+except ImportError:
+    HAS_GEMINI = False
+    print("WARNING: google.generativeai library NOT found. Algorithm Generation tab will be disabled/limited.")
 
 try:
     from PyQt5 import QtWidgets, QtCore, QtGui
@@ -38,12 +49,13 @@ try:
         QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QScrollArea, QTextEdit, QProgressBar,
         QListWidget, QListWidgetItem, QDialog, QCalendarWidget, QMessageBox,
         QFileDialog, QStatusBar, QSplitter, QSizePolicy, QFrame, QRadioButton,
-        QButtonGroup
+        QButtonGroup, QPlainTextEdit, QTextBrowser
     )
     from PyQt5.QtCore import Qt, QTimer, QDate, QObject, pyqtSignal, QThread, QSize, QRect, pyqtSlot
     from PyQt5.QtGui import QFont, QPalette, QColor, QIcon, QIntValidator, QDoubleValidator, QTextCursor, QFontDatabase, QPixmap, QPainter, QBrush, QFontMetrics
     HAS_PYQT5 = True
     print("PyQt5 library found.")
+
 except ImportError as e:
     HAS_PYQT5 = False
     print(f"CRITICAL ERROR: PyQt5 library not found. Please install it: pip install PyQt5")
@@ -222,6 +234,708 @@ except Exception as base_import_err:
     print(f"Lỗi không xác định khi import BaseAlgorithm: {base_import_err}", file=sys.stderr)
     main_logger.critical(f"Unknown error importing BaseAlgorithm: {base_import_err}", exc_info=True)
     sys.exit(1)
+
+
+class PythonSyntaxHighlighter(QSyntaxHighlighter):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.highlightingRules = []
+
+        keywordFormat = QTextCharFormat()
+        keywordFormat.setForeground(QColor("#000080"))
+        keywordFormat.setFontWeight(QFont.Bold)
+        keywords = [
+            "\\bFalse\\b", "\\bNone\\b", "\\bTrue\\b", "\\band\\b", "\\bas\\b",
+            "\\bassert\\b", "\\basync\\b", "\\bawait\\b", "\\bbreak\\b", "\\bclass\\b",
+            "\\bcontinue\\b", "\\bdef\\b", "\\bdel\\b", "\\belif\\b", "\\belse\\b",
+            "\\bexcept\\b", "\\bfinally\\b", "\\bfor\\b", "\\bfrom\\b", "\\bglobal\\b",
+            "\\bif\\b", "\\bimport\\b", "\\bin\\b", "\\bis\\b", "\\blambda\\b",
+            "\\bnonlocal\\b", "\\bnot\\b", "\\bor\\b", "\\bpass\\b", "\\braise\\b",
+            "\\breturn\\b", "\\btry\\b", "\\bwhile\\b", "\\bwith\\b", "\\byield\\b",
+            "\\bself\\b", "\\bin\\b", "\\bisinstance\\b", "\\bint\\b", "\\bfloat\\b",
+            "\\bstr\\b", "\\blist\\b", "\\bdict\\b", "\\btuple\\b", "\\bset\\b", "\\bdatetime\\b"
+        ]
+        for word in keywords:
+            rule = (re.compile(word), keywordFormat)
+            self.highlightingRules.append(rule)
+
+        selfFormat = QTextCharFormat()
+        selfFormat.setForeground(QColor("#900090"))
+        rule = (re.compile("\\bself\\."), selfFormat)
+        self.highlightingRules.append(rule)
+
+        stringFormat = QTextCharFormat()
+        stringFormat.setForeground(QColor("#008000"))
+        self.highlightingRules.append((re.compile("\".*?\""), stringFormat))
+        self.highlightingRules.append((re.compile("'.*?'"), stringFormat))
+        self.highlightingRules.append((re.compile("\"\"\"(.*?)\"\"\"", re.DOTALL), stringFormat))
+        self.highlightingRules.append((re.compile("'''(.*?)'''", re.DOTALL), stringFormat))
+
+
+        numberFormat = QTextCharFormat()
+        numberFormat.setForeground(QColor("#0000FF"))
+        self.highlightingRules.append((re.compile("\\b[0-9]+\\.?[0-9]*([eE][-+]?[0-9]+)?\\b"), numberFormat))
+
+        commentFormat = QTextCharFormat()
+        commentFormat.setForeground(QColor("#808080"))
+        commentFormat.setFontItalic(True)
+        self.highlightingRules.append((re.compile("#[^\n]*"), commentFormat))
+
+        functionFormat = QTextCharFormat()
+        functionFormat.setForeground(QColor("#A020F0"))
+        functionFormat.setFontWeight(QFont.Bold)
+        self.highlightingRules.append((re.compile("\\b[A-Za-z_][A-Za-z0-9_]*(?=\\()"), functionFormat))
+
+        classFormat = QTextCharFormat()
+        classFormat.setForeground(QColor("#2E8B57"))
+        classFormat.setFontWeight(QFont.Bold)
+        self.highlightingRules.append((re.compile("\\b[A-Z][a-zA-Z0-9_]*\\b"), classFormat))
+
+
+    def highlightBlock(self, text):
+        for pattern, format_obj in self.highlightingRules:
+            for match in pattern.finditer(text):
+                start, end = match.span()
+                self.setFormat(start, end - start, format_obj)
+
+
+class GeminiWorker(QObject):
+    result_ready = pyqtSignal(str)
+    error_occurred = pyqtSignal(str)
+    status_update = pyqtSignal(str)
+
+    def __init__(self, api_key, prompt):
+        super().__init__()
+        self.api_key = api_key
+        self.prompt = prompt
+        self._is_running = True
+
+    def run(self):
+        if not HAS_GEMINI:
+            self.error_occurred.emit("Thư viện 'google-generativeai' chưa được cài đặt.")
+            return
+
+        try:
+            self.status_update.emit("Đang cấu hình Gemini...")
+            genai.configure(api_key=self.api_key)
+
+            self.status_update.emit("Đang tạo mô hình Gemini...")
+            model = genai.GenerativeModel('gemini-1.5-flash')
+
+            self.status_update.emit("Đang gửi yêu cầu đến Gemini API...")
+            response = model.generate_content(self.prompt)
+
+            self.status_update.emit("Đã nhận phản hồi từ Gemini.")
+            generated_text = response.text
+            self.result_ready.emit(generated_text)
+
+        except ValueError as ve:
+             if "API_KEY" in str(ve) or "api key not valid" in str(ve).lower():
+                  self.error_occurred.emit(f"Lỗi API Key: {ve}. Vui lòng kiểm tra lại.")
+             else:
+                  self.error_occurred.emit(f"Lỗi giá trị khi gọi Gemini: {ve}")
+        except Exception as e:
+            logging.error(f"Lỗi khi gọi Gemini API: {e}", exc_info=True)
+            error_message = f"Lỗi giao tiếp với Gemini API: {type(e).__name__}. Chi tiết: {e}"
+            if "api key not valid" in str(e).lower():
+                 error_message = "Lỗi: API key không hợp lệ. Vui lòng kiểm tra lại."
+            elif "permission denied" in str(e).lower() or "quota" in str(e).lower():
+                 error_message = "Lỗi: Có thể API key hết hạn, hết quota hoặc không có quyền truy cập mô hình."
+            elif "Deadline Exceeded" in str(e):
+                 error_message = "Lỗi: Yêu cầu tới Gemini bị quá thời gian. Vui lòng thử lại."
+            elif "resource exhausted" in str(e).lower():
+                 error_message = "Lỗi: Tài nguyên hoặc quota đã hết. Vui lòng kiểm tra tài khoản Google AI/Cloud."
+            self.error_occurred.emit(error_message)
+
+class AlgorithmGeminiBuilderTab(QWidget):
+    def __init__(self, parent_widget: QWidget, main_app_instance):
+        super().__init__(parent_widget)
+        self.main_app = main_app_instance
+
+        self.CONFIG_DIR = self.main_app.config_dir
+        self.API_KEY_FILE = self.CONFIG_DIR / "gemini.api"
+        self.ALGORITHMS_DIR = self.main_app.algorithms_dir
+
+        self.generated_code = ""
+        self.api_key = ""
+        self.gemini_thread = None
+        self.gemini_worker = None
+        self.start_time = None
+
+        self.logger = logging.getLogger("GeminiAlgoBuilderTab")
+
+        self._load_api_key()
+        self._setup_ui()
+
+    def _load_api_key(self):
+        try:
+            self.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            if self.API_KEY_FILE.is_file():
+                encoded_key = self.API_KEY_FILE.read_bytes()
+                self.api_key = base64.b64decode(encoded_key).decode('utf-8')
+                self.logger.info(f"Loaded API key from {self.API_KEY_FILE}")
+            else:
+                self.api_key = ""
+                self.logger.info(f"API key file not found: {self.API_KEY_FILE}. Key is empty.")
+        except (IOError, base64.binascii.Error, UnicodeDecodeError) as e:
+            self.logger.error(f"Failed to load or decode API key from {self.API_KEY_FILE}: {e}")
+            self.api_key = ""
+
+    def _save_api_key_if_changed(self):
+        """Saves the API key only if it has changed."""
+        key_to_save = self.api_key_edit.text().strip()
+        if key_to_save == self.api_key:
+            return True
+
+        try:
+            self.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+            encoded_key = base64.b64encode(key_to_save.encode('utf-8'))
+            self.API_KEY_FILE.write_bytes(encoded_key)
+            self.api_key = key_to_save
+            self.logger.info(f"Saved API key to {self.API_KEY_FILE}")
+            self.status_label.setText("Trạng thái: Đã lưu API Key mới.")
+            self.status_label.setStyleSheet("color: #28a745;")
+            QTimer.singleShot(3000, lambda: self.status_label.setText("Trạng thái: Sẵn sàng") if self.status_label.text().startswith("Trạng thái: Đã lưu API Key") else None)
+            return True
+        except IOError as e:
+            self.logger.error(f"Failed to save API key to {self.API_KEY_FILE}: {e}")
+            QMessageBox.critical(self, "Lỗi Lưu API Key", f"Không thể lưu API key vào file:\n{e}")
+            return False
+        except Exception as e_gen:
+            self.logger.error(f"General error saving API key: {e_gen}")
+            QMessageBox.critical(self, "Lỗi Lưu API Key", f"Lỗi không xác định khi lưu API key:\n{e_gen}")
+            return False
+
+
+    def _get_api_key_help_text_plain(self) -> str:
+        """Returns the help text for API key as plain text for tooltip."""
+        return textwrap.dedent("""
+        Hướng dẫn lấy Gemini API Key:
+        1. Truy cập Google AI Studio: https://aistudio.google.com/
+           (Hoặc Google Cloud Console nếu dùng Vertex AI)
+        2. Đăng nhập bằng tài khoản Google của bạn.
+        3. Trong Google AI Studio:
+           - Nhấp vào "Get API key" ở thanh bên trái.
+           - Nhấp vào "Create API key in new project" (hoặc chọn dự án có sẵn).
+           - Sao chép API key được tạo ra.
+        4. Dán API key vào ô bên cạnh.
+
+        Lưu ý: Giữ API key của bạn bí mật.
+        Việc sử dụng API có thể phát sinh chi phí.
+        """)
+
+    def _validate_inputs(self) -> bool:
+        current_api_key_from_edit = self.api_key_edit.text().strip()
+        if current_api_key_from_edit != self.api_key:
+            if not self._save_api_key_if_changed():
+                 QMessageBox.warning(self, "Lỗi API Key", "Không thể lưu API Key mới. Vui lòng kiểm tra lại.")
+                 self.api_key_edit.setFocus()
+                 return False
+        
+        file_name_base = self.file_name_edit.text().strip()
+        class_name = self.class_name_edit.text().strip()
+        logic_desc = self.logic_description_edit.toPlainText().strip()
+
+        if not self.api_key:
+            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập Gemini API Key.")
+            self.api_key_edit.setFocus()
+            return False
+        if not HAS_GEMINI:
+            QMessageBox.critical(self, "Thiếu Thư Viện", "Vui lòng cài đặt thư viện 'google-generativeai' bằng lệnh:\n\npip install google-generativeai")
+            return False
+        if not re.match(r"^[a-zA-Z0-9_]+$", file_name_base):
+            QMessageBox.warning(self, "Tên file không hợp lệ", "Tên file chỉ nên chứa chữ cái, số và dấu gạch dưới (_).")
+            self.file_name_edit.setFocus()
+            return False
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", class_name) or class_name == "BaseAlgorithm":
+            QMessageBox.warning(self, "Tên lớp không hợp lệ", "Tên lớp phải là định danh Python hợp lệ và không trùng 'BaseAlgorithm'.")
+            self.class_name_edit.setFocus()
+            return False
+        if not logic_desc:
+            QMessageBox.warning(self, "Thiếu Mô Tả Logic", "Vui lòng mô tả logic bạn muốn cho thuật toán.")
+            self.logic_description_edit.setFocus()
+            return False
+        return True
+
+
+    def _setup_ui(self):
+        main_tab_layout = QVBoxLayout(self)
+        main_tab_layout.setContentsMargins(10, 10, 10, 10)
+        main_tab_layout.setSpacing(10)
+
+
+
+        api_key_group = QWidget()
+        api_key_layout = QHBoxLayout(api_key_group)
+        api_key_layout.setContentsMargins(0, 0, 0, 5)
+        api_key_layout.setSpacing(8)
+
+        api_key_layout.addWidget(QLabel("🔑Gemini API Key:"))
+        self.api_key_edit = QLineEdit(self.api_key)
+        self.api_key_edit.setEchoMode(QLineEdit.Password)
+        self.api_key_edit.setPlaceholderText("Nhập API Key của Google AI Studio / Vertex AI")
+        self.api_key_edit.editingFinished.connect(self._save_api_key_if_changed)
+        api_key_layout.addWidget(self.api_key_edit, 1)
+
+        show_api_button = QPushButton("👁‍🗨")
+        show_api_button.setFixedSize(QSize(30, self.api_key_edit.sizeHint().height()))
+        show_api_button.setCheckable(True)
+        show_api_button.setToolTip("Hiện/Ẩn API Key")
+        show_api_button.toggled.connect(self._toggle_api_key_visibility)
+        api_key_layout.addWidget(show_api_button)
+
+        help_api_button = QPushButton("❓")
+        help_api_button.setFixedSize(QSize(30, self.api_key_edit.sizeHint().height()))
+        help_api_button.setToolTip(self._get_api_key_help_text_plain())
+        api_key_layout.addWidget(help_api_button)
+        
+        main_tab_layout.addWidget(api_key_group)
+
+        save_info_label = QLabel(f"<i>API Key sẽ được mã hóa và lưu tự động vào file <code>{self.API_KEY_FILE.relative_to(self.main_app.base_dir)}</code> khi bạn thay đổi.</i>")
+        save_info_label.setWordWrap(True)
+        save_info_label.setStyleSheet("color: #6c757d; font-size: 9pt; margin-bottom: 10px;")
+        main_tab_layout.addWidget(save_info_label)
+        
+        info_form = QFormLayout()
+        info_form.setSpacing(8)
+        self.file_name_edit = QLineEdit()
+        self.file_name_edit.setPlaceholderText("Ví dụ: advanced_frequency")
+        self.file_name_edit.textChanged.connect(self._suggest_class_name)
+        info_form.addRow("📗Tên file:", self.file_name_edit)
+
+        self.class_name_edit = QLineEdit()
+        self.class_name_edit.setPlaceholderText("Ví dụ: AdvancedFrequencyAlgorithm")
+        info_form.addRow("📒Tên Lớp (Class):", self.class_name_edit)
+
+        self.description_edit = QLineEdit()
+        self.description_edit.setPlaceholderText("Mô tả ngắn gọn về thuật toán")
+        info_form.addRow("♻️Mô tả thuật toán:", self.description_edit)
+        main_tab_layout.addLayout(info_form)
+
+        logic_label = QLabel("✍️ Mô tả thuật toán (tiếng Việt hoặc Anh):")
+        main_tab_layout.addWidget(logic_label)
+        self.logic_description_edit = QPlainTextEdit()
+        self.logic_description_edit.setPlaceholderText(
+            "Ví dụ:\n"
+            "- Tính điểm dựa trên tần suất xuất hiện trong 90 ngày qua.\n"
+            "- Cộng thêm điểm nếu số đó là số lân cận (trong khoảng +/- 3) của giải đặc biệt ngày hôm trước.\n"
+            "- Giảm điểm mạnh nếu số đó đã về trong 2 ngày liên tiếp gần đây.\n"
+            "- Ưu tiên các số không xuất hiện trong 10 ngày gần nhất...\n"
+            "(Càng chi tiết, Gemini càng tạo code tốt hơn)"
+        )
+        self.logic_description_edit.setMinimumHeight(120)
+        main_tab_layout.addWidget(self.logic_description_edit)
+
+        self.generate_button = QPushButton("🧠Tạo Thuật Toán")
+        self.generate_button.setObjectName("AccentButton")
+        self.generate_button.setStyleSheet("padding: 8px;")
+        self.generate_button.clicked.connect(self._generate_algorithm)
+        main_tab_layout.addWidget(self.generate_button)
+
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.setVisible(False)
+        self.progress_bar.setFixedHeight(10)
+        main_tab_layout.addWidget(self.progress_bar)
+
+        self.status_label = QLabel("Trạng thái: Sẵn sàng")
+        self.status_label.setStyleSheet("color: #6c757d;")
+        main_tab_layout.addWidget(self.status_label)
+
+        code_label = QLabel("Nội dung thuật toán:")
+        main_tab_layout.addWidget(code_label)
+        self.generated_code_display = QPlainTextEdit()
+        self.generated_code_display.setReadOnly(True)
+        code_font = self.main_app.get_qfont("code")
+        self.generated_code_display.setFont(code_font)
+
+        self.generated_code_display.setMinimumHeight(200)
+        self.highlighter = PythonSyntaxHighlighter(self.generated_code_display.document())
+        main_tab_layout.addWidget(self.generated_code_display, 1)
+
+        button_layout_gen = QHBoxLayout()
+        button_layout_gen.addStretch(1)
+
+        self.copy_button = QPushButton("📄Sao chép")
+        self.copy_button.setEnabled(False)
+        self.copy_button.setStyleSheet("padding: 8px;")
+        self.copy_button.clicked.connect(self._copy_generated_code)
+        button_layout_gen.addWidget(self.copy_button)
+
+        self.save_button = QPushButton("💾 Lưu")
+        self.save_button.setEnabled(False)
+        self.save_button.setObjectName("AccentButton")
+        self.save_button.setStyleSheet("padding: 8px;")
+        self.save_button.clicked.connect(self._save_algorithm_file)
+        button_layout_gen.addWidget(self.save_button)
+
+        main_tab_layout.addLayout(button_layout_gen)
+
+
+
+    def _toggle_api_key_visibility(self, checked):
+        if checked:
+            self.api_key_edit.setEchoMode(QLineEdit.Normal)
+            sender = self.sender()
+            if sender: sender.setText("Ẩn")
+        else:
+            self.api_key_edit.setEchoMode(QLineEdit.Password)
+            sender = self.sender()
+            if sender: sender.setText("Hiện")
+
+    def _get_api_key_help_text(self) -> str:
+        return textwrap.dedent("""
+        1. Truy cập Google AI Studio: https://aistudio.google.com/
+           (Hoặc Google Cloud Console nếu dùng Vertex AI)
+        2. Đăng nhập bằng tài khoản Google của bạn.
+        3. Trong Google AI Studio:
+           - Nhấp vào "Get API key" ở thanh bên trái.
+           - Nhấp vào "Create API key in new project" (hoặc chọn dự án có sẵn).
+           - Sao chép API key được tạo ra.
+        4. Dán API key vào ô trên.
+
+        <b>Lưu ý:</b> Giữ API key của bạn bí mật và an toàn. Không chia sẻ công khai.
+        Việc sử dụng API có thể phát sinh chi phí tuỳ theo chính sách của Google.
+        """)
+
+    def _suggest_class_name(self, filename_base):
+        class_name = "".join(word.capitalize() for word in filename_base.split('_') if word)
+        class_name = re.sub(r'[^a-zA-Z0-9_]', '', class_name)
+        if class_name and class_name[0].isdigit():
+            class_name = "_" + class_name
+        if not class_name:
+            class_name = "MyGeminiAlgorithm"
+        else:
+            class_name = class_name + "Algorithm"
+
+        current_class_name = self.class_name_edit.text()
+        if not current_class_name or current_class_name == getattr(self, "_last_suggested_class_name", ""):
+             self.class_name_edit.setText(class_name)
+        self._last_suggested_class_name = class_name
+
+
+    def _validate_inputs(self) -> bool:
+        self.api_key = self.api_key_edit.text().strip()
+        file_name_base = self.file_name_edit.text().strip()
+        class_name = self.class_name_edit.text().strip()
+        logic_desc = self.logic_description_edit.toPlainText().strip()
+
+        if not self.api_key:
+            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập Gemini API Key trong tab 'Cài Đặt API Key'.")
+            self.tab_widget_internal.setCurrentIndex(1)
+            self.api_key_edit.setFocus()
+            return False
+        if not HAS_GEMINI:
+            QMessageBox.critical(self, "Thiếu Thư Viện", "Vui lòng cài đặt thư viện 'google-generativeai' bằng lệnh:\n\npip install google-generativeai")
+            return False
+        if not re.match(r"^[a-zA-Z0-9_]+$", file_name_base):
+            QMessageBox.warning(self, "Tên file không hợp lệ", "Tên file chỉ nên chứa chữ cái, số và dấu gạch dưới (_).")
+            self.tab_widget_internal.setCurrentIndex(0)
+            self.file_name_edit.setFocus()
+            return False
+        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", class_name) or class_name == "BaseAlgorithm":
+            QMessageBox.warning(self, "Tên lớp không hợp lệ", "Tên lớp phải là định danh Python hợp lệ và không trùng 'BaseAlgorithm'.")
+            self.tab_widget_internal.setCurrentIndex(0)
+            self.class_name_edit.setFocus()
+            return False
+        if not logic_desc:
+            QMessageBox.warning(self, "Thiếu Mô Tả Logic", "Vui lòng mô tả logic bạn muốn cho thuật toán.")
+            self.tab_widget_internal.setCurrentIndex(0)
+            self.logic_description_edit.setFocus()
+            return False
+        return True
+
+    def _get_base_algorithm_code(self) -> str:
+        base_py_path = self.main_app.algorithms_dir / "base.py"
+        if base_py_path.exists():
+            self.logger.info(f"Reading BaseAlgorithm from: {base_py_path.resolve()}")
+            return base_py_path.read_text(encoding='utf-8')
+        else:
+            self.logger.warning(
+                f"BaseAlgorithm file not found at: {base_py_path.resolve()}. Using hardcoded summary."
+            )
+            return textwrap.dedent("""
+                # Base class (summary - file not found at expected location)
+                from abc import ABC, abstractmethod
+                import datetime
+                import logging
+                from pathlib import Path
+
+                class BaseAlgorithm(ABC):
+                    def __init__(self, data_results_list=None, cache_dir=None):
+                        self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
+                        self.config = {"description": "Base", "parameters": {}}
+                        self._raw_results_list = data_results_list if data_results_list is not None else []
+                        self.cache_dir = Path(cache_dir) if cache_dir else None
+                        # self._log('debug', f"{self.__class__.__name__} initialized.")
+
+                    def get_config(self) -> dict: return self.config
+
+                    @abstractmethod
+                    def predict(self, date_to_predict: datetime.date, historical_results: list) -> dict:
+                        raise NotImplementedError
+
+                    def extract_numbers_from_dict(self, result_dict: dict) -> set:
+                         numbers = set()
+                         if isinstance(result_dict, dict):
+                             for key, value in result_dict.items():
+                                 if key in {'date','_id','source','day_of_week','sign','created_at','updated_at','province_name','province_id'}: continue
+                                 values_to_check = []
+                                 if isinstance(value, (list, tuple)): values_to_check.extend(value)
+                                 elif value is not None: values_to_check.append(value)
+                                 for item in values_to_check:
+                                     if item is None: continue
+                                     try:
+                                         s_item = str(item).strip(); num = -1
+                                         if len(s_item) >= 2 and s_item[-2:].isdigit(): num = int(s_item[-2:])
+                                         elif len(s_item) == 1 and s_item.isdigit(): num = int(s_item)
+                                         if 0 <= num <= 99: numbers.add(f"{num:02d}") # Trả về chuỗi 2 chữ số
+                                     except (ValueError, TypeError): pass
+                         return {n for n in numbers if n.isdigit() and 0 <= int(n) <= 99}
+
+
+                    def _log(self, level: str, message: str):
+                        log_method = getattr(self.logger, level.lower(), self.logger.info)
+                        log_method(f"[{self.__class__.__name__}] {message}")
+            """)
+
+    def _construct_prompt(self) -> str | None:
+        file_name_base = self.file_name_edit.text().strip()
+        full_file_name = f"{file_name_base}.py"
+        class_name = self.class_name_edit.text().strip()
+        algo_description = self.description_edit.text().strip().replace('"', '\\"')
+        logic_description = self.logic_description_edit.toPlainText().strip()
+        base_algo_code = self._get_base_algorithm_code()
+
+        if not algo_description:
+            algo_description = f"Algorithm generated based on user description for {class_name}"
+
+        prompt = textwrap.dedent(f"""
+        Bạn là một lập trình viên Python chuyên nghiệp, chuyên tạo các thuật toán dự đoán xổ số cho một ứng dụng cụ thể.
+        Nhiệm vụ của bạn là tạo ra ĐOẠN CODE PYTHON HOÀN CHỈNH cho một lớp thuật toán mới dựa trên mô tả của người dùng.
+
+        **Bối cảnh:**
+        *   Thuật toán mới phải kế thừa từ lớp `BaseAlgorithm`. Dưới đây là nội dung của file `algorithms/base.py` mà lớp cha được định nghĩa:
+            ```python
+            {textwrap.indent(base_algo_code, '            ')}
+            ```
+        *   Lớp thuật toán mới sẽ được lưu vào file tên là `{full_file_name}` trong thư mục `algorithms`.
+        *   Tên của lớp mới phải là `{class_name}`.
+        *   Mô tả chung của thuật toán (dùng cho `self.config['description']`) là: "{algo_description}"
+
+        **Yêu cầu chính:**
+        Viết code Python đầy đủ cho lớp `{class_name}` bao gồm:
+        1.  Import các thư viện cần thiết (ví dụ: `datetime`, `logging`, `collections`, `math`, `numpy` nếu cần tính toán phức tạp, `pathlib`). PHẢI import `BaseAlgorithm` từ `algorithms.base` (LƯU Ý: trong code kết quả, dòng import phải là `from algorithms.base import BaseAlgorithm`).
+        2.  Định nghĩa lớp `{class_name}` kế thừa từ `BaseAlgorithm`. (`class {class_name}(BaseAlgorithm):`)
+        3.  Triển khai phương thức `__init__(self, *args, **kwargs)`:
+            *   Phải gọi `super().__init__(*args, **kwargs)`.
+            *   Khởi tạo `self.config` với `description` đã cho và một dictionary `parameters` rỗng (hoặc nếu bạn suy luận được tham số từ mô tả logic, hãy thêm chúng vào đây với giá trị mặc định hợp lý).
+            *   Ví dụ: `self.config = {{'description': "{algo_description}", 'parameters': {{'param1': default_value}} }}`
+            *   Có thể khởi tạo các thuộc tính khác nếu cần cho logic (ví dụ: `self.some_data = {{}}`).
+            *   Thêm dòng log debug báo hiệu khởi tạo: `self._log('debug', f"{{self.__class__.__name__}} initialized.")`
+        4.  Triển khai phương thức `predict(self, date_to_predict: datetime.date, historical_results: list) -> dict`:
+            *   Phương thức này nhận ngày cần dự đoán (`date_to_predict`) và danh sách kết quả lịch sử (`historical_results`) **trước** ngày đó. `historical_results` là list của dict, mỗi dict có dạng `{{'date': date_obj, 'result': dict_ket_qua_ngay_do}}`.
+            *   **Logic cốt lõi:** Dựa vào mô tả logic do người dùng cung cấp dưới đây để tính toán điểm số.
+            *   **Mô tả Logic của người dùng:**
+                ```
+                {textwrap.indent(logic_description, '                ')}
+                ```
+            *   **Quan trọng:** Phương thức `predict` **PHẢI** trả về một dictionary chứa điểm số (float hoặc int) cho TẤT CẢ các số từ "00" đến "99". Ví dụ: `{{'00': 10.5, '01': -2.0, ..., '99': 5.0}}`. Nếu không có điểm cho số nào đó, hãy trả về 0.0 cho số đó. Khởi tạo `scores = {{f'{{i:02d}}': 0.0 for i in range(100)}}` là một khởi đầu tốt.
+            *   Sử dụng các hàm có sẵn từ `BaseAlgorithm`: `self.extract_numbers_from_dict(result_dict)` để lấy các số dạng chuỗi '00'-'99' từ kết quả của một ngày, `self._log('level', 'message')` để ghi log (các level thông dụng: 'debug', 'info', 'warning', 'error').
+            *   Nên có log debug ở đầu hàm (`self._log('debug', f"Predicting for {{date_to_predict}}")`) và log info ở cuối (`self._log('info', f"Prediction finished for {{date_to_predict}}. Generated {{len(scores)}} scores.")`).
+            *   Xử lý các trường hợp ngoại lệ (ví dụ: không đủ dữ liệu `historical_results`, lỗi tính toán) một cách hợp lý. Nếu không thể tính toán, trả về dict `scores` với tất cả điểm là 0.0.
+            *   Đảm bảo code trong `predict` hiệu quả, tránh lặp lại tính toán không cần thiết nếu có thể.
+        5.  Hãy viết chi tiết các tham số trong `self.config['parameters']`, để sau này người dùng còn có thể sử dụng công cụ để tinh chỉnh, tối ưu từng tham số cụ thể để tăng tính chính xác khi chạy thuật toán. Các giá trị mặc định cho tham số nên là số (int hoặc float).
+
+        **Định dạng Output:**
+        Chỉ cung cấp phần code Python hoàn chỉnh cho file `{full_file_name}`.
+        Bắt đầu bằng `# -*- coding: utf-8 -*-`.
+        Tiếp theo là `# File: {full_file_name}`.
+        Sau đó là import `BaseAlgorithm` từ `algorithms.base` và các thư viện cần thiết khác.
+        Rồi đến định nghĩa lớp `{class_name}` và các phương thức của nó (`__init__`, `predict`).
+        KHÔNG thêm bất kỳ giải thích, lời bình luận hay ```python ``` nào bên ngoài khối code chính.
+        Đảm bảo code sạch sẽ, dễ đọc, tuân thủ PEP 8 và có thụt lề đúng chuẩn Python (4 dấu cách).
+        """)
+        return prompt.strip()
+
+    def _generate_algorithm(self):
+        if not self._validate_inputs():
+            return
+
+        self.api_key = self.api_key_edit.text().strip()
+
+
+        prompt = self._construct_prompt()
+        if prompt is None:
+            QMessageBox.critical(self, "Lỗi Tạo Prompt", "Không thể tạo yêu cầu cho Gemini.")
+            return
+
+        self.generated_code = ""
+        self.generated_code_display.setPlainText("")
+        self.save_button.setEnabled(False)
+        self.copy_button.setEnabled(False)
+        self.generate_button.setEnabled(False)
+        self.progress_bar.setVisible(True)
+        self.status_label.setText("Trạng thái: Đang liên lạc với Gemini API...")
+        self.status_label.setStyleSheet("color: #ffc107;")
+        self.start_time = time.time()
+
+        self.gemini_worker = GeminiWorker(self.api_key, prompt)
+        self.gemini_thread = threading.Thread(target=self.gemini_worker.run, daemon=True)
+
+        self.gemini_worker.result_ready.connect(self._handle_gemini_response)
+        self.gemini_worker.error_occurred.connect(self._handle_gemini_error)
+        self.gemini_worker.status_update.connect(self._update_status_from_worker)
+
+        self.gemini_thread.start()
+
+    def _update_status_from_worker(self, message):
+        if self.start_time:
+             elapsed = time.time() - self.start_time
+             self.status_label.setText(f"Trạng thái: {message} ({elapsed:.1f}s)")
+        else:
+             self.status_label.setText(f"Trạng thái: {message}")
+        self.status_label.setStyleSheet("color: #007bff;")
+
+    def _handle_gemini_response(self, generated_text):
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        self.progress_bar.setVisible(False)
+        self.generate_button.setEnabled(True)
+        self.status_label.setText(f"Trạng thái: Đã nhận kết quả. Đang xử lý... ({elapsed:.1f}s)")
+        self.status_label.setStyleSheet("color: #17a2b8;")
+        self.logger.debug("Gemini response received:\n" + generated_text[:500] + "...")
+
+        code_match = re.search(r"```(?:python)?\s*([\s\S]*?)\s*```", generated_text, re.IGNORECASE)
+        if code_match:
+            self.generated_code = code_match.group(1).strip()
+            self.logger.info("Successfully extracted Python code block from Gemini response.")
+            self.generated_code = self.generated_code.replace("from .base import BaseAlgorithm", "from algorithms.base import BaseAlgorithm")
+        else:
+            lines_resp = generated_text.strip().splitlines()
+            if lines_resp and (lines_resp[0].startswith("# -*- coding: utf-8 -*-") or lines_resp[0].startswith("# File:") or lines_resp[0].startswith("import ") or lines_resp[0].startswith("from ")):
+                 self.generated_code = "\n".join(lines_resp)
+                 self.logger.warning("Could not find ```python block, assuming response is code based on starting lines.")
+                 self.generated_code = self.generated_code.replace("from .base import BaseAlgorithm", "from algorithms.base import BaseAlgorithm")
+            else:
+                 self.logger.warning("Could not find ```python block and response does not start like Python code. Displaying raw response.")
+                 self.generated_code = f"# --- RAW GEMINI RESPONSE (Could not extract Python code) ---\n# {generated_text}"
+                 QMessageBox.warning(self, "Không tìm thấy Code", "Gemini đã phản hồi, nhưng không thể tự động trích xuất khối code Python. Vui lòng kiểm tra và chỉnh sửa thủ công.")
+
+        if self.generated_code and not self.generated_code.startswith("# --- RAW GEMINI RESPONSE"):
+            today = datetime.date.today()
+            date_str = today.strftime("%d/%m/%Y")
+            date_comment_line = f"# Date: {date_str}\n"
+            
+            lines = self.generated_code.splitlines(True)
+            
+            inserted_date_comment = False
+            if len(lines) >= 2 and \
+               lines[0].strip() == "# -*- coding: utf-8 -*-" and \
+               lines[1].strip().startswith("# File:"):
+                new_lines = lines[:2] + [date_comment_line] + lines[2:]
+                self.generated_code = "".join(new_lines)
+                inserted_date_comment = True
+            elif len(lines) >= 1 and lines[0].strip() == "# -*- coding: utf-8 -*-":
+                new_lines = lines[:1] + [date_comment_line] + lines[1:]
+                self.generated_code = "".join(new_lines)
+                inserted_date_comment = True
+            
+            if not inserted_date_comment:
+                self.generated_code = date_comment_line + self.generated_code
+            
+            self.logger.info(f"Added date comment to generated code: {date_comment_line.strip()}")
+
+        self.generated_code_display.setPlainText(self.generated_code)
+
+        if self.generated_code and not self.generated_code.startswith("# --- RAW GEMINI RESPONSE"):
+            self.save_button.setEnabled(True)
+            self.copy_button.setEnabled(True)
+            status_message = f"Trạng thái: Đã tạo code thành công. Sẵn sàng để lưu. ({elapsed:.1f}s)"
+            status_color = "#28a745;"
+        else:
+             self.save_button.setEnabled(False)
+             self.copy_button.setEnabled(True)
+             status_message = f"Trạng thái: Không trích xuất được code. Hiển thị phản hồi thô. ({elapsed:.1f}s)"
+             status_color = "#ffc107;"
+
+        self.status_label.setText(status_message)
+        self.status_label.setStyleSheet(f"color: {status_color};")
+        self.start_time = None
+
+    def _handle_gemini_error(self, error_message):
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        self.logger.error(f"Gemini worker error: {error_message}")
+        QMessageBox.critical(self, "Lỗi Gemini API", error_message)
+
+        self.generated_code = ""
+        self.generated_code_display.setPlainText(f"# Lỗi xảy ra:\n# {error_message}")
+        self.save_button.setEnabled(False)
+        self.copy_button.setEnabled(False)
+        self.generate_button.setEnabled(True)
+        self.progress_bar.setVisible(False)
+        status_text = f"Trạng thái: Lỗi - {error_message} ({elapsed:.1f}s)"
+        if len(status_text) > 150:
+            status_text = status_text[:147] + "..."
+        self.status_label.setText(status_text)
+        self.status_label.setStyleSheet("color: #dc3545;")
+        self.start_time = None
+
+    def _copy_generated_code(self):
+        code_to_copy = self.generated_code_display.toPlainText()
+        if code_to_copy:
+            clipboard = QApplication.clipboard()
+            clipboard.setText(code_to_copy)
+            self.status_label.setText("Trạng thái: Đã sao chép code vào clipboard!")
+            self.status_label.setStyleSheet("color: #17a2b8;")
+            QTimer.singleShot(2000, lambda: self.status_label.setText("Trạng thái: Sẵn sàng") if self.status_label.text().startswith("Trạng thái: Đã sao chép") else None)
+        else:
+            QMessageBox.warning(self, "Chưa có Code", "Không có code nào để sao chép.")
+
+    def _save_algorithm_file(self):
+        if not self.generated_code or self.generated_code.startswith("# --- RAW GEMINI RESPONSE"):
+            QMessageBox.warning(self, "Chưa có Code Hợp Lệ", "Chưa có code hợp lệ được tạo để lưu.")
+            return
+
+        file_name_base = self.file_name_edit.text().strip()
+        if not re.match(r"^[a-zA-Z0-9_]+$", file_name_base):
+            QMessageBox.warning(self, "Tên file không hợp lệ", "Vui lòng kiểm tra lại tên file (chỉ chữ cái, số, gạch dưới) trước khi lưu.")
+            self.tab_widget_internal.setCurrentIndex(0)
+            self.file_name_edit.setFocus()
+            return
+
+        full_file_name = f"{file_name_base}.py"
+        save_path = self.ALGORITHMS_DIR / full_file_name
+
+        if save_path.exists():
+            reply = QMessageBox.question(self, "Ghi Đè File?",
+                                         f"File '{full_file_name}' đã tồn tại trong thư mục '{self.ALGORITHMS_DIR.name}'.\nBạn có muốn ghi đè không?",
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if reply == QMessageBox.No:
+                return
+
+        try:
+            self.ALGORITHMS_DIR.mkdir(parents=True, exist_ok=True)
+            save_path.write_text(self.generated_code, encoding='utf-8')
+            QMessageBox.information(self, "Lưu Thành Công",
+                                    f"Đã lưu thuật toán vào:\n{save_path.resolve()}\n\n"
+                                    "Các danh sách thuật toán sẽ được tự động làm mới.")
+            self.status_label.setText(f"Trạng thái: Đã lưu {full_file_name}")
+            self.status_label.setStyleSheet("color: #28a745;")
+
+            if self.main_app:
+                self.main_app.reload_algorithms()
+                if hasattr(self.main_app, '_refresh_algo_management_page'):
+                    self.main_app._refresh_algo_management_page()
+                self.main_app.update_status(f"Đã lưu và tải lại thuật toán: {full_file_name}")
+
+        except IOError as e:
+            QMessageBox.critical(self, "Lỗi Lưu File", f"Không thể lưu file thuật toán:\n{e}")
+            self.status_label.setText("Trạng thái: Lỗi lưu file")
+            self.status_label.setStyleSheet("color: #dc3545;")
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi Không Xác Định", f"Đã xảy ra lỗi khi lưu file:\n{e}")
+            self.status_label.setText("Trạng thái: Lỗi không xác định khi lưu")
+            self.status_label.setStyleSheet("color: #dc3545;")
 
 
 class OptimizerEmbedded(QWidget):
@@ -542,12 +1256,19 @@ class OptimizerEmbedded(QWidget):
         self.opt_time_limit_spinbox.setFixedWidth(80)
         self.opt_time_limit_spinbox.setToolTip("Giới hạn thời gian chạy tối đa cho một lần tối ưu.")
         settings_layout.addWidget(self.opt_time_limit_spinbox, 4, 1, Qt.AlignLeft)
+        self.delete_old_optimized_files_checkbox = QCheckBox("Xóa file tối ưu cũ khi tìm thấy file tốt hơn")
+        self.delete_old_optimized_files_checkbox.setToolTip(
+            "Nếu được chọn, khi một bộ tham số tối ưu mới tốt hơn được tìm thấy và lưu lại,\n"
+            "các file tối ưu (.py và .json) có điểm số thấp hơn trong cùng thư mục 'success' của thuật toán này sẽ bị xóa."
+        )
+        self.delete_old_optimized_files_checkbox.setChecked(False)
+        settings_layout.addWidget(self.delete_old_optimized_files_checkbox, 5, 0, 1, 3, Qt.AlignLeft)
 
         settings_layout.setColumnStretch(0, 0)
         settings_layout.setColumnStretch(1, 0)
         settings_layout.setColumnStretch(2, 0)
         settings_layout.setColumnStretch(3, 1)
-        settings_layout.setRowStretch(5, 1)
+        settings_layout.setRowStretch(6, 1)
 
         settings_h_layout.addWidget(settings_groupbox, 1)
 
@@ -580,22 +1301,16 @@ class OptimizerEmbedded(QWidget):
         combo_gen_layout.addWidget(self.combo_num_values_spinbox)
         combo_gen_layout.addWidget(QLabel("Số bộ tham số tối đa:"))
         self.combo_max_combinations_spinbox = QSpinBox()
-        self.combo_max_combinations_spinbox.setRange(1, 5000000) # Ví dụ: từ 1 đến 5 triệu
-        self.combo_max_combinations_spinbox.setValue(20000)    # Mặc định là 20,000
-        self.combo_max_combinations_spinbox.setFixedWidth(100) # Điều chỉnh độ rộng nếu cần
+        self.combo_max_combinations_spinbox.setRange(1, 5000000)
+        self.combo_max_combinations_spinbox.setValue(20000)
+        self.combo_max_combinations_spinbox.setFixedWidth(100)
         self.combo_max_combinations_spinbox.setToolTip("Giới hạn số lượng bộ tham số tối đa sẽ được tạo và kiểm tra.")
         combo_gen_layout.addWidget(self.combo_max_combinations_spinbox)
-        # self.combo_method_random_radio = QRadioButton("Random")
-        # self.combo_method_random_radio.setChecked(True)
-        # self.combo_method_adjacent_radio = QRadioButton("Liền Kề")
-        # combo_gen_layout.addWidget(self.combo_method_random_radio)
-        # combo_gen_layout.addWidget(self.combo_method_adjacent_radio)
         combo_gen_layout.addStretch(1)
         mode_outer_layout.addWidget(self.combo_gen_settings_widget)
         self.combo_gen_settings_widget.setEnabled(False)
 
         mode_outer_layout.addStretch(1)
-
         settings_h_layout.addWidget(self.optimization_mode_groupbox, 1)
 
         self.custom_steps_groupbox = QGroupBox("Tùy Chỉnh tham số tối ưu (bước nhảy)")
@@ -623,7 +1338,6 @@ class OptimizerEmbedded(QWidget):
         param_scroll_layout.addWidget(adv_scroll_area)
 
         steps_outer_layout.addWidget(self.param_scroll_widget_container)
-
         settings_h_layout.addWidget(self.custom_steps_groupbox, 2)
 
         self.combination_groupbox = QGroupBox("Kết hợp với Thuật toán +")
@@ -644,7 +1358,6 @@ class OptimizerEmbedded(QWidget):
         self.initial_combo_label.setAlignment(Qt.AlignCenter)
         self.combination_layout.addWidget(self.initial_combo_label)
         combo_outer_layout.addWidget(combo_scroll_area)
-
         settings_h_layout.addWidget(self.combination_groupbox, 1)
 
         control_frame = QWidget()
@@ -672,6 +1385,13 @@ class OptimizerEmbedded(QWidget):
         self.opt_stop_button.clicked.connect(self.stop_optimization)
         self.opt_stop_button.setEnabled(False)
         control_layout.addWidget(self.opt_stop_button)
+        
+        control_layout.addSpacing(20)
+        
+        open_folder_button_control_bar = QPushButton("📂 Mở Thư Mục Tối Ưu")
+        open_folder_button_control_bar.setToolTip("Mở thư mục chứa kết quả tối ưu của thuật toán này.")
+        open_folder_button_control_bar.clicked.connect(self.open_optimize_folder)
+        control_layout.addWidget(open_folder_button_control_bar)
 
         control_layout.addStretch(1)
         top_layout.addWidget(control_frame)
@@ -733,14 +1453,6 @@ class OptimizerEmbedded(QWidget):
         self._setup_log_formats()
         log_outer_layout.addWidget(self.opt_log_text, 1)
 
-        log_button_frame = QWidget()
-        log_button_layout = QHBoxLayout(log_button_frame)
-        log_button_layout.setContentsMargins(0, 0, 0, 0)
-        log_button_layout.addStretch(1)
-        open_folder_button = QPushButton("Mở Thư Mục Tối Ưu")
-        open_folder_button.clicked.connect(self.open_optimize_folder)
-        log_button_layout.addWidget(open_folder_button)
-        log_outer_layout.addWidget(log_button_frame)
 
         layout.addWidget(log_groupbox, 1)
 
@@ -1725,7 +2437,7 @@ class OptimizerEmbedded(QWidget):
             combination_algos_to_use = self._get_selected_combination_algos()
 
         start_d, end_d, time_limit_min = self._validate_common_opt_settings_qt()
-        if start_d is None: # _validate_common_opt_settings_qt trả về None, None, None nếu có lỗi
+        if start_d is None:
             return
 
         final_custom_steps_config = {}
@@ -1734,14 +2446,13 @@ class OptimizerEmbedded(QWidget):
 
         if mode_to_run == 'auto_hill_climb':
             final_custom_steps_config, has_invalid_custom_steps = self._finalize_custom_steps_config_qt(original_params)
-            # Không cần kiểm tra has_invalid_custom_steps ở đây nữa vì nó đã được xử lý trong _finalize_custom_steps_config_qt
             if not numeric_params_check and not any(p_config.get('steps') for p_config in final_custom_steps_config.values() if p_config.get('mode') == 'Custom'):
                  QMessageBox.information(main_window, "Thông Báo", "Thuật toán không có tham số số học và không có bước tùy chỉnh nào được định nghĩa.")
                  return
 
         elif mode_to_run == 'generated_combinations':
             num_values_per_param = self.combo_num_values_spinbox.value()
-            generation_method = "adjacent" # Chỉ còn phương thức "adjacent"
+            generation_method = "adjacent"
             max_combinations_to_generate = self.combo_max_combinations_spinbox.value()
 
             generation_params_for_worker = {
@@ -1755,7 +2466,7 @@ class OptimizerEmbedded(QWidget):
             estimated_total_raw = 1
             numeric_params_count = sum(1 for v in original_params.values() if isinstance(v, (int, float)))
 
-            if not numeric_params_count and num_values_per_param > 0 : # Nếu không có tham số số học nhưng vẫn cố tạo
+            if not numeric_params_count and num_values_per_param > 0 :
                 optimizer_logger.warning("Generated Combinations mode selected, but the algorithm has no numeric parameters to vary.")
                 QMessageBox.information(main_window, "Không có Tham Số Số Học",
                                         "Chế độ 'Tạo Bộ Tham Số' được chọn, nhưng thuật toán này không có tham số dạng số để tạo các biến thể.")
@@ -1767,19 +2478,18 @@ class OptimizerEmbedded(QWidget):
                     if num_values_per_param > 0:
                          if num_values_per_param == 1:
                               estimated_total_raw = 1
-                         # Tính toán số mũ một cách an toàn hơn để tránh OverflowError
                          elif numeric_params_count * math.log(num_values_per_param) < math.log(sys.maxsize):
                               estimated_total_raw = num_values_per_param ** numeric_params_count
                          else:
-                              estimated_total_raw = float('inf') # Nếu quá lớn
-                    else: # num_values_per_param là 0 hoặc âm, không hợp lệ
+                              estimated_total_raw = float('inf')
+                    else:
                         estimated_total_raw = 0
                 except OverflowError:
                      estimated_total_raw = float('inf')
                 except Exception as est_err:
                      optimizer_logger.error(f"Error estimating raw combination count: {est_err}")
-                     estimated_total_raw = -1 # Chỉ báo lỗi ước tính
-            else: # Không có tham số số học
+                     estimated_total_raw = -1
+            else:
                 estimated_total_raw = 0
 
 
@@ -1793,20 +2503,20 @@ class OptimizerEmbedded(QWidget):
                     warning_detail_message_base = (f"Số bộ tham số sẽ được giới hạn ở mức tối đa bạn đã đặt: {max_combinations_to_generate}.\n\n"
                                               f"Việc tạo và kiểm tra {int(actual_combinations_to_test)} bộ tham số")
                     warning_title = "Số Lượng Lớn (Đã Giới Hạn)"
-                else: # estimated_total_raw <= max_combinations_to_generate (và không phải inf)
+                else:
                     actual_combinations_to_test = estimated_total_raw
                     warning_detail_message_base = f"Việc tạo và kiểm tra {int(actual_combinations_to_test)} bộ tham số"
-            else: # Người dùng không đặt giới hạn (hoặc <=0, hoặc không có tham số số học nên estimated_total_raw là 0)
-                if estimated_total_raw == 0: # Không có gì để tạo/test
+            else:
+                if estimated_total_raw == 0:
                     actual_combinations_to_test = 0
                     warning_detail_message_base = "Không có bộ tham số nào được tạo (do không có tham số số học hoặc số giá trị/tham số là 0)."
-                else: # estimated_total_raw > 0 nhưng max_combinations_to_generate không hợp lệ
+                else:
                     display_est_raw = "rất lớn" if estimated_total_raw == float('inf') else f"khoảng {int(estimated_total_raw)}"
                     warning_detail_message_base = f"Việc tạo và kiểm tra {display_est_raw} bộ tham số"
             
-            WARNING_THRESHOLD = 100000 # Ngưỡng để hiển thị cảnh báo, ví dụ 100,000
+            WARNING_THRESHOLD = 100000
 
-            if actual_combinations_to_test == 0 and numeric_params_count > 0: # Có tham số nhưng không tạo được bộ nào
+            if actual_combinations_to_test == 0 and numeric_params_count > 0:
                 QMessageBox.information(main_window, "Không Tạo Bộ Nào",
                                         f"{warning_detail_message_base}\nVui lòng kiểm tra lại 'Số giá trị liền kề/tham số'.")
                 return
@@ -1817,9 +2527,8 @@ class OptimizerEmbedded(QWidget):
                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if reply == QMessageBox.No:
                       return
-            elif estimated_total_raw == -1: # Lỗi khi ước tính
+            elif estimated_total_raw == -1:
                  optimizer_logger.warning("Could not reliably estimate combination count, proceeding without warning.")
-                 # Có thể thêm 1 QMessageBox.information ở đây nếu muốn thông báo cho người dùng
         else:
              QMessageBox.critical(main_window, "Lỗi Chế Độ", f"Chế độ tối ưu không xác định: {mode_to_run}")
              return
@@ -1995,6 +2704,68 @@ class OptimizerEmbedded(QWidget):
         return start_d, end_d, time_limit_min
 
 
+    def _delete_inferior_optimized_files(self, success_dir: Path, current_best_score_tuple: tuple,
+                                         current_best_py_path: Path, current_best_json_path: Path,
+                                         worker_logger, queue_log_func,
+                                         algo_stem_filter: str, prefix_filter: str = "optimized_"):
+        """
+        Deletes optimized .py and .json files in the success_dir if their score
+        is inferior to the current_best_score_tuple.
+        """
+        worker_logger.info(f"Scanning '{success_dir}' to delete inferior files (prefix: '{prefix_filter}', stem: '{algo_stem_filter}'). Best current score: {current_best_score_tuple}")
+        deleted_count = 0
+        try:
+            pattern_to_glob = f"{prefix_filter}{algo_stem_filter}_*.json"
+            worker_logger.debug(f"Glob pattern for deletion scan: '{pattern_to_glob}' in '{success_dir}'")
+
+            for old_json_path in success_dir.glob(pattern_to_glob):
+                if old_json_path.resolve() == current_best_json_path.resolve():
+                    worker_logger.debug(f"Skipping current best JSON file: {old_json_path.name}")
+                    continue
+
+                worker_logger.debug(f"Checking old JSON file: {old_json_path.name}")
+                try:
+                    old_data = json.loads(old_json_path.read_text(encoding='utf-8'))
+                    old_score_tuple_raw = old_data.get("score_tuple")
+
+                    if not isinstance(old_score_tuple_raw, list) or len(old_score_tuple_raw) != 4:
+                        worker_logger.warning(f"Invalid or missing score_tuple in old file {old_json_path.name}. Skipping.")
+                        continue
+                    
+                    old_score_tuple = tuple(old_score_tuple_raw)
+
+                    if old_score_tuple < current_best_score_tuple:
+                        worker_logger.info(f"Old score {old_score_tuple} < Current best {current_best_score_tuple}. Deleting {old_json_path.name}.")
+                        
+                        old_json_path.unlink()
+                        queue_log_func("DEBUG", f"Đã xóa file JSON cũ: {old_json_path.name}", tag="INFO")
+
+                        old_py_path = success_dir / (old_json_path.stem + ".py")
+                        if old_py_path.exists():
+                            old_py_path.unlink()
+                            queue_log_func("DEBUG", f"Đã xóa file PY cũ: {old_py_path.name}", tag="INFO")
+                        else:
+                            worker_logger.warning(f"Corresponding .py file not found for deleted JSON: {old_py_path.name}")
+                        deleted_count += 1
+                    else:
+                        worker_logger.debug(f"Old score {old_score_tuple} >= Current best. Keeping {old_json_path.name}.")
+
+                except json.JSONDecodeError:
+                    worker_logger.warning(f"Could not parse JSON from old file {old_json_path.name}. Skipping.")
+                except FileNotFoundError:
+                    worker_logger.warning(f"File {old_json_path.name} or its .py counterpart disappeared during check. Skipping.")
+                except Exception as e_del_item:
+                    worker_logger.error(f"Error processing/deleting old optimized file {old_json_path.name}: {e_del_item}", exc_info=False)
+            
+            if deleted_count > 0:
+                queue_log_func("INFO", f"Đã xóa {deleted_count} bộ file tối ưu cũ hơn.", tag="BEST")
+            else:
+                worker_logger.info("No inferior files found to delete.")
+
+        except Exception as e_scan:
+            worker_logger.error(f"Error scanning/deleting old optimized files in {success_dir}: {e_scan}", exc_info=True)
+            queue_log_func("ERROR", f"Lỗi khi dọn dẹp file tối ưu cũ: {e_scan}", tag="ERROR")
+
     def _finalize_custom_steps_config_qt(self, original_params):
 
         if self.current_optimization_mode != 'auto_hill_climb':
@@ -2149,6 +2920,32 @@ class OptimizerEmbedded(QWidget):
         optimizer_logger.info(f"Preparing worker thread for mode: {mode}")
         worker_target = None
         worker_args = ()
+
+        delete_old_files_flag = self.delete_old_optimized_files_checkbox.isChecked() if hasattr(self, 'delete_old_optimized_files_checkbox') else False
+        optimizer_logger.info(f"Delete old optimized files flag: {delete_old_files_flag}")
+
+
+        if mode == 'auto_hill_climb':
+            worker_target = self._optimization_worker
+            worker_args = (
+                display_name, start_date, end_date, self.opt_time_limit_sec,
+                custom_steps_config,
+                combination_algos,
+                self.current_best_params,
+                self.current_best_score_tuple,
+                delete_old_files_flag
+            )
+            optimizer_logger.debug("Worker target set to _optimization_worker")
+        elif mode == 'generated_combinations':
+            worker_target = self._combination_optimization_worker
+            worker_args = (
+                display_name, start_date, end_date, self.opt_time_limit_sec,
+                generation_params,
+                combination_algos,
+                self.current_best_params,
+                self.current_best_score_tuple,
+                delete_old_files_flag
+            )
 
         if mode == 'auto_hill_climb':
             worker_target = self._optimization_worker
@@ -2320,6 +3117,11 @@ class OptimizerEmbedded(QWidget):
 
         for name, chk in self.combination_selection_checkboxes.items():
             chk.setEnabled(settings_enabled)
+
+        if hasattr(self, 'delete_old_optimized_files_checkbox'):
+            self.delete_old_optimized_files_checkbox.setEnabled(settings_enabled)
+
+        self.main_app.apply_stylesheet()
 
 
     def _update_optimizer_timer_display(self):
@@ -2502,7 +3304,8 @@ class OptimizerEmbedded(QWidget):
 
     def _optimization_worker(self, target_display_name, start_date, end_date, time_limit_sec,
                              custom_steps_config, combination_algo_names,
-                             initial_best_params=None, initial_best_score_tuple=None):
+                             initial_best_params=None, initial_best_score_tuple=None,
+                             delete_old_files_flag=False):
         start_time = time.time()
         optimizer_worker_logger = logging.getLogger("OptimizerWorker")
         is_resuming = initial_best_params is not None and initial_best_score_tuple is not None
@@ -2836,6 +3639,19 @@ class OptimizerEmbedded(QWidget):
                     try:
                         final_json_path_save.write_text(json.dumps(final_save_data_json, indent=4, ensure_ascii=False), encoding='utf-8')
                         queue_log("BEST", f"Đã lưu kết quả tối ưu vào thư mục: {success_dir_save.relative_to(self.base_dir)}", tag="BEST")
+
+                        if delete_old_files_flag:
+                            optimizer_worker_logger.info("Delete old files flag is True. Attempting to delete inferior files (Auto/Custom mode).")
+                            self._delete_inferior_optimized_files(
+                                success_dir=success_dir_save,
+                                current_best_score_tuple=current_best_score_tuple,
+                                current_best_py_path=final_py_path_save,
+                                current_best_json_path=final_json_path_save,
+                                worker_logger=optimizer_worker_logger,
+                                queue_log_func=queue_log,
+                                algo_stem_filter=base_algo_stem
+                            )
+
                     except Exception as json_save_err_final:
                          queue_log("ERROR", f"Lỗi lưu file JSON kết quả cuối: {json_save_err_final}", tag="ERROR")
                          final_message_worker += "\n(Lỗi lưu file JSON kết quả!)"
@@ -2864,7 +3680,8 @@ class OptimizerEmbedded(QWidget):
                                          generation_params,
                                          combination_algo_names,
                                          initial_best_params=None,
-                                         initial_best_score_tuple=None):
+                                         initial_best_score_tuple=None,
+                                         delete_old_files_flag=False):
         start_time = time.time()
         optimizer_worker_logger = logging.getLogger("OptimizerWorker.Combo")
         optimizer_worker_logger.info(f"Starting Generated Combinations optimization worker. Target: {target_display_name}")
@@ -2940,7 +3757,7 @@ class OptimizerEmbedded(QWidget):
             orig_params_for_gen_combo = generation_params.get('original_params')
             num_values_for_gen_combo = generation_params.get('num_values')
             method_for_gen_combo = generation_params.get('method')
-            max_combinations_limit_worker = generation_params.get('max_combinations') # Lấy giới hạn
+            max_combinations_limit_worker = generation_params.get('max_combinations')
             
             if not orig_params_for_gen_combo or not isinstance(num_values_for_gen_combo, int) or not method_for_gen_combo:
                  raise ValueError("Combo worker missing detailed generation parameters (original_params, num_values, method).")
@@ -2949,7 +3766,7 @@ class OptimizerEmbedded(QWidget):
             generation_start_time_combo = time.time()
             generated_combinations_list = self._generate_parameter_combinations(
                 orig_params_for_gen_combo, num_values_for_gen_combo, method_for_gen_combo,
-                max_combinations_limit=max_combinations_limit_worker # Truyền giới hạn
+                max_combinations_limit=max_combinations_limit_worker
             )
             generation_duration_combo = time.time() - generation_start_time_combo
             optimizer_worker_logger.info(f"Parameter combination generation finished in {generation_duration_combo:.2f} seconds.")
@@ -3135,6 +3952,18 @@ class OptimizerEmbedded(QWidget):
                         final_json_path_combo_save.write_text(json.dumps(final_save_data_json_combo, indent=4, ensure_ascii=False), encoding='utf-8')
                         queue_log("BEST", f"Đã lưu kết quả tối ưu vào thư mục: {success_dir_combo_save.relative_to(self.base_dir)}", tag="BEST")
                         optimizer_worker_logger.info(f"Saved optimization details to JSON file: {final_json_path_combo_save.name}")
+                        if delete_old_files_flag:
+                            optimizer_worker_logger.info("Delete old files flag is True. Attempting to delete inferior files (Combo mode).")
+                            self._delete_inferior_optimized_files(
+                                success_dir=success_dir_combo_save,
+                                current_best_score_tuple=current_best_score_tuple_combo,
+                                current_best_py_path=final_py_path_combo_save,
+                                current_best_json_path=final_json_path_combo_save,
+                                worker_logger=optimizer_worker_logger,
+                                queue_log_func=queue_log,
+                                algo_stem_filter=base_algo_stem_combo,
+                                prefix_filter="optimized_combo_"
+                            )
                     except Exception as json_save_err_combo:
                          queue_log("ERROR", f"Lỗi lưu file JSON kết quả cuối (Generated Combinations): {json_save_err_combo}", tag="ERROR")
                          optimizer_worker_logger.error(f"Failed to save JSON results file (Generated Combinations): {json_save_err_combo}", exc_info=True)
@@ -3813,12 +4642,11 @@ class OptimizerEmbedded(QWidget):
         combinations_iter = itertools.product(*all_param_value_lists)
 
         if max_combinations_limit is not None and max_combinations_limit > 0:
-            # Ước tính tổng số bộ kết hợp trước khi giới hạn (chỉ để log)
             estimated_total_before_limit = 1
             for p_list in all_param_value_lists:
-                if len(p_list) > 0: # Tránh nhân với 0 nếu list rỗng
+                if len(p_list) > 0:
                      estimated_total_before_limit *= len(p_list)
-                elif estimated_total_before_limit == 1 and not all_param_value_lists : # nếu list rỗng đầu tiên và không có list nào khác
+                elif estimated_total_before_limit == 1 and not all_param_value_lists :
                      estimated_total_before_limit = 0
 
 
@@ -3836,9 +4664,6 @@ class OptimizerEmbedded(QWidget):
             param_dict = original_params.copy()
             param_dict.update(dict(zip(param_names_ordered, combo_values)))
             param_combinations_list.append(param_dict)
-            # Log progress nếu cần, nhưng có thể làm chậm nếu số lượng lớn
-            # if len(param_combinations_list) % 1000 == 0:
-            #    optimizer_logger.debug(f"Generated {len(param_combinations_list)} combinations so far...")
 
 
         optimizer_logger.info(f"Total combinations actually generated: {len(param_combinations_list)}")
@@ -3846,44 +4671,33 @@ class OptimizerEmbedded(QWidget):
 
     def _generate_single_parameter_values(self, param_name, original_value, num_values, method):
         """Generates a list of N adjacent values for a single parameter."""
-        # Lưu ý: Biến 'method' được giữ lại trong chữ ký hàm để tương thích với lời gọi
-        # từ _generate_parameter_combinations, nhưng logic bên trong hàm này
-        # giờ đây mặc định là phương thức "adjacent".
         values = set()
         is_float = isinstance(original_value, float)
 
-        if num_values <= 0: # Xử lý trường hợp num_values không hợp lệ
+        if num_values <= 0:
             optimizer_logger.warning(f"num_values for '{param_name}' is {num_values}, returning empty list.")
             return []
-        if num_values == 1: # Nếu chỉ cần 1 giá trị, trả về giá trị gốc
+        if num_values == 1:
             return [original_value]
 
-        # Logic của "adjacent"
         values.add(original_value)
-        # Tính toán số lượng giá trị cần tạo ở mỗi phía của giá trị gốc
-        # Ví dụ: num_values = 5 => 1 gốc, 2 bên trái, 2 bên phải
-        # num_values = 4 => 1 gốc, 1 bên trái, 2 bên phải (hoặc ngược lại tùy ưu tiên)
         num_around = num_values - 1
-        num_increase = math.ceil(num_around / 2.0)  # Ưu tiên tăng nếu num_around lẻ
+        num_increase = math.ceil(num_around / 2.0)
         num_decrease = math.floor(num_around / 2.0)
 
         if is_float:
-            # Bước nhảy cho số thực, dựa trên 2% giá trị gốc hoặc một giá trị nhỏ cố định
             step = max(abs(original_value) * 0.02, 1e-4)
         else:
-            # Bước nhảy cho số nguyên luôn là 1
             step = 1
 
-        # Tạo các giá trị tăng dần
         current_val_inc = original_value
         for _ in range(int(num_increase)):
             current_val_inc += step
             val_to_add = float(f"{current_val_inc:.6g}") if is_float else int(round(current_val_inc))
             values.add(val_to_add)
-            if len(values) >= num_values: # Đảm bảo không tạo quá nhiều nếu có giá trị trùng lặp sớm
+            if len(values) >= num_values:
                 break
 
-        # Tạo các giá trị giảm dần (chỉ khi vẫn cần thêm giá trị)
         if len(values) < num_values:
             current_val_dec = original_value
             for _ in range(int(num_decrease)):
@@ -3893,35 +4707,26 @@ class OptimizerEmbedded(QWidget):
                 if len(values) >= num_values:
                     break
         
-        # Nếu sau cả hai vòng lặp vẫn chưa đủ giá trị (do giá trị gốc quá nhỏ và step làm tròn về 0, hoặc num_values quá lớn)
-        # và is_float=False, thử mở rộng step để đảm bảo đủ giá trị khác nhau
-        # Điều này ít xảy ra hơn với logic step mới cho số nguyên là 1.
-        # Có thể xem xét thêm logic phức tạp hơn nếu cần đảm bảo số lượng giá trị *khác nhau* tuyệt đối.
-        # Hiện tại, nếu num_values > số lượng giá trị khác biệt có thể tạo ra với step hiện tại,
-        # danh sách trả về có thể ít hơn num_values.
 
         final_values = sorted(list(values))
 
-        # Cắt bớt nếu số lượng giá trị khác nhau tạo ra nhiều hơn yêu cầu (hiếm khi xảy ra với logic hiện tại)
         if len(final_values) > num_values:
-            # Ưu tiên giữ lại các giá trị gần giá trị gốc nhất
-            # Tìm index của original_value
             try:
                 orig_idx = final_values.index(original_value)
-            except ValueError: # original_value không có trong list (rất hiếm)
+            except ValueError:
                 orig_idx = len(final_values) // 2
 
             needed_each_side = (num_values -1) // 2
             start_idx = max(0, orig_idx - needed_each_side)
             end_idx = start_idx + num_values
-            if end_idx > len(final_values): # Nếu vượt quá, điều chỉnh lại start_idx
+            if end_idx > len(final_values):
                 end_idx = len(final_values)
                 start_idx = max(0, end_idx - num_values)
             
             final_values = final_values[start_idx:end_idx]
 
 
-        if not final_values and original_value is not None: # Nếu không tạo được giá trị nào, trả về giá trị gốc
+        if not final_values and original_value is not None:
             optimizer_logger.warning(f"Could not generate distinct adjacent values for '{param_name}' around {original_value} with num_values={num_values}. Returning original value.")
             return [original_value]
         elif not final_values:
@@ -3948,10 +4753,11 @@ class SquareQLabel(QLabel):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v5.0)")
+        self.setWindowTitle("Lottery Predictor (v5.1)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
+        self.gemini_creator_tab_instance = None
 
         self.font_family_base = 'Segoe UI'
         self.font_size_base = 10
@@ -4293,7 +5099,7 @@ class LotteryPredictionApp(QMainWindow):
     def _update_system_stats(self):
         if not HAS_PSUTIL or not self.current_process:
             self.ram_usage_label.setText("Ram Sử dụng: N/A")
-            self.cpu_usage_label.setText("CPU (tổng): N/A %") # Sửa lại nhãn ở đây
+            self.cpu_usage_label.setText("CPU (tổng): N/A %")
             self.system_ram_label.setText("Ram Hệ Thống: N/A")
             return
 
@@ -4302,24 +5108,16 @@ class LotteryPredictionApp(QMainWindow):
             ram_usage_mb = mem_info.rss / (1024 * 1024)
             self.ram_usage_label.setText(f"♻️Ram sử dụng: {ram_usage_mb:.1f} MB")
 
-            # === PHẦN SỬA ĐỔI BẮT ĐẦU TẠI ĐÂY ===
-            # Lấy % CPU mà tiến trình đang sử dụng (so với 1 core)
             cpu_percent_process_single_core = self.current_process.cpu_percent(interval=0.1)
             
-            # Lấy tổng số luồng CPU logic của hệ thống
             num_logical_cores = psutil.cpu_count(logical=True)
 
             if num_logical_cores and num_logical_cores > 0:
-                # Tính % CPU của tiến trình so với tổng tài nguyên CPU của hệ thống
                 cpu_percent_system_total = cpu_percent_process_single_core / num_logical_cores
                 self.cpu_usage_label.setText(f"🧠 CPU (tổng): {cpu_percent_system_total:.1f} %")
             else:
-                # Fallback: Nếu không lấy được số core, hiển thị % CPU của tiến trình so với 1 core
-                # hoặc một thông báo lỗi/N/A khác.
-                # Bạn cũng có thể chọn hiển thị "N/A" nếu không có số core.
                 self.cpu_usage_label.setText(f"🧠 CPU (process): {cpu_percent_process_single_core:.1f} %")
                 main_logger.warning("Could not get number of CPU cores. Displaying process CPU % relative to 1 core (fallback).")
-            # === PHẦN SỬA ĐỔI KẾT THÚC TẠI ĐÂY ===
 
             sys_mem = psutil.virtual_memory()
             sys_ram_free_gb = sys_mem.available / (1024 * 1024 * 1024)
@@ -4366,6 +5164,7 @@ class LotteryPredictionApp(QMainWindow):
         self.algo_management_tab_frame = QWidget()
         self.optimizer_tab_frame = QWidget()
         self.tools_tab_frame = QWidget()
+        self.gemini_creator_tab_frame = QWidget()
         self.settings_tab_frame = QWidget()
         self.update_tab_frame = QWidget()
 
@@ -4373,23 +5172,88 @@ class LotteryPredictionApp(QMainWindow):
         self.tab_widget.addTab(self.algo_management_tab_frame, "  Thuật Toán 🛠️")
         self.tab_widget.addTab(self.optimizer_tab_frame, " Tối ưu 🚀 ")
         self.tab_widget.addTab(self.tools_tab_frame, " Công Cụ 🧰")
+        self.tab_widget.addTab(self.gemini_creator_tab_frame, "  Tạo thuật toán 🧠 ")
         self.tab_widget.addTab(self.settings_tab_frame, " Cài Đặt ⚙️")
         self.tab_widget.addTab(self.update_tab_frame, " Update 🔄 ")
+
+        tools_tab_index = -1
+        gemini_tab_index = -1
+        settings_tab_index = -1
+        
+        current_tab_count = self.tab_widget.count()
+        for i in range(current_tab_count):
+            widget_at_i = self.tab_widget.widget(i)
+            if widget_at_i == self.tools_tab_frame:
+                tools_tab_index = i
+            elif widget_at_i == self.gemini_creator_tab_frame:
+                gemini_tab_index = i
+            elif widget_at_i == self.settings_tab_frame:
+                settings_tab_index = i
+
+        main_logger.debug(f"Initial Tab Indices - Tools: {tools_tab_index}, Gemini: {gemini_tab_index}, Settings: {settings_tab_index}")
+
+        if gemini_tab_index != -1:
+            target_insert_position = -1
+            if tools_tab_index != -1:
+                target_insert_position = tools_tab_index + 1
+            elif settings_tab_index != -1:
+                target_insert_position = settings_tab_index
+            
+            if target_insert_position != -1 and target_insert_position != gemini_tab_index:
+                gemini_widget_temp = self.tab_widget.widget(gemini_tab_index)
+                gemini_text_temp = self.tab_widget.tabText(gemini_tab_index)
+                
+                self.tab_widget.removeTab(gemini_tab_index)
+                main_logger.info(f"Removed Gemini tab from index {gemini_tab_index}")
+                
+                
+
+                if settings_tab_index > gemini_tab_index and target_insert_position >= settings_tab_index:
+                     current_settings_index_after_remove = -1
+                     for k_idx in range(self.tab_widget.count()):
+                         if self.tab_widget.widget(k_idx) == self.settings_tab_frame:
+                             current_settings_index_after_remove = k_idx
+                             break
+                     if current_settings_index_after_remove != -1:
+                         target_insert_position = current_settings_index_after_remove
+
+                elif tools_tab_index != -1 and target_insert_position > tools_tab_index:
+                     current_tools_index_after_remove = -1
+                     for k_idx in range(self.tab_widget.count()):
+                         if self.tab_widget.widget(k_idx) == self.tools_tab_frame:
+                             current_tools_index_after_remove = k_idx
+                             break
+                     if current_tools_index_after_remove != -1:
+                         target_insert_position = current_tools_index_after_remove + 1
+
+
+                self.tab_widget.insertTab(target_insert_position, gemini_widget_temp, gemini_text_temp)
+                main_logger.info(f"Re-inserted Gemini tab at index {target_insert_position}")
+
+            elif target_insert_position == -1 :
+                main_logger.warning("Không tìm thấy tab Công cụ hoặc Cài đặt để định vị tab Tạo Algo, tab sẽ ở cuối cùng (hoặc vị trí đã add).")
+            else:
+                main_logger.info("Tab Gemini đã ở đúng vị trí, không cần di chuyển.")
+        else:
+            main_logger.error("Không tìm thấy tab Gemini đã thêm ban đầu để di chuyển.")
+
 
         main_layout.addWidget(self.tab_widget)
 
         self.setup_main_tab()
         self.setup_algo_management_tab()
         self.setup_tools_tab()
+        self.setup_gemini_creator_tab()
         self.setup_settings_tab()
         self.setup_update_tab()
-
 
         try:
             icon_path = self.config_dir / "logo.png"
             if icon_path.exists():
                 self.setWindowIcon(QIcon(str(icon_path)))
                 main_logger.info(f"Icon ứng dụng được đặt từ: {icon_path}")
+            else:
+                main_logger.warning(f"Icon file not found at {icon_path}, skipping setWindowIcon.")
         except Exception as e_icon:
             main_logger.warning(f"Lỗi khi đặt icon ứng dụng: {e_icon}")
 
@@ -4425,7 +5289,46 @@ class LotteryPredictionApp(QMainWindow):
              main_logger.error(f"Error creating directories: {e}", exc_info=True)
 
 
+    def setup_gemini_creator_tab(self):
+        """Thiết lập giao diện cho tab Tạo Thuật Toán bằng Gemini."""
+        main_logger.debug("Setting up Algorithm Gemini Creator tab UI...")
+        if not HAS_GEMINI:
+            layout = QVBoxLayout(self.gemini_creator_tab_frame)
+            error_label = QLabel(
+                "Tính năng tạo thuật toán bằng Gemini yêu cầu thư viện 'google-generativeai'.\n"
+                "Vui lòng cài đặt bằng lệnh: <code>pip install google-generativeai</code><br>"
+                "Sau đó khởi động lại ứng dụng."
+            )
+            error_label.setTextFormat(Qt.RichText)
+            error_label.setAlignment(Qt.AlignCenter)
+            error_label.setWordWrap(True)
+            error_label.setStyleSheet("padding: 20px; color: #dc3545; font-weight: bold;")
+            layout.addWidget(error_label)
+            main_logger.warning("Gemini library not found. Gemini creator tab shows error message.")
+            for i in range(self.tab_widget.count()):
+                if self.tab_widget.widget(i) == self.gemini_creator_tab_frame:
+                    self.tab_widget.setTabEnabled(i, False)
+                    self.tab_widget.setTabText(i, self.tab_widget.tabText(i) + " (Lỗi)")
+                    break
+            return
 
+        try:
+            self.gemini_creator_tab_instance = AlgorithmGeminiBuilderTab(self.gemini_creator_tab_frame, self)
+            layout = QVBoxLayout(self.gemini_creator_tab_frame)
+            layout.setContentsMargins(0,0,0,0)
+            layout.addWidget(self.gemini_creator_tab_instance)
+            main_logger.info("Algorithm Gemini Creator tab initialized successfully.")
+        except Exception as e:
+            main_logger.error(f"Failed to initialize AlgorithmGeminiBuilderTab: {e}", exc_info=True)
+            layout = QVBoxLayout(self.gemini_creator_tab_frame)
+            error_label = QLabel(f"Lỗi khởi tạo tab tạo thuật toán:\n{e}")
+            error_label.setStyleSheet("color: red;")
+            layout.addWidget(error_label)
+            for i in range(self.tab_widget.count()):
+                if self.tab_widget.widget(i) == self.gemini_creator_tab_frame:
+                    self.tab_widget.setTabEnabled(i, False)
+                    self.tab_widget.setTabText(i, self.tab_widget.tabText(i) + " (Lỗi Khởi Tạo)")
+                    break
 
 
     def load_ui_theme_config(self):
@@ -4535,7 +5438,6 @@ class LotteryPredictionApp(QMainWindow):
             COLOR_CARD_BG = '#F0F0F0'
             COLOR_TOP_STATUS_BAR_BG = '#F0F0F0' 
 
-            # Màu cho thanh cuộn
             SCROLLBAR_BG = '#EAEAEA' 
             SCROLLBAR_HANDLE = '#B0B0B0' 
             SCROLLBAR_HANDLE_HOVER = '#909090' 
@@ -4890,7 +5792,6 @@ class LotteryPredictionApp(QMainWindow):
             """
 
             self.setStyleSheet(stylesheet)
-            # style_logger.info("Application stylesheet applied with QScrollBar styles and removed status bar borders.")
 
         except Exception as e:
             style_logger.error(f"Error applying stylesheet: {e}", exc_info=True)
@@ -5275,10 +6176,6 @@ class LotteryPredictionApp(QMainWindow):
         )
         settings_group_layout.addWidget(auto_update_frame, 6, 1, 1, 3)
         
-        # separator = QFrame()
-        # separator.setFrameShape(QFrame.HLine)
-        # separator.setFrameShadow(QFrame.Sunken)
-        # settings_group_layout.addWidget(separator, 7, 0, 1, 4)
 
         settings_group_layout.addWidget(QLabel("🚀 Hiệu năng CPU:"), 7, 0, Qt.AlignLeft | Qt.AlignTop)
 
@@ -5338,10 +6235,6 @@ class LotteryPredictionApp(QMainWindow):
 
         settings_group_layout.addWidget(perf_frame, 7, 1, 1, 3)
 
-        # separator = QFrame()
-        # separator.setFrameShape(QFrame.HLine)
-        # separator.setFrameShadow(QFrame.Sunken)
-        # settings_group_layout.addWidget(separator, 8, 0, 1, 4)
 
         settings_group_layout.addWidget(QLabel("⚙️ Quản lý file cấu hình khác:"), 9, 0, Qt.AlignLeft)
         self.config_listwidget = QListWidget()
@@ -5889,12 +6782,11 @@ class LotteryPredictionApp(QMainWindow):
             
             version_text = self.online_app_version_info.get("version", "N/A")
             date_text = self.online_app_version_info.get("date", "N/A")
-            notes_text = self.online_app_version_info.get("update_notes", "Không có ghi chú.") # notes_text này chứa HTML
+            notes_text = self.online_app_version_info.get("update_notes", "Không có ghi chú.")
             
-            msg_box.setTextFormat(Qt.RichText) # Đảm bảo MessageBox hiểu đây là RichText
+            msg_box.setTextFormat(Qt.RichText)
             msg_box.setText(f" Đã tìm thấy phiên bản mới: <b>{version_text}</b> (Ngày: {date_text})")
             
-            # Sửa đổi ở đây để toàn bộ informativeText là một khối HTML
             informative_html_content = f"<p>Nội dung cập nhật:</p>{notes_text}<p>Bạn có muốn cập nhật ngay không?</p>"
             msg_box.setInformativeText(informative_html_content)
 
@@ -6523,7 +7415,11 @@ class LotteryPredictionApp(QMainWindow):
         online_name = online_algo_data["name"]
         
         filename_from_url_obj = Path(online_url)
-        target_filename = filename_from_url_obj.stem + ".py"
+        if filename_from_url_obj.suffix.lower() == ".pyw":
+            target_filename = filename_from_url_obj.name
+        else:
+            target_filename = filename_from_url_obj.stem + ".py"
+
         save_path = self.algorithms_dir / target_filename
 
         algo_mgmnt_logger.info(f"Downloading algorithm '{online_name}' from {online_url} to {save_path}")
@@ -6539,14 +7435,23 @@ class LotteryPredictionApp(QMainWindow):
                 return
         
         try:
-            if online_code_content is None: 
+            final_code_content_to_write = online_code_content
+            if final_code_content_to_write is None: 
                 import requests
                 response = requests.get(online_url, timeout=15)
                 response.raise_for_status()
-                online_code_content = response.text
+                final_code_content_to_write = response.text
             
-            save_path.write_text(online_code_content, encoding='utf-8')
-            algo_mgmnt_logger.info(f"Successfully downloaded and saved to {save_path}")
+            if isinstance(final_code_content_to_write, str):
+                normalized_content = final_code_content_to_write.replace('\r\n', '\n').replace('\r', '\n')
+            else:
+                algo_mgmnt_logger.error(f"Nội dung tải về cho {online_url} không phải là chuỗi (kiểu: {type(final_code_content_to_write)}). Tải về bị hủy.")
+                QMessageBox.critical(self, "Lỗi Tải", f"Nội dung tải về từ {online_url} không hợp lệ (không phải dạng văn bản).")
+                self.update_status(f"Lỗi tải {target_filename}: nội dung không hợp lệ.")
+                return
+
+            save_path.write_text(normalized_content, encoding='utf-8', newline='\n')
+            algo_mgmnt_logger.info(f"Successfully downloaded and saved to {save_path} with LF newlines.")
             QMessageBox.information(self, "Tải Thành Công", f"Đã tải và lưu thuật toán:\n{target_filename}")
             self.update_status(f"Đã tải thành công: {target_filename}")
             
@@ -6566,7 +7471,6 @@ class LotteryPredictionApp(QMainWindow):
             QMessageBox.critical(self, "Lỗi Không Xác Định", f"Lỗi khi tải {target_filename}:\n{e}")
             self.update_status(f"Lỗi không xác định khi tải {target_filename}.")
 
-
     def _handle_update_online_algorithm(self, online_algo_data: dict, local_algo_path: Path, online_code_content: str | None = None):
         online_url = online_algo_data["url"]
         online_name = online_algo_data["name"]
@@ -6576,11 +7480,20 @@ class LotteryPredictionApp(QMainWindow):
         QApplication.processEvents()
 
         try:
-            if online_code_content is None:
+            final_code_content_to_write = online_code_content
+            if final_code_content_to_write is None:
                 import requests
                 response = requests.get(online_url, timeout=15)
                 response.raise_for_status()
-                online_code_content = response.text
+                final_code_content_to_write = response.text
+
+            if isinstance(final_code_content_to_write, str):
+                normalized_content = final_code_content_to_write.replace('\r\n', '\n').replace('\r', '\n')
+            else:
+                algo_mgmnt_logger.error(f"Nội dung tải về cho {online_url} (cập nhật) không phải là chuỗi (kiểu: {type(final_code_content_to_write)}). Cập nhật bị hủy.")
+                QMessageBox.critical(self, "Lỗi Cập Nhật", f"Nội dung tải về từ {online_url} để cập nhật không hợp lệ (không phải dạng văn bản).")
+                self.update_status(f"Lỗi cập nhật {local_algo_path.name}: nội dung không hợp lệ.")
+                return
 
             backup_path = local_algo_path.with_suffix(local_algo_path.suffix + ".bak")
             try:
@@ -6590,8 +7503,8 @@ class LotteryPredictionApp(QMainWindow):
             except Exception as e_backup:
                 algo_mgmnt_logger.warning(f"Could not create backup for {local_algo_path.name}: {e_backup}")
 
-            local_algo_path.write_text(online_code_content, encoding='utf-8')
-            algo_mgmnt_logger.info(f"Successfully updated {local_algo_path}")
+            local_algo_path.write_text(normalized_content, encoding='utf-8', newline='\n')
+            algo_mgmnt_logger.info(f"Successfully updated {local_algo_path} with LF newlines.")
             QMessageBox.information(self, "Cập Nhật Thành Công", f"Đã cập nhật thuật toán:\n{local_algo_path.name}")
             self.update_status(f"Đã cập nhật thành công: {local_algo_path.name}")
 
@@ -6609,7 +7522,7 @@ class LotteryPredictionApp(QMainWindow):
         except Exception as e:
             algo_mgmnt_logger.error(f"Unexpected error updating {local_algo_path.name}: {e}", exc_info=True)
             QMessageBox.critical(self, "Lỗi Không Xác Định", f"Lỗi khi cập nhật {local_algo_path.name}:\n{e}")
-            self.update_status(f"Lỗi không xác định khi cập nhật {local_algo_path.name}.")            
+            self.update_status(f"Lỗi không xác định khi cập nhật {local_algo_path.name}.")         
 
     def _populate_settings_tab_ui(self):
         """Điền dữ liệu từ config vào các widget trên tab Cài đặt."""
