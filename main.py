@@ -1,6 +1,6 @@
-# Version: 4.9
-# Date: 17/05/2025
-# Update: <br> <b>Tối ưu việc sử dụng CPU và Ram<b>.<br> Người dùng có thể cài đặt sử dụng CPU hiệu quả hơn.<br> Bỏ hiển thị phần nhật ký hoạt động trong Cài đặt.<br> Fix lỗi hiển thị giao diện update
+# Version: 5.0
+# Date: 18/05/2025
+# Update: <br> <b> Update lại phần tối ưu trong mục tối ưu thuật toán, giới hạn bộ số để tránh việc chiếm dụng nhiều ram </b>.<br> Tuỳ chỉnh lại giao diện cho đồng nhất.<br> cập nhật lại phần trạng thái chương trình dưới phần mềm.
 import os
 import sys
 import logging
@@ -28,6 +28,7 @@ import textwrap
 import itertools
 import xml.etree.ElementTree as ET
 from packaging.version import parse as parse_version
+import math
 
 try:
     from PyQt5 import QtWidgets, QtCore, QtGui
@@ -577,11 +578,18 @@ class OptimizerEmbedded(QWidget):
         self.combo_num_values_spinbox.setValue(10)
         self.combo_num_values_spinbox.setFixedWidth(60)
         combo_gen_layout.addWidget(self.combo_num_values_spinbox)
-        self.combo_method_random_radio = QRadioButton("Random")
-        self.combo_method_random_radio.setChecked(True)
-        self.combo_method_adjacent_radio = QRadioButton("Liền Kề")
-        combo_gen_layout.addWidget(self.combo_method_random_radio)
-        combo_gen_layout.addWidget(self.combo_method_adjacent_radio)
+        combo_gen_layout.addWidget(QLabel("Số bộ tham số tối đa:"))
+        self.combo_max_combinations_spinbox = QSpinBox()
+        self.combo_max_combinations_spinbox.setRange(1, 5000000) # Ví dụ: từ 1 đến 5 triệu
+        self.combo_max_combinations_spinbox.setValue(20000)    # Mặc định là 20,000
+        self.combo_max_combinations_spinbox.setFixedWidth(100) # Điều chỉnh độ rộng nếu cần
+        self.combo_max_combinations_spinbox.setToolTip("Giới hạn số lượng bộ tham số tối đa sẽ được tạo và kiểm tra.")
+        combo_gen_layout.addWidget(self.combo_max_combinations_spinbox)
+        # self.combo_method_random_radio = QRadioButton("Random")
+        # self.combo_method_random_radio.setChecked(True)
+        # self.combo_method_adjacent_radio = QRadioButton("Liền Kề")
+        # combo_gen_layout.addWidget(self.combo_method_random_radio)
+        # combo_gen_layout.addWidget(self.combo_method_adjacent_radio)
         combo_gen_layout.addStretch(1)
         mode_outer_layout.addWidget(self.combo_gen_settings_widget)
         self.combo_gen_settings_widget.setEnabled(False)
@@ -1717,7 +1725,7 @@ class OptimizerEmbedded(QWidget):
             combination_algos_to_use = self._get_selected_combination_algos()
 
         start_d, end_d, time_limit_min = self._validate_common_opt_settings_qt()
-        if start_d is None:
+        if start_d is None: # _validate_common_opt_settings_qt trả về None, None, None nếu có lỗi
             return
 
         final_custom_steps_config = {}
@@ -1726,47 +1734,92 @@ class OptimizerEmbedded(QWidget):
 
         if mode_to_run == 'auto_hill_climb':
             final_custom_steps_config, has_invalid_custom_steps = self._finalize_custom_steps_config_qt(original_params)
-            if not numeric_params_check and not final_custom_steps_config:
+            # Không cần kiểm tra has_invalid_custom_steps ở đây nữa vì nó đã được xử lý trong _finalize_custom_steps_config_qt
+            if not numeric_params_check and not any(p_config.get('steps') for p_config in final_custom_steps_config.values() if p_config.get('mode') == 'Custom'):
                  QMessageBox.information(main_window, "Thông Báo", "Thuật toán không có tham số số học và không có bước tùy chỉnh nào được định nghĩa.")
                  return
 
         elif mode_to_run == 'generated_combinations':
             num_values_per_param = self.combo_num_values_spinbox.value()
-            generation_method = "random" if self.combo_method_random_radio.isChecked() else "adjacent"
+            generation_method = "adjacent" # Chỉ còn phương thức "adjacent"
+            max_combinations_to_generate = self.combo_max_combinations_spinbox.value()
+
             generation_params_for_worker = {
                 'original_params': original_params,
                 'num_values': num_values_per_param,
-                'method': generation_method
+                'method': generation_method,
+                'max_combinations': max_combinations_to_generate
             }
-            optimizer_logger.info(f"Preparing to generate {num_values_per_param} values per param using '{generation_method}' method IN WORKER.")
+            optimizer_logger.info(f"Preparing to generate {num_values_per_param} adjacent values per param, max combinations: {max_combinations_to_generate}.")
 
-            estimated_total = 1
+            estimated_total_raw = 1
             numeric_params_count = sum(1 for v in original_params.values() if isinstance(v, (int, float)))
+
+            if not numeric_params_count and num_values_per_param > 0 : # Nếu không có tham số số học nhưng vẫn cố tạo
+                optimizer_logger.warning("Generated Combinations mode selected, but the algorithm has no numeric parameters to vary.")
+                QMessageBox.information(main_window, "Không có Tham Số Số Học",
+                                        "Chế độ 'Tạo Bộ Tham Số' được chọn, nhưng thuật toán này không có tham số dạng số để tạo các biến thể.")
+                return
+
+
             if numeric_params_count > 0:
                 try:
-                    if num_values_per_param > 0 and numeric_params_count > 0:
+                    if num_values_per_param > 0:
                          if num_values_per_param == 1:
-                              estimated_total = 1
+                              estimated_total_raw = 1
+                         # Tính toán số mũ một cách an toàn hơn để tránh OverflowError
                          elif numeric_params_count * math.log(num_values_per_param) < math.log(sys.maxsize):
-                              estimated_total = num_values_per_param ** numeric_params_count
+                              estimated_total_raw = num_values_per_param ** numeric_params_count
                          else:
-                              estimated_total = float('inf')
+                              estimated_total_raw = float('inf') # Nếu quá lớn
+                    else: # num_values_per_param là 0 hoặc âm, không hợp lệ
+                        estimated_total_raw = 0
                 except OverflowError:
-                     estimated_total = float('inf')
+                     estimated_total_raw = float('inf')
                 except Exception as est_err:
-                     optimizer_logger.error(f"Error estimating combination count: {est_err}")
-                     estimated_total = -1
+                     optimizer_logger.error(f"Error estimating raw combination count: {est_err}")
+                     estimated_total_raw = -1 # Chỉ báo lỗi ước tính
+            else: # Không có tham số số học
+                estimated_total_raw = 0
 
-            if estimated_total == float('inf') or estimated_total > 100000:
-                display_estimate = "rất lớn (>100,000)" if estimated_total == float('inf') else f"khoảng {estimated_total}"
-                reply = QMessageBox.question(main_window, "Số Lượng Lớn (Ước Tính)",
-                                                f"Việc tạo và kiểm tra {display_estimate} bộ tham số có thể rất lâu và tốn nhiều bộ nhớ.\n\nBạn có muốn tiếp tục không?",
+
+            actual_combinations_to_test = estimated_total_raw
+            warning_title = "Số Lượng Lớn (Ước Tính)"
+            warning_detail_message_base = ""
+
+            if max_combinations_to_generate > 0:
+                if estimated_total_raw == float('inf') or estimated_total_raw > max_combinations_to_generate:
+                    actual_combinations_to_test = max_combinations_to_generate
+                    warning_detail_message_base = (f"Số bộ tham số sẽ được giới hạn ở mức tối đa bạn đã đặt: {max_combinations_to_generate}.\n\n"
+                                              f"Việc tạo và kiểm tra {int(actual_combinations_to_test)} bộ tham số")
+                    warning_title = "Số Lượng Lớn (Đã Giới Hạn)"
+                else: # estimated_total_raw <= max_combinations_to_generate (và không phải inf)
+                    actual_combinations_to_test = estimated_total_raw
+                    warning_detail_message_base = f"Việc tạo và kiểm tra {int(actual_combinations_to_test)} bộ tham số"
+            else: # Người dùng không đặt giới hạn (hoặc <=0, hoặc không có tham số số học nên estimated_total_raw là 0)
+                if estimated_total_raw == 0: # Không có gì để tạo/test
+                    actual_combinations_to_test = 0
+                    warning_detail_message_base = "Không có bộ tham số nào được tạo (do không có tham số số học hoặc số giá trị/tham số là 0)."
+                else: # estimated_total_raw > 0 nhưng max_combinations_to_generate không hợp lệ
+                    display_est_raw = "rất lớn" if estimated_total_raw == float('inf') else f"khoảng {int(estimated_total_raw)}"
+                    warning_detail_message_base = f"Việc tạo và kiểm tra {display_est_raw} bộ tham số"
+            
+            WARNING_THRESHOLD = 100000 # Ngưỡng để hiển thị cảnh báo, ví dụ 100,000
+
+            if actual_combinations_to_test == 0 and numeric_params_count > 0: # Có tham số nhưng không tạo được bộ nào
+                QMessageBox.information(main_window, "Không Tạo Bộ Nào",
+                                        f"{warning_detail_message_base}\nVui lòng kiểm tra lại 'Số giá trị liền kề/tham số'.")
+                return
+            elif actual_combinations_to_test == float('inf') or actual_combinations_to_test > WARNING_THRESHOLD:
+                full_warning_message = f"{warning_detail_message_base} có thể rất lâu và tốn nhiều bộ nhớ.\n\nBạn có muốn tiếp tục không?"
+                reply = QMessageBox.question(main_window, warning_title,
+                                                full_warning_message,
                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
                 if reply == QMessageBox.No:
                       return
-            elif estimated_total == -1:
+            elif estimated_total_raw == -1: # Lỗi khi ước tính
                  optimizer_logger.warning("Could not reliably estimate combination count, proceeding without warning.")
-
+                 # Có thể thêm 1 QMessageBox.information ở đây nếu muốn thông báo cho người dùng
         else:
              QMessageBox.critical(main_window, "Lỗi Chế Độ", f"Chế độ tối ưu không xác định: {mode_to_run}")
              return
@@ -2887,14 +2940,16 @@ class OptimizerEmbedded(QWidget):
             orig_params_for_gen_combo = generation_params.get('original_params')
             num_values_for_gen_combo = generation_params.get('num_values')
             method_for_gen_combo = generation_params.get('method')
+            max_combinations_limit_worker = generation_params.get('max_combinations') # Lấy giới hạn
             
             if not orig_params_for_gen_combo or not isinstance(num_values_for_gen_combo, int) or not method_for_gen_combo:
                  raise ValueError("Combo worker missing detailed generation parameters (original_params, num_values, method).")
-            optimizer_worker_logger.debug(f"Generation params: num_values={num_values_for_gen_combo}, method='{method_for_gen_combo}'")
+            optimizer_worker_logger.debug(f"Generation params: num_values={num_values_for_gen_combo}, method='{method_for_gen_combo}', max_combinations_limit={max_combinations_limit_worker}")
 
             generation_start_time_combo = time.time()
             generated_combinations_list = self._generate_parameter_combinations(
-                orig_params_for_gen_combo, num_values_for_gen_combo, method_for_gen_combo
+                orig_params_for_gen_combo, num_values_for_gen_combo, method_for_gen_combo,
+                max_combinations_limit=max_combinations_limit_worker # Truyền giới hạn
             )
             generation_duration_combo = time.time() - generation_start_time_combo
             optimizer_worker_logger.info(f"Parameter combination generation finished in {generation_duration_combo:.2f} seconds.")
@@ -2913,7 +2968,8 @@ class OptimizerEmbedded(QWidget):
                  return
             
             queue_status(f"Đã tạo {total_combinations_count} bộ. Bắt đầu kiểm tra...")
-            queue_log("INFO", f"Đã tạo thành công {total_combinations_count} bộ tham số.", tag="GEN_COMBO")
+            queue_log("INFO", f"Đã tạo thành công {total_combinations_count} bộ tham số (giới hạn: {max_combinations_limit_worker if max_combinations_limit_worker else 'không'}).", tag="GEN_COMBO")
+
 
             def run_combined_perf_test_wrapper_combo(params_to_test_in_wrapper, combo_names_in_wrapper, start_dt_in_wrapper, end_dt_in_wrapper):
                  optimizer_worker_logger.debug(f"Calling run_combined_performance_test for params: {list(params_to_test_in_wrapper.keys())}")
@@ -3735,8 +3791,8 @@ class OptimizerEmbedded(QWidget):
         if not QtGui.QDesktopServices.openUrl(url):
             QMessageBox.critical(main_window, "Lỗi", f"Không thể mở thư mục:\n{target_dir_path}")
 
-    def _generate_parameter_combinations(self, original_params, num_values_per_param, method):
-        """Generates parameter value sets and their combinations."""
+    def _generate_parameter_combinations(self, original_params, num_values_per_param, method, max_combinations_limit=None):
+        """Generates parameter value sets and their combinations, with an optional limit."""
         numeric_params = {k: v for k, v in original_params.items() if isinstance(v, (int, float))}
         if not numeric_params:
             optimizer_logger.warning("No numeric parameters found for combination generation.")
@@ -3755,69 +3811,125 @@ class OptimizerEmbedded(QWidget):
             optimizer_logger.debug(f"Generated values for '{name}': {values}")
 
         combinations_iter = itertools.product(*all_param_value_lists)
+
+        if max_combinations_limit is not None and max_combinations_limit > 0:
+            # Ước tính tổng số bộ kết hợp trước khi giới hạn (chỉ để log)
+            estimated_total_before_limit = 1
+            for p_list in all_param_value_lists:
+                if len(p_list) > 0: # Tránh nhân với 0 nếu list rỗng
+                     estimated_total_before_limit *= len(p_list)
+                elif estimated_total_before_limit == 1 and not all_param_value_lists : # nếu list rỗng đầu tiên và không có list nào khác
+                     estimated_total_before_limit = 0
+
+
+            if estimated_total_before_limit > max_combinations_limit:
+                optimizer_logger.info(f"Raw estimated combinations ({estimated_total_before_limit}) > user limit ({max_combinations_limit}). Slicing...")
+            else:
+                optimizer_logger.info(f"Raw estimated combinations ({estimated_total_before_limit}) <= user limit ({max_combinations_limit}). No slicing needed for limit itself.")
+
+            combinations_iter = itertools.islice(combinations_iter, max_combinations_limit)
+            optimizer_logger.info(f"Will generate at most {max_combinations_limit} parameter sets due to user limit.")
+
+
         param_combinations_list = []
         for combo_values in combinations_iter:
             param_dict = original_params.copy()
             param_dict.update(dict(zip(param_names_ordered, combo_values)))
             param_combinations_list.append(param_dict)
+            # Log progress nếu cần, nhưng có thể làm chậm nếu số lượng lớn
+            # if len(param_combinations_list) % 1000 == 0:
+            #    optimizer_logger.debug(f"Generated {len(param_combinations_list)} combinations so far...")
 
-        optimizer_logger.info(f"Total combinations generated: {len(param_combinations_list)}")
+
+        optimizer_logger.info(f"Total combinations actually generated: {len(param_combinations_list)}")
         return param_combinations_list
 
     def _generate_single_parameter_values(self, param_name, original_value, num_values, method):
-        """Generates a list of N values for a single parameter."""
+        """Generates a list of N adjacent values for a single parameter."""
+        # Lưu ý: Biến 'method' được giữ lại trong chữ ký hàm để tương thích với lời gọi
+        # từ _generate_parameter_combinations, nhưng logic bên trong hàm này
+        # giờ đây mặc định là phương thức "adjacent".
         values = set()
         is_float = isinstance(original_value, float)
 
-        if method == "random":
-            deviation = abs(original_value) * 0.2 if abs(original_value) > 1e-3 else 0.5
-            if not is_float:
-                 deviation = max(1, int(round(deviation)))
-            min_val = original_value - deviation
-            max_val = original_value + deviation
+        if num_values <= 0: # Xử lý trường hợp num_values không hợp lệ
+            optimizer_logger.warning(f"num_values for '{param_name}' is {num_values}, returning empty list.")
+            return []
+        if num_values == 1: # Nếu chỉ cần 1 giá trị, trả về giá trị gốc
+            return [original_value]
 
-            values.add(original_value)
+        # Logic của "adjacent"
+        values.add(original_value)
+        # Tính toán số lượng giá trị cần tạo ở mỗi phía của giá trị gốc
+        # Ví dụ: num_values = 5 => 1 gốc, 2 bên trái, 2 bên phải
+        # num_values = 4 => 1 gốc, 1 bên trái, 2 bên phải (hoặc ngược lại tùy ưu tiên)
+        num_around = num_values - 1
+        num_increase = math.ceil(num_around / 2.0)  # Ưu tiên tăng nếu num_around lẻ
+        num_decrease = math.floor(num_around / 2.0)
 
-            while len(values) < num_values:
-                if is_float:
-                    rand_val = random.uniform(min_val, max_val)
-                    rand_val = float(f"{rand_val:.6g}")
-                else:
-                    rand_val = random.randint(int(round(min_val)), int(round(max_val)))
-                values.add(rand_val)
-                if len(values) >= num_values * 5 and len(values) < num_values :
-                    optimizer_logger.warning(f"Struggling to generate {num_values} unique random values for '{param_name}' near {original_value}. Using {len(values)}.")
-                    break
-
-
-        elif method == "adjacent":
-            values.add(original_value)
-            num_each_side = (num_values - 1) // 2
-            num_increase = num_each_side + ((num_values - 1) % 2)
-            num_decrease = num_each_side
-
-            if is_float:
-                step = max(abs(original_value) * 0.02, 1e-4)
-            else:
-                step = 1
-
-            current_val = original_value
-            for _ in range(num_increase):
-                current_val += step
-                val_to_add = float(f"{current_val:.6g}") if is_float else int(round(current_val))
-                values.add(val_to_add)
-
-            current_val = original_value
-            for _ in range(num_decrease):
-                current_val -= step
-                val_to_add = float(f"{current_val:.6g}") if is_float else int(round(current_val))
-                values.add(val_to_add)
-
+        if is_float:
+            # Bước nhảy cho số thực, dựa trên 2% giá trị gốc hoặc một giá trị nhỏ cố định
+            step = max(abs(original_value) * 0.02, 1e-4)
         else:
-            optimizer_logger.error(f"Unknown generation method: {method}")
+            # Bước nhảy cho số nguyên luôn là 1
+            step = 1
+
+        # Tạo các giá trị tăng dần
+        current_val_inc = original_value
+        for _ in range(int(num_increase)):
+            current_val_inc += step
+            val_to_add = float(f"{current_val_inc:.6g}") if is_float else int(round(current_val_inc))
+            values.add(val_to_add)
+            if len(values) >= num_values: # Đảm bảo không tạo quá nhiều nếu có giá trị trùng lặp sớm
+                break
+
+        # Tạo các giá trị giảm dần (chỉ khi vẫn cần thêm giá trị)
+        if len(values) < num_values:
+            current_val_dec = original_value
+            for _ in range(int(num_decrease)):
+                current_val_dec -= step
+                val_to_add = float(f"{current_val_dec:.6g}") if is_float else int(round(current_val_dec))
+                values.add(val_to_add)
+                if len(values) >= num_values:
+                    break
+        
+        # Nếu sau cả hai vòng lặp vẫn chưa đủ giá trị (do giá trị gốc quá nhỏ và step làm tròn về 0, hoặc num_values quá lớn)
+        # và is_float=False, thử mở rộng step để đảm bảo đủ giá trị khác nhau
+        # Điều này ít xảy ra hơn với logic step mới cho số nguyên là 1.
+        # Có thể xem xét thêm logic phức tạp hơn nếu cần đảm bảo số lượng giá trị *khác nhau* tuyệt đối.
+        # Hiện tại, nếu num_values > số lượng giá trị khác biệt có thể tạo ra với step hiện tại,
+        # danh sách trả về có thể ít hơn num_values.
+
+        final_values = sorted(list(values))
+
+        # Cắt bớt nếu số lượng giá trị khác nhau tạo ra nhiều hơn yêu cầu (hiếm khi xảy ra với logic hiện tại)
+        if len(final_values) > num_values:
+            # Ưu tiên giữ lại các giá trị gần giá trị gốc nhất
+            # Tìm index của original_value
+            try:
+                orig_idx = final_values.index(original_value)
+            except ValueError: # original_value không có trong list (rất hiếm)
+                orig_idx = len(final_values) // 2
+
+            needed_each_side = (num_values -1) // 2
+            start_idx = max(0, orig_idx - needed_each_side)
+            end_idx = start_idx + num_values
+            if end_idx > len(final_values): # Nếu vượt quá, điều chỉnh lại start_idx
+                end_idx = len(final_values)
+                start_idx = max(0, end_idx - num_values)
+            
+            final_values = final_values[start_idx:end_idx]
+
+
+        if not final_values and original_value is not None: # Nếu không tạo được giá trị nào, trả về giá trị gốc
+            optimizer_logger.warning(f"Could not generate distinct adjacent values for '{param_name}' around {original_value} with num_values={num_values}. Returning original value.")
+            return [original_value]
+        elif not final_values:
+            optimizer_logger.error(f"Failed to generate any values for '{param_name}'. Returning empty list.")
             return []
 
-        return sorted(list(values))
+
+        return final_values
 
 class SquareQLabel(QLabel):
     def __init__(self, *args, **kwargs):
@@ -3836,7 +3948,7 @@ class SquareQLabel(QLabel):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v4.9)")
+        self.setWindowTitle("Lottery Predictor (v5.0)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
@@ -3897,7 +4009,7 @@ class LotteryPredictionApp(QMainWindow):
         self.algo_count_label = QLabel("Thuật toán: 0")
         self.tool_count_label = QLabel("Công cụ: 0")
         self.ram_usage_label = QLabel("Ram sử dụng: N/A MB")
-        self.cpu_usage_label = QLabel("CPU sử dụng (1 core): N/A %")
+        self.cpu_usage_label = QLabel("CPU (tổng): N/A %")
         self.system_ram_label = QLabel("Ram hệ thống: N/A GB")
 
         self.ram_usage_label.setStyleSheet("color: green;")
@@ -4168,35 +4280,51 @@ class LotteryPredictionApp(QMainWindow):
         spacer = QLabel(" ⭐ ")
 
         self.bottom_status_bar.addPermanentWidget(self.algo_count_label)
-        self.bottom_status_bar.addPermanentWidget(QLabel(" ⭐ "))
+        self.bottom_status_bar.addPermanentWidget(QLabel("   "))
         self.bottom_status_bar.addPermanentWidget(self.tool_count_label)
-        self.bottom_status_bar.addPermanentWidget(QLabel(" ⭐ "))
+        self.bottom_status_bar.addPermanentWidget(QLabel("   "))
         self.bottom_status_bar.addPermanentWidget(self.ram_usage_label)
-        self.bottom_status_bar.addPermanentWidget(QLabel(" ⭐ "))
+        self.bottom_status_bar.addPermanentWidget(QLabel("   "))
         self.bottom_status_bar.addPermanentWidget(self.cpu_usage_label)
-        self.bottom_status_bar.addPermanentWidget(QLabel(" (⭐ ) "))
+        self.bottom_status_bar.addPermanentWidget(QLabel("   "))
         self.bottom_status_bar.addPermanentWidget(self.system_ram_label)
         main_logger.info("Bottom status bar with system stats initialized.")
 
     def _update_system_stats(self):
         if not HAS_PSUTIL or not self.current_process:
             self.ram_usage_label.setText("Ram Sử dụng: N/A")
-            self.cpu_usage_label.setText("CPU Sử dụng (1 core): N/A")
+            self.cpu_usage_label.setText("CPU (tổng): N/A %") # Sửa lại nhãn ở đây
             self.system_ram_label.setText("Ram Hệ Thống: N/A")
             return
 
         try:
             mem_info = self.current_process.memory_info()
             ram_usage_mb = mem_info.rss / (1024 * 1024)
-            self.ram_usage_label.setText(f"Ram sử dụng: {ram_usage_mb:.1f} MB")
+            self.ram_usage_label.setText(f"♻️Ram sử dụng: {ram_usage_mb:.1f} MB")
 
-            cpu_percent = self.current_process.cpu_percent(interval=0.1)
-            self.cpu_usage_label.setText(f"CPU sử dụng (1 core): {cpu_percent:.1f} %")
+            # === PHẦN SỬA ĐỔI BẮT ĐẦU TẠI ĐÂY ===
+            # Lấy % CPU mà tiến trình đang sử dụng (so với 1 core)
+            cpu_percent_process_single_core = self.current_process.cpu_percent(interval=0.1)
+            
+            # Lấy tổng số luồng CPU logic của hệ thống
+            num_logical_cores = psutil.cpu_count(logical=True)
+
+            if num_logical_cores and num_logical_cores > 0:
+                # Tính % CPU của tiến trình so với tổng tài nguyên CPU của hệ thống
+                cpu_percent_system_total = cpu_percent_process_single_core / num_logical_cores
+                self.cpu_usage_label.setText(f"🧠 CPU (tổng): {cpu_percent_system_total:.1f} %")
+            else:
+                # Fallback: Nếu không lấy được số core, hiển thị % CPU của tiến trình so với 1 core
+                # hoặc một thông báo lỗi/N/A khác.
+                # Bạn cũng có thể chọn hiển thị "N/A" nếu không có số core.
+                self.cpu_usage_label.setText(f"🧠 CPU (process): {cpu_percent_process_single_core:.1f} %")
+                main_logger.warning("Could not get number of CPU cores. Displaying process CPU % relative to 1 core (fallback).")
+            # === PHẦN SỬA ĐỔI KẾT THÚC TẠI ĐÂY ===
 
             sys_mem = psutil.virtual_memory()
             sys_ram_free_gb = sys_mem.available / (1024 * 1024 * 1024)
             sys_ram_total_gb = sys_mem.total / (1024 * 1024 * 1024)
-            self.system_ram_label.setText(f"Ram hệ thống: {sys_ram_free_gb:.1f}/{sys_ram_total_gb:.1f} GB")
+            self.system_ram_label.setText(f"🪟 Ram hệ thống: {sys_ram_free_gb:.1f}/{sys_ram_total_gb:.1f} GB")
 
         except psutil.NoSuchProcess:
             main_logger.warning("Process not found for psutil, stopping system stats updates.")
@@ -4400,16 +4528,22 @@ class LotteryPredictionApp(QMainWindow):
             COLOR_BG_HIT = '#d4edda'; COLOR_BG_SPECIAL = '#fff3cd'
             COLOR_ACCENT_PURPLE = '#6f42c1'; COLOR_TOOLTIP_BG = '#FFFFE0'
             COLOR_DISABLED_BG = '#e9ecef'; COLOR_DISABLED_FG = '#6c757d'; COLOR_BORDER = '#ced4da'
-            COLOR_TAB_FG = COLOR_SUCCESS_DARK; COLOR_TAB_SELECTED_FG = COLOR_PRIMARY_DARK
-            COLOR_TAB_BG = COLOR_BG_LIGHT; COLOR_TAB_SELECTED_BG = COLOR_BG_WHITE
-            COLOR_TAB_INACTIVE_BG = '#E9E9E9'
+            COLOR_TAB_SELECTED_FG = COLOR_PRIMARY_DARK
+            COLOR_TAB_SELECTED_BG = COLOR_BG_WHITE
+            
             PB_TROUGH = COLOR_DISABLED_BG
             COLOR_CARD_BG = '#F0F0F0'
-            COLOR_TOP_STATUS_BAR_BG = '#F0F0F0'
+            COLOR_TOP_STATUS_BAR_BG = '#F0F0F0' 
+
+            # Màu cho thanh cuộn
+            SCROLLBAR_BG = '#EAEAEA' 
+            SCROLLBAR_HANDLE = '#B0B0B0' 
+            SCROLLBAR_HANDLE_HOVER = '#909090' 
+            SCROLLBAR_HANDLE_PRESSED = '#707070'
 
             stylesheet = f"""
                 QMainWindow {{
-                    background-color: {COLOR_BG_LIGHT};
+                    background-color: {COLOR_TOP_STATUS_BAR_BG}; 
                 }}
                 QWidget {{
                     color: {COLOR_TEXT_DARK};
@@ -4420,52 +4554,71 @@ class LotteryPredictionApp(QMainWindow):
                 /* ---- CSS CHO THANH TRẠNG THÁI MỚI Ở TRÊN ---- */
                 QToolBar#TopStatusToolBar {{
                     background-color: {COLOR_TOP_STATUS_BAR_BG}; 
-                    border-bottom: 1px solid {COLOR_BORDER}; 
+                    /* border-bottom: 1px solid {COLOR_BORDER}; */ /* ĐÃ BỎ VIỀN DƯỚI */
                     border-top: none;
                     border-left: none;
                     border-right: none;
-                    padding: 5px 7px; /* Chút padding cho toolbar */
-                    min-height: 30px; /* Chiều cao tối thiểu cho toolbar */
+                    padding: 5px 7px; 
+                    min-height: 30px; 
                 }}
                 QLabel#StatusBarLabel {{ 
                      padding: 5px 7px; 
-                     /* Font và size sẽ được QFont kế thừa hoặc đặt riêng nếu muốn */
                 }}
-                /* Các style trạng thái cụ thể cho StatusBarLabel */
                 QLabel#StatusBarLabel[status="error"] {{ color: {COLOR_DANGER}; font-weight: bold; }}
                 QLabel#StatusBarLabel[status="success"] {{ color: {COLOR_SUCCESS}; font-weight: bold; }}
                 QLabel#StatusBarLabel[status="info"] {{ color: {COLOR_INFO}; }}
-                QLabel#StatusBarLabel {{ /* Default, ghi đè style status="info" nếu cần khác */
+                QLabel#StatusBarLabel {{ 
                     color: {COLOR_SECONDARY};
                 }}
                 /* ---- KẾT THÚC CSS CHO THANH TRẠNG THÁI MỚI ---- */
 
-                QTabWidget::pane {{
+                /* ---- CSS CHO THANH TRẠNG THÁI DƯỚI CÙNG ---- */
+                QStatusBar {{
+                    background-color: {COLOR_TOP_STATUS_BAR_BG};
+                    color: {COLOR_TEXT_DARK}; 
+                    /* border-top: 1px solid {COLOR_BORDER}; */ /* ĐÃ BỎ VIỀN TRÊN */
+                }}
+                QStatusBar::item {{
+                    border: none; 
+                }}
+                /* ---- KẾT THÚC CSS CHO THANH TRẠNG THÁI DƯỚI CÙNG ---- */
+
+                /* ---- BẮT ĐẦU ĐIỀU CHỈNH QTabWidget ---- */
+                QTabWidget#MainTabWidget::pane {{ 
                     border: 1px solid {COLOR_BORDER};
                     border-top: none; 
-                    background: {COLOR_BG_WHITE};
+                    background: {COLOR_BG_WHITE}; 
                 }}
-                QTabBar::tab {{
-                    background: {COLOR_TAB_INACTIVE_BG};
-                    color: {COLOR_TAB_FG};
+
+                QTabWidget#MainTabWidget QTabBar {{ 
+                    background-color: {COLOR_BG_WHITE}; 
+                }}
+
+                QTabWidget#MainTabWidget QTabBar::tab {{ 
+                    background: {COLOR_TOP_STATUS_BAR_BG}; 
+                    color: {COLOR_SECONDARY};             
                     border: 1px solid {COLOR_BORDER};
-                    border-bottom: none;
-                    padding: 6px 12px;
+                    border-bottom: none; 
+                    padding: 6px 12px;   
                     font-weight: bold;
-                    margin-right: 1px;
-                    border-top-left-radius: 4px;
+                    margin-right: 1px;   
+                    border-top-left-radius: 4px;  
                     border-top-right-radius: 4px;
                 }}
-                QTabBar::tab:selected {{
-                    background: {COLOR_TAB_SELECTED_BG};
-                    color: {COLOR_TAB_SELECTED_FG};
+
+                QTabWidget#MainTabWidget QTabBar::tab:selected {{ 
+                    background: {COLOR_TAB_SELECTED_BG}; 
+                    color: {COLOR_TAB_SELECTED_FG}; 
                     border-color: {COLOR_BORDER};
                     border-bottom-color: {COLOR_TAB_SELECTED_BG}; 
                     margin-bottom: -1px; 
                 }}
-                QTabBar::tab:!selected:hover {{
-                    background: #E0E0E0;
+
+                QTabWidget#MainTabWidget QTabBar::tab:!selected:hover {{
+                    background: #E0E0E0; 
+                    color: {COLOR_TEXT_DARK}; 
                 }}
+                /* ---- KẾT THÚC ĐIỀU CHỈNH QTabWidget ---- */
 
                 QGroupBox {{
                     font-weight: bold;
@@ -4652,6 +4805,57 @@ class LotteryPredictionApp(QMainWindow):
                      background-color: {COLOR_BG_WHITE}; 
                  }}
 
+                /* ---- CSS MỚI CHO QScrollBar ---- */
+                QScrollBar:vertical {{
+                    border: 1px solid {COLOR_BORDER};
+                    background: {SCROLLBAR_BG};      
+                    width: 15px;                     
+                    margin: 0px 0px 0px 0px;         
+                }}
+                QScrollBar::handle:vertical {{
+                    background: {SCROLLBAR_HANDLE};       
+                    min-height: 25px;                
+                    border-radius: 4px;              
+                }}
+                QScrollBar::handle:vertical:hover {{
+                    background: {SCROLLBAR_HANDLE_HOVER}; 
+                }}
+                QScrollBar::handle:vertical:pressed {{
+                    background: {SCROLLBAR_HANDLE_PRESSED};
+                }}
+                QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ 
+                    border: none;
+                    background: none;
+                    height: 0px; 
+                    subcontrol-position: top;
+                    subcontrol-origin: margin;
+                }}
+                
+                QScrollBar:horizontal {{
+                    border: 1px solid {COLOR_BORDER};
+                    background: {SCROLLBAR_BG};
+                    height: 15px;
+                    margin: 0px 0px 0px 0px;
+                }}
+                QScrollBar::handle:horizontal {{
+                    background: {SCROLLBAR_HANDLE};
+                    min-width: 25px;
+                    border-radius: 4px;
+                }}
+                QScrollBar::handle:horizontal:hover {{
+                    background: {SCROLLBAR_HANDLE_HOVER};
+                }}
+                QScrollBar::handle:horizontal:pressed {{
+                    background: {SCROLLBAR_HANDLE_PRESSED};
+                }}
+                QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ 
+                    border: none;
+                    background: none;
+                    width: 0px; 
+                    subcontrol-position: left;
+                    subcontrol-origin: margin;
+                }}
+                /* ---- KẾT THÚC CSS CHO QScrollBar ---- */
 
 
                 QListWidget {{
@@ -4678,16 +4882,15 @@ class LotteryPredictionApp(QMainWindow):
                      border-radius: 3px;
                  }}
 
-                /* ADDED: Specific style for taller URL LineEdits in Settings */
                 QLineEdit#SettingsUrlLineEdit {{
-                    padding-top: 6px;    /* Increase top padding */
-                    padding-bottom: 6px; /* Increase bottom padding */
-                    min-height: 28px;    /* Ensure minimum height accommodates new padding and font */
+                    padding-top: 6px;    
+                    padding-bottom: 6px; 
+                    min-height: 28px;    
                 }}
             """
 
             self.setStyleSheet(stylesheet)
-            style_logger.info("Application stylesheet applied with new top status bar styles.")
+            # style_logger.info("Application stylesheet applied with QScrollBar styles and removed status bar borders.")
 
         except Exception as e:
             style_logger.error(f"Error applying stylesheet: {e}", exc_info=True)
@@ -5072,10 +5275,10 @@ class LotteryPredictionApp(QMainWindow):
         )
         settings_group_layout.addWidget(auto_update_frame, 6, 1, 1, 3)
         
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        settings_group_layout.addWidget(separator, 7, 0, 1, 4)
+        # separator = QFrame()
+        # separator.setFrameShape(QFrame.HLine)
+        # separator.setFrameShadow(QFrame.Sunken)
+        # settings_group_layout.addWidget(separator, 7, 0, 1, 4)
 
         settings_group_layout.addWidget(QLabel("🚀 Hiệu năng CPU:"), 7, 0, Qt.AlignLeft | Qt.AlignTop)
 
@@ -5135,10 +5338,10 @@ class LotteryPredictionApp(QMainWindow):
 
         settings_group_layout.addWidget(perf_frame, 7, 1, 1, 3)
 
-        separator = QFrame()
-        separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        settings_group_layout.addWidget(separator, 8, 0, 1, 4)
+        # separator = QFrame()
+        # separator.setFrameShape(QFrame.HLine)
+        # separator.setFrameShadow(QFrame.Sunken)
+        # settings_group_layout.addWidget(separator, 8, 0, 1, 4)
 
         settings_group_layout.addWidget(QLabel("⚙️ Quản lý file cấu hình khác:"), 9, 0, Qt.AlignLeft)
         self.config_listwidget = QListWidget()
@@ -7801,7 +8004,7 @@ class LotteryPredictionApp(QMainWindow):
         self.update_status(status_msg)
 
         if hasattr(self, 'algo_count_label'):
-            self.algo_count_label.setText(f"Số lượng thuật toán: {count_success}")
+            self.algo_count_label.setText(f"🛰Số lượng thuật toán: {count_success}")
 
         if count_failed > 0 and count_success > 0:
             QMessageBox.warning(self, "Lỗi Tải Thuật Toán", f"Đã xảy ra lỗi khi tải {count_failed} file thuật toán.\nKiểm tra file log để biết chi tiết.")
@@ -9854,7 +10057,7 @@ class LotteryPredictionApp(QMainWindow):
         self.update_status(status_msg)
 
         if hasattr(self, 'tool_count_label'):
-            self.tool_count_label.setText(f"Số lượng công cụ: {count_success}")
+            self.tool_count_label.setText(f"🛠Số lượng công cụ: {count_success}")
 
         if count_failed > 0:
             QMessageBox.warning(self, "Lỗi Tải Công Cụ", f"Đã xảy ra lỗi khi tải {count_failed} file công cụ.\nKiểm tra file log để biết chi tiết.")
