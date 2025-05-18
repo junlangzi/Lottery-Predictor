@@ -1,6 +1,6 @@
 # Version: 5.1
 # Date: 18/05/2025
-# Update: <br><b> Cập nhật phần tạo thuật toán online trực tiếp qua Gemini API </b><br>Tuỳ chỉnh chế độ tối ưu thuật toán, thêm lựa chọn xoá thuật toán cũ khi tìm thấy thuật toán có thông số tốt hơn.<br>Di chuyển nút Mở thư mục tối ưu lên trên để mở rộng không gian cho nhật ký tối ưu.<br> 
+# Update: <br><b> Cập nhật phần tạo thuật toán online trực tiếp qua Gemini API </b><br>Tuỳ chỉnh chế độ tối ưu thuật toán, thêm lựa chọn xoá thuật toán cũ khi tìm thấy thuật toán có thông số tốt hơn.<br>Di chuyển nút Mở thư mục tối ưu lên trên để mở rộng không gian cho nhật ký tối ưu.<br> Sửa lỗi tải thuật toán online trên server.
 import os
 import sys
 import logging
