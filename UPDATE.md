@@ -1,5 +1,23 @@
 # Update list
 
+
+### 17/05/2025
+
+**Update ver 4.9**
+
+Tối ưu việc sử dụng Ram và CPU
+
+Tuỳ chỉnh tài nguyên CPU của chương trình
+
+Bỏ hiển thị phần nhật ký hoạt động trong Cài đặt
+
+Fix lỗi hiển thị giao diện update popup
+
+<br>
+
+
+
+
 ### 16/05/2025
 
 **Update ver 4.8**
