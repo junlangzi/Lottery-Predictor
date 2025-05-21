@@ -1,6 +1,38 @@
 # Update list
 
 
+### 18/05/2025
+
+**Update ver 5.2**
+
+Fix 1 số bug tiềm tàng, sửa lỗi trùng lặp code
+Sủa lại giao diện, gộp các phần trùng lặp, làm mới tab thuật toán.
+Chuyển tab tạo thuật toán bằng Gemini vô tab Thuật toán.
+Thêm thanh trạng thái check server data và server update online.
+Tuỳ chỉnh lại tab Update!
+
+<br>
+
+
+### 18/05/2025
+
+**Update ver 5.1**
+
+Cập nhật phần tạo thuật toán online trực tiếp qua Gemini API 
+Tuỳ chỉnh chế độ tối ưu thuật toán, thêm lựa chọn xoá thuật toán cũ khi tìm thấy thuật toán có thông số tốt hơn.
+Di chuyển nút Mở thư mục tối ưu lên trên để mở rộng không gian cho nhật ký tối ưu.
+Sửa lỗi tải thuật toán online trên server.
+
+
+**Update ver 5.0**
+
+Update lại phần tối ưu trong mục tối ưu thuật toán, giới hạn bộ số để tránh việc chiếm dụng nhiều ram </b>.<br> Tuỳ chỉnh lại giao diện cho đồng nhất.<br> cập nhật lại phần trạng thái chương trình dưới phần mềm.
+Cập nhật phần tạo thuật toán online trực tiếp qua Gemini API 
+Tuỳ chỉnh chế độ tối ưu thuật toán, thêm lựa chọn xoá thuật toán cũ khi tìm thấy thuật toán có thông số tốt hơn.
+Di chuyển nút Mở thư mục tối ưu lên trên để mở rộng không gian cho nhật ký tối ưu.
+
+<br>
+
 ### 17/05/2025
 
 **Update ver 4.9**
