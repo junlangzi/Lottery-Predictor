@@ -1,6 +1,6 @@
-# Version: 5.1
-# Date: 18/05/2025
-# Update: <br><b> Cập nhật phần tạo thuật toán online trực tiếp qua Gemini API </b><br>Tuỳ chỉnh chế độ tối ưu thuật toán, thêm lựa chọn xoá thuật toán cũ khi tìm thấy thuật toán có thông số tốt hơn.<br>Di chuyển nút Mở thư mục tối ưu lên trên để mở rộng không gian cho nhật ký tối ưu.<br> Sửa lỗi tải thuật toán online trên server.
+# Version: 5.2
+# Date: 21/05/2025
+# Update: <br><b>Fix 1 số bug tiềm tàng, sửa lỗi trùng lặp code</b>.<br>Sủa lại giao diện, gộp các phần trùng lặp, làm mới tab thuật toán.<br>Chuyển tab tạo thuật toán bằng Gemini vô tab Thuật toán.<br>Thêm thanh trạng thái check server data và server update online.<br>Tuỳ chỉnh lại tab Update!
 import os
 import sys
 import logging
@@ -93,6 +93,69 @@ except ImportError:
 
 base_dir_for_log = Path(__file__).parent.resolve()
 log_file_path = base_dir_for_log / "lottery_app_qt.log"
+
+
+class ServerStatusCheckWorker(QObject):
+    status_updated_signal = pyqtSignal(str, bool)
+    finished_checking_signal = pyqtSignal()
+
+    def __init__(self, main_app_ref):
+        super().__init__()
+        self.main_app = main_app_ref
+        self.logger = logging.getLogger("ServerStatusWorker")
+
+    @pyqtSlot()
+    def run_check(self):
+        self.logger.info("Bắt đầu kiểm tra trạng thái server (trong Worker)...")
+
+
+        data_sync_url_from_config = self.main_app.config.get('DATA', 'sync_url', fallback="https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/data/xsmb-2-digits.json")
+        data_sync_url = data_sync_url_from_config
+
+        if hasattr(self.main_app, 'config_sync_url_edit') and self.main_app.config_sync_url_edit.text().strip():
+            data_sync_url = self.main_app.config_sync_url_edit.text().strip()
+            self.logger.debug(f"Sử dụng Data Sync URL từ tab Cài đặt: {data_sync_url}")
+        elif hasattr(self.main_app, 'sync_url_input') and self.main_app.sync_url_input.text().strip():
+            data_sync_url = self.main_app.sync_url_input.text().strip()
+            self.logger.debug(f"Sử dụng Data Sync URL từ tab Main: {data_sync_url}")
+        else:
+            self.logger.debug(f"Sử dụng Data Sync URL từ file config/mặc định: {data_sync_url}")
+
+
+        update_url_default = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/main.py"
+        update_url = update_url_default
+
+        if hasattr(self.main_app, 'update_file_url_edit') and self.main_app.update_file_url_edit.text().strip():
+            update_url = self.main_app.update_file_url_edit.text().strip()
+            self.logger.debug(f"Sử dụng Update URL từ tab Update: {update_url}")
+        else:
+            self.logger.debug(f"Sử dụng Update URL mặc định: {update_url}")
+
+
+        if data_sync_url != self.main_app._last_data_sync_url_checked or self.main_app._data_sync_server_online is None:
+            self.logger.info(f"Kiểm tra Data Sync URL: {data_sync_url}")
+            is_online = self.main_app._check_url_connectivity(data_sync_url)
+            self.main_app._data_sync_server_online = is_online
+            self.main_app._last_data_sync_url_checked = data_sync_url
+            self.status_updated_signal.emit("Data Sync", is_online)
+        else:
+            self.logger.debug(f"Data Sync URL không đổi ({data_sync_url}), sử dụng trạng thái đã biết: {self.main_app._data_sync_server_online}")
+            self.status_updated_signal.emit("Data Sync", self.main_app._data_sync_server_online if self.main_app._data_sync_server_online is not None else False)
+
+
+        if update_url != self.main_app._last_update_url_checked or self.main_app._update_server_online is None:
+            self.logger.info(f"Kiểm tra Update URL: {update_url}")
+            is_online = self.main_app._check_url_connectivity(update_url)
+            self.main_app._update_server_online = is_online
+            self.main_app._last_update_url_checked = update_url
+            self.status_updated_signal.emit("Update", is_online)
+        else:
+            self.logger.debug(f"Update URL không đổi ({update_url}), sử dụng trạng thái đã biết: {self.main_app._update_server_online}")
+            self.status_updated_signal.emit("Update", self.main_app._update_server_online if self.main_app._update_server_online is not None else False)
+
+
+        self.logger.info("Kiểm tra trạng thái server (trong Worker) hoàn tất.")
+        self.finished_checking_signal.emit()
 
 class SignallingLogHandler(logging.Handler, QObject):
     log_updated = pyqtSignal(str)
@@ -424,40 +487,7 @@ class AlgorithmGeminiBuilderTab(QWidget):
         Việc sử dụng API có thể phát sinh chi phí.
         """)
 
-    def _validate_inputs(self) -> bool:
-        current_api_key_from_edit = self.api_key_edit.text().strip()
-        if current_api_key_from_edit != self.api_key:
-            if not self._save_api_key_if_changed():
-                 QMessageBox.warning(self, "Lỗi API Key", "Không thể lưu API Key mới. Vui lòng kiểm tra lại.")
-                 self.api_key_edit.setFocus()
-                 return False
-        
-        file_name_base = self.file_name_edit.text().strip()
-        class_name = self.class_name_edit.text().strip()
-        logic_desc = self.logic_description_edit.toPlainText().strip()
-
-        if not self.api_key:
-            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập Gemini API Key.")
-            self.api_key_edit.setFocus()
-            return False
-        if not HAS_GEMINI:
-            QMessageBox.critical(self, "Thiếu Thư Viện", "Vui lòng cài đặt thư viện 'google-generativeai' bằng lệnh:\n\npip install google-generativeai")
-            return False
-        if not re.match(r"^[a-zA-Z0-9_]+$", file_name_base):
-            QMessageBox.warning(self, "Tên file không hợp lệ", "Tên file chỉ nên chứa chữ cái, số và dấu gạch dưới (_).")
-            self.file_name_edit.setFocus()
-            return False
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", class_name) or class_name == "BaseAlgorithm":
-            QMessageBox.warning(self, "Tên lớp không hợp lệ", "Tên lớp phải là định danh Python hợp lệ và không trùng 'BaseAlgorithm'.")
-            self.class_name_edit.setFocus()
-            return False
-        if not logic_desc:
-            QMessageBox.warning(self, "Thiếu Mô Tả Logic", "Vui lòng mô tả logic bạn muốn cho thuật toán.")
-            self.logic_description_edit.setFocus()
-            return False
-        return True
-
-
+    
     def _setup_ui(self):
         main_tab_layout = QVBoxLayout(self)
         main_tab_layout.setContentsMargins(10, 10, 10, 10)
@@ -924,8 +954,6 @@ class AlgorithmGeminiBuilderTab(QWidget):
 
             if self.main_app:
                 self.main_app.reload_algorithms()
-                if hasattr(self.main_app, '_refresh_algo_management_page'):
-                    self.main_app._refresh_algo_management_page()
                 self.main_app.update_status(f"Đã lưu và tải lại thuật toán: {full_file_name}")
 
         except IOError as e:
@@ -983,6 +1011,9 @@ class OptimizerEmbedded(QWidget):
         self.optimizer_timer = QTimer(self)
         self.optimizer_timer.timeout.connect(self._check_optimizer_queue)
         self.optimizer_timer_interval = 200
+        self._is_fetching_online_algos = False
+        self._is_refreshing_algos = False
+        self.opt_initial_local_algo_label = None
 
         self.display_timer = QTimer(self)
         self.display_timer.timeout.connect(self._update_optimizer_timer_display)
@@ -996,7 +1027,14 @@ class OptimizerEmbedded(QWidget):
         self.weight_validator = QDoubleValidator()
         self.dimension_validator = QIntValidator(1, 9999)
 
+
+        self.gemini_builder_tab_instance = None
+        self.gemini_builder_tab_instance_opt = None
+        self.opt_initial_online_algo_label = None
         self.current_optimization_mode = 'auto_hill_climb'
+        self.opt_initial_online_algo_label = None
+
+
 
         self.setup_ui()
         self.load_data()
@@ -1019,84 +1057,204 @@ class OptimizerEmbedded(QWidget):
         main_layout.setSpacing(10)
 
         top_groupbox = QGroupBox("Thông Tin Dữ Liệu (Optimizer)")
-        top_layout = QGridLayout(top_groupbox)
-        top_layout.setContentsMargins(10, 15, 10, 10)
+        top_layout = QGridLayout(top_groupbox) 
+        top_layout.setContentsMargins(10, 15, 10, 10) 
         top_layout.setSpacing(10)
 
-        top_layout.addWidget(QLabel("File dữ liệu:"), 0, 0, Qt.AlignLeft | Qt.AlignTop)
+        label_file_du_lieu = QLabel("File data:")
+        top_layout.addWidget(label_file_du_lieu, 0, 0, Qt.AlignLeft | Qt.AlignVCenter) 
         self.data_file_path_label = QLabel("...")
-        self.data_file_path_label.setWordWrap(True)
-        self.data_file_path_label.setMinimumHeight(35)
-        top_layout.addWidget(self.data_file_path_label, 0, 1)
-        browse_button = QPushButton("Chọn File Khác...")
+        self.data_file_path_label.setWordWrap(False)
+        top_layout.addWidget(self.data_file_path_label, 0, 1, Qt.AlignLeft | Qt.AlignVCenter) 
+        browse_button = QPushButton("📂Chọn File...")
         browse_button.clicked.connect(self.browse_data_file)
-        top_layout.addWidget(browse_button, 0, 2, Qt.AlignTop)
-        reload_data_button = QPushButton("Tải lại Dữ liệu")
+        top_layout.addWidget(browse_button, 0, 2, Qt.AlignVCenter) 
+        reload_data_button = QPushButton("🔄Tải lại")
         reload_data_button.clicked.connect(self.load_data)
-        top_layout.addWidget(reload_data_button, 0, 3, Qt.AlignTop)
-
-        top_layout.addWidget(QLabel("Phạm vi:"), 1, 0, Qt.AlignLeft)
+        top_layout.addWidget(reload_data_button, 0, 3, Qt.AlignVCenter) 
+        spacer_label1 = QLabel("  |  ") 
+        top_layout.addWidget(spacer_label1, 0, 4, Qt.AlignLeft | Qt.AlignVCenter)
+        label_pham_vi = QLabel("Phạm vi:")
+        top_layout.addWidget(label_pham_vi, 0, 5, Qt.AlignLeft | Qt.AlignVCenter) 
         self.data_range_label = QLabel("...")
-        top_layout.addWidget(self.data_range_label, 1, 1, 1, 3)
-
-        top_layout.setColumnStretch(1, 1)
-
+        top_layout.addWidget(self.data_range_label, 0, 6, Qt.AlignLeft | Qt.AlignVCenter) 
+        top_layout.setColumnStretch(1, 1) 
+        top_layout.setColumnStretch(6, 1)
         main_layout.addWidget(top_groupbox, 0)
+
 
         self.tab_widget = QTabWidget()
 
-        main_layout.addWidget(self.tab_widget, 1)
-
         self.tab_select = QWidget()
+        self.tab_gemini_builder_frame = QWidget()
         self.tab_edit = QWidget()
         self.tab_optimize = QWidget()
 
-        self.tab_widget.addTab(self.tab_select, " Thuật Toán ♻️")
-        self.tab_widget.addTab(self.tab_edit, " Chỉnh Sửa ✏")
+        main_layout.addWidget(self.tab_widget, 1)
+
+        self.tab_widget.addTab(self.tab_select, " Thuật Toán 🎰")
+        self.tab_widget.addTab(self.tab_gemini_builder_frame, "  Tạo thuật toán 🧠 ")
+        self.tab_widget.addTab(self.tab_edit, " Chỉnh Sửa ✍️")
         self.tab_widget.addTab(self.tab_optimize, " Tối Ưu Hóa 🚀")
 
-        self.tab_widget.setTabEnabled(1, False)
-        self.tab_widget.setTabEnabled(2, False)
+        if HAS_GEMINI:
+            if self.gemini_builder_tab_instance_opt is None:
+                try:
+                    self.gemini_builder_tab_instance_opt = AlgorithmGeminiBuilderTab(self.tab_gemini_builder_frame, self.main_app)
+                    layout_gemini = QVBoxLayout(self.tab_gemini_builder_frame)
+                    layout_gemini.setContentsMargins(0,0,0,0)
+                    layout_gemini.addWidget(self.gemini_builder_tab_instance_opt)
+                    optimizer_logger.info("Optimizer's Gemini Algorithm Builder sub-tab initialized successfully inside setup_ui.")
+                    self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_gemini_builder_frame), True)
+                except Exception as e:
+                    optimizer_logger.error(f"Failed to initialize AlgorithmGeminiBuilderTab within Optimizer's setup_ui: {e}", exc_info=True)
+                    layout_gemini_err = QVBoxLayout(self.tab_gemini_builder_frame)
+                    error_label_gemini = QLabel(f"Lỗi khởi tạo tab tạo thuật toán (con):\n{e}")
+                    error_label_gemini.setStyleSheet("color: red;")
+                    layout_gemini_err.addWidget(error_label_gemini)
+                    self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_gemini_builder_frame), False)
+                    self.tab_widget.setTabText(self.tab_widget.indexOf(self.tab_gemini_builder_frame),
+                                              self.tab_widget.tabText(self.tab_widget.indexOf(self.tab_gemini_builder_frame)) + " (Lỗi)")
+        else:
+            layout_gemini_err = QVBoxLayout(self.tab_gemini_builder_frame)
+            error_label_gemini = QLabel(
+                "Tính năng tạo thuật toán bằng Gemini yêu cầu thư viện 'google-generativeai'.\n"
+                "Vui lòng cài đặt bằng lệnh: <code>pip install google-generativeai</code><br>"
+                "Sau đó khởi động lại ứng dụng."
+            )
+            error_label_gemini.setTextFormat(Qt.RichText)
+            error_label_gemini.setAlignment(Qt.AlignCenter)
+            error_label_gemini.setWordWrap(True)
+            error_label_gemini.setStyleSheet("padding: 20px; color: #dc3545; font-weight: bold;")
+            layout_gemini_err.addWidget(error_label_gemini)
+            optimizer_logger.warning("Gemini library not found. Optimizer's Gemini builder sub-tab shows error message.")
+            self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_gemini_builder_frame), False)
+            self.tab_widget.setTabText(self.tab_widget.indexOf(self.tab_gemini_builder_frame),
+                                      self.tab_widget.tabText(self.tab_widget.indexOf(self.tab_gemini_builder_frame)) + " (Lỗi Lib)")
+
+        self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_edit), False)
+        self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_optimize), False)
 
         self.setup_select_tab()
         self.setup_edit_tab()
         self.setup_optimize_tab()
 
+        
     def setup_select_tab(self):
+        optimizer_logger.debug("Setting up Optimizer's Select Algorithm tab with two columns...")
         layout = QVBoxLayout(self.tab_select)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
-        control_frame = QWidget()
-        control_layout = QHBoxLayout(control_frame)
-        control_layout.setContentsMargins(0,0,0,0)
-        reload_button = QPushButton("Tải lại Danh sách Thuật toán")
-        reload_button.clicked.connect(self.reload_algorithms)
-        control_layout.addWidget(reload_button)
-        control_layout.addStretch(1)
-        layout.addWidget(control_frame)
+        control_frame_top = QWidget()
+        control_layout_top = QHBoxLayout(control_frame_top)
+        control_layout_top.setContentsMargins(0,0,0,0)
+        control_layout_top.setSpacing(10)
 
-        list_groupbox = QGroupBox("Danh sách thuật toán")
-        list_layout = QVBoxLayout(list_groupbox)
-        list_layout.setContentsMargins(5, 10, 5, 5)
+        self.opt_algo_refresh_button = QPushButton("🔎Tải danh sách thuật toán trên Server📥 ")
+        self.opt_algo_refresh_button.setToolTip("Quét lại thư mục algorithms và tải lại danh sách thuật toán online.")
+        self.opt_algo_refresh_button.clicked.connect(self._refresh_optimizer_algo_lists)
 
-        self.algo_scroll_area = QScrollArea()
-        self.algo_scroll_area.setWidgetResizable(True)
-        self.algo_scroll_area.setStyleSheet("QScrollArea { background-color: #FDFDFD; border: none; }")
+        control_layout_top.addStretch(1)
+        layout.addWidget(control_frame_top)
 
-        self.algo_scroll_widget = QWidget()
-        self.algo_scroll_area.setWidget(self.algo_scroll_widget)
-        self.algo_list_layout = QVBoxLayout(self.algo_scroll_widget)
-        self.algo_list_layout.setAlignment(Qt.AlignTop)
-        self.algo_list_layout.setSpacing(8)
+        splitter = QSplitter(Qt.Horizontal)
+        layout.addWidget(splitter, 1)
 
-        self.initial_algo_label = QLabel("Đang tải thuật toán...")
-        self.initial_algo_label.setStyleSheet("font-style: italic; color: #6c757d;")
-        self.initial_algo_label.setAlignment(Qt.AlignCenter)
-        self.algo_list_layout.addWidget(self.initial_algo_label)
+        local_algo_group = QGroupBox("🎰 Thuật toán trên máy")
+        local_algo_main_layout = QVBoxLayout(local_algo_group)
+        local_algo_main_layout.setContentsMargins(5, 10, 5, 5)
 
-        list_layout.addWidget(self.algo_scroll_area)
-        layout.addWidget(list_groupbox)
+        self.opt_local_algo_scroll_area = QScrollArea()
+        self.opt_local_algo_scroll_area.setWidgetResizable(True)
+        self.opt_local_algo_scroll_area.setStyleSheet("QScrollArea { background-color: #FFFFFF; border: none; }")
+        
+        self.opt_local_algo_scroll_widget = QWidget()
+        self.opt_local_algo_scroll_area.setWidget(self.opt_local_algo_scroll_widget)
+        self.opt_local_algo_list_layout = QVBoxLayout(self.opt_local_algo_scroll_widget)
+        self.opt_local_algo_list_layout.setAlignment(Qt.AlignTop)
+        self.opt_local_algo_list_layout.setSpacing(8)
+        
+        if not hasattr(self, 'opt_initial_local_algo_label') or self.opt_initial_local_algo_label is None:
+            self.opt_initial_local_algo_label = QLabel("Đang tải thuật toán trên máy...")
+            self.opt_initial_local_algo_label.setStyleSheet("font-style: italic; color: #6c757d;")
+            self.opt_initial_local_algo_label.setAlignment(Qt.AlignCenter)
+        if self.opt_initial_local_algo_label.parentWidget() is None:
+            self.opt_local_algo_list_layout.addWidget(self.opt_initial_local_algo_label)
+
+        local_algo_main_layout.addWidget(self.opt_local_algo_scroll_area)
+        splitter.addWidget(local_algo_group)
+
+        online_column_widget = QWidget()
+        online_column_main_layout = QVBoxLayout(online_column_widget)
+        online_column_main_layout.setContentsMargins(0, 0, 0, 0) 
+        online_column_main_layout.setSpacing(5)
+
+        online_header_and_button_widget = QWidget()
+        online_header_and_button_layout = QHBoxLayout(online_header_and_button_widget)
+        online_header_and_button_layout.setContentsMargins(0, 5, 0, 0)
+        
+        online_title_label = QLabel("🎰 Danh sách Thuật toán Online")
+        bold_font = self.main_app.get_qfont("bold") if hasattr(self.main_app, 'get_qfont') else QFont()
+        if not hasattr(self.main_app, 'get_qfont'): bold_font.setBold(True)
+        online_title_label.setFont(bold_font)
+        online_header_and_button_layout.addWidget(online_title_label)
+        
+        online_header_and_button_layout.addSpacing(10)
+
+        self.opt_algo_refresh_button.setText("🔎 Tải lại")
+
+        online_header_and_button_layout.addWidget(self.opt_algo_refresh_button)
+        online_header_and_button_layout.addStretch(1)
+
+        online_column_main_layout.addWidget(online_header_and_button_widget)
+
+        self.opt_online_algo_scroll_area = QScrollArea()
+        self.opt_online_algo_scroll_area.setWidgetResizable(True)
+        border_color_from_config = self.main_app.config.get('THEME_COLORS', 'COLOR_BORDER', fallback='#CED4DA') if hasattr(self.main_app, 'config') else '#CED4DA'
+        self.opt_online_algo_scroll_area.setStyleSheet(f"QScrollArea {{ background-color: #FFFFFF; border: 1px solid {border_color_from_config}; }}")
+        
+        online_column_main_layout.addWidget(self.opt_online_algo_scroll_area, 1)
+        splitter.addWidget(online_column_widget)
+
+        QTimer.singleShot(0, lambda: splitter.setSizes([splitter.width() * 4 // 10, splitter.width() * 6 // 10]))
+
+        if not hasattr(self, 'optimizer_local_algorithms_managed_ui'):
+            self.optimizer_local_algorithms_managed_ui = {}
+        if not hasattr(self, 'optimizer_online_algorithms_ui'):
+            self.optimizer_online_algorithms_ui = {}
+
+        self._show_initial_online_message()
+
+        optimizer_logger.debug("Optimizer's Select Algorithm tab UI structure set up.")
+
+        
+    def _show_initial_online_message(self):
+        """Hiển thị thông báo ban đầu cho khu vực thuật toán online."""
+        if not hasattr(self, 'opt_online_algo_scroll_area'):
+            return
+
+        initial_widget = QWidget()
+        layout = QVBoxLayout(initial_widget)
+        layout.setAlignment(Qt.AlignTop)
+        layout.setContentsMargins(0, 10, 0, 0)
+
+        label_text = ("<div style='text-align: center;'>"
+                      "<br><br><br><br>"
+                      "Nhấn <b>'Tải lại'</b> ở trên để lấy danh sách thuật toán online..."
+                      "</div>")
+        label = QLabel(label_text)
+        label.setTextFormat(Qt.RichText)
+        label.setStyleSheet("font-style: italic; color: #6c757d; padding: 20px;")
+        label.setAlignment(Qt.AlignCenter)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        
+        old_widget = self.opt_online_algo_scroll_area.widget()
+        if old_widget:
+            old_widget.deleteLater()
+        self.opt_online_algo_scroll_area.setWidget(initial_widget)
+        self.opt_online_algo_list_layout = layout
 
     def setup_edit_tab(self):
         layout = QVBoxLayout(self.tab_edit)
@@ -1602,161 +1760,217 @@ class OptimizerEmbedded(QWidget):
             self.data_range_label.setText("Lỗi tải dữ liệu")
 
     def load_algorithms(self):
-        optimizer_logger.info("Optimizer: Loading algorithms (PyQt5)...")
+        optimizer_logger.info("Optimizer: Loading algorithms (PyQt5) for Optimizer's select tab...")
         main_window = self.get_main_window()
 
-        while self.algo_list_layout.count() > 0:
-            item = self.algo_list_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        if not hasattr(self, 'opt_local_algo_list_layout'):
+            optimizer_logger.error("Optimizer: opt_local_algo_list_layout is not initialized. Cannot clear UI for local algos.")
+            return
 
-        self.initial_algo_label = QLabel("Đang tải thuật toán...")
-        self.initial_algo_label.setStyleSheet("font-style: italic; color: #6c757d;")
-        self.initial_algo_label.setAlignment(Qt.AlignCenter)
-        self.algo_list_layout.addWidget(self.initial_algo_label)
+        widgets_to_remove_from_local_list = []
+        for i in range(self.opt_local_algo_list_layout.count()):
+            item = self.opt_local_algo_list_layout.itemAt(i)
+            widget = item.widget()
+            if isinstance(widget, QFrame) and widget != getattr(self, 'opt_initial_local_algo_label', None):
+                widgets_to_remove_from_local_list.append(widget)
+            elif widget == getattr(self, 'opt_initial_local_algo_label', None) and self.algorithms_dir.is_dir():
+                 pass
+
+        for widget in widgets_to_remove_from_local_list:
+            self.opt_local_algo_list_layout.removeWidget(widget)
+            widget.deleteLater()
+
+        if hasattr(self, 'optimizer_local_algorithms_managed_ui'):
+            self.optimizer_local_algorithms_managed_ui.clear()
+        
 
         self.loaded_algorithms.clear()
-        self.disable_edit_optimize_tabs()
-        self.update_status("Optimizer: Đang tải thuật toán...")
+        self.update_status("Optimizer: Đang quét lại thuật toán trên máy...")
 
         if not self.algorithms_dir.is_dir():
-            QMessageBox.critical(main_window, "Lỗi Thư Mục", f"Không tìm thấy thư mục thuật toán:\n{self.algorithms_dir}")
-            self.initial_algo_label.setText("Lỗi: Không tìm thấy thư mục thuật toán.")
+            QMessageBox.critical(main_window, "Lỗi Thư Mục (Optimizer)", f"Không tìm thấy thư mục thuật toán:\n{self.algorithms_dir}")
+            self._populate_optimizer_local_algorithms_list()
             return
 
         try:
             algo_files = [f for f in self.algorithms_dir.glob('*.py') if f.is_file() and f.name not in ["__init__.py", "base.py"]]
+            optimizer_logger.debug(f"Optimizer: Found {len(algo_files)} potential algorithm files in {self.algorithms_dir}")
         except Exception as e:
-            QMessageBox.critical(main_window, "Lỗi", f"Lỗi đọc thư mục thuật toán:\n{e}")
-            self.initial_algo_label.setText("Lỗi đọc thư mục thuật toán.")
+            QMessageBox.critical(main_window, "Lỗi (Optimizer)", f"Lỗi đọc thư mục thuật toán:\n{e}")
+            self._populate_optimizer_local_algorithms_list()
             return
 
         count_success, count_fail = 0, 0
         data_copy_for_init = copy.deepcopy(self.results_data) if self.results_data else []
         cache_dir_for_init = self.calculate_dir
-        loaded_algo_widgets = False
+
         for f_path in algo_files:
-            module_name = f"algorithms.{f_path.stem}"; instance = None; config = None; class_name = None; module_obj = None
-            display_name = f"{f_path.stem} ({f_path.name})"
+            module_name = f"algorithms.{f_path.stem}"
+            instance = None
+            config = None
+            class_name_found = None
+            module_obj = None
+            display_name_key = f"Unknown ({f_path.name})"
+
+            optimizer_logger.debug(f"Optimizer: Processing file: {f_path.name}")
             try:
                 if module_name in sys.modules:
+                    optimizer_logger.debug(f"Optimizer: Reloading module: {module_name}")
                     try: module_obj = reload(sys.modules[module_name])
                     except Exception:
-                        try: del sys.modules[module_name]; module_obj = None
-                        except KeyError: module_obj = None
+                        try: del sys.modules[module_name]
+                        except KeyError: pass
+                        module_obj = None
+                else:
+                    optimizer_logger.debug(f"Optimizer: Importing module for the first time: {module_name}")
+                
                 if module_obj is None:
                     spec = util.spec_from_file_location(module_name, f_path)
                     if spec and spec.loader:
                         module_obj = util.module_from_spec(spec)
                         sys.modules[module_name] = module_obj
                         spec.loader.exec_module(module_obj)
-                    else: raise ImportError(f"Optimizer: Could not create spec/loader for {module_name}")
-                if not module_obj: raise ImportError("Optimizer: Module object is None.")
-                found_class = None
+                    else: raise ImportError(f"Optimizer: Could not create spec/loader for {module_name} from {f_path}")
+                if not module_obj: raise ImportError(f"Optimizer: Module object is None for {f_path.name}")
+
+                found_class_obj = None
                 for name, obj in inspect.getmembers(module_obj):
                     if inspect.isclass(obj) and issubclass(obj, BaseAlgorithm) and obj is not BaseAlgorithm and obj.__module__ == module_name:
-                        found_class = obj; class_name = name; display_name = f"{class_name} ({f_path.name})"; break
-                if found_class:
+                        found_class_obj = obj; class_name_found = name
+                        display_name_key = f"{class_name_found} ({f_path.name})"
+                        break
+                
+                if found_class_obj:
                     try:
-                        instance = found_class(data_results_list=data_copy_for_init, cache_dir=cache_dir_for_init)
+                        instance = found_class_obj(data_results_list=data_copy_for_init, cache_dir=cache_dir_for_init)
                         config = instance.get_config()
                         if not isinstance(config, dict): config = {"description": "Config Error", "parameters": {}}
-                        self.loaded_algorithms[display_name] = {'instance': instance, 'path': f_path, 'config': config, 'class_name': class_name, 'module_name': module_name}
-                        self.create_optimizer_algorithm_ui_qt(display_name, config)
-                        loaded_algo_widgets = True
+                        self.loaded_algorithms[display_name_key] = {
+                            'instance': instance, 'path': f_path, 'config': config,
+                            'class_name': class_name_found, 'module_name': module_name
+                        }
                         count_success += 1
                     except Exception as init_err:
-                        optimizer_logger.error(f"Optimizer: Error initializing/processing class {class_name}: {init_err}", exc_info=True)
-                        if display_name in self.loaded_algorithms: del self.loaded_algorithms[display_name]
+                        optimizer_logger.error(f"Optimizer: Error init/config class {class_name_found} from {f_path.name}: {init_err}", exc_info=True)
+                        if display_name_key in self.loaded_algorithms: del self.loaded_algorithms[display_name_key]
                         count_fail += 1
                 else:
-                    optimizer_logger.warning(f"No valid BaseAlgorithm subclass found in {f_path.name}")
+                    optimizer_logger.warning(f"Optimizer: No valid BaseAlgorithm subclass in {f_path.name}")
                     count_fail += 1
-            except ImportError as imp_err: optimizer_logger.error(f"Optimizer: Import error {f_path.name}: {imp_err}", exc_info=False); count_fail += 1
-            except Exception as load_err: optimizer_logger.error(f"Optimizer: Error processing {f_path.name}: {load_err}", exc_info=True); count_fail += 1
+            except ImportError as imp_err:
+                optimizer_logger.error(f"Optimizer: Import error {f_path.name}: {imp_err}", exc_info=False)
+                count_fail += 1
+            except Exception as load_err:
+                optimizer_logger.error(f"Optimizer: General error {f_path.name}: {load_err}", exc_info=True)
+                count_fail += 1
+            finally:
+                if not (found_class_obj and display_name_key in self.loaded_algorithms) and module_name in sys.modules:
+                    if sys.modules[module_name] == module_obj:
+                        try: del sys.modules[module_name]
+                        except KeyError: pass
 
-        if loaded_algo_widgets and self.initial_algo_label:
-            self.algo_list_layout.removeWidget(self.initial_algo_label)
-            self.initial_algo_label.deleteLater()
-            self.initial_algo_label = None
-        elif not loaded_algo_widgets:
-             self.initial_algo_label.setText("Không tìm thấy thuật toán hợp lệ.")
+        self._populate_optimizer_local_algorithms_list()
 
-        status_msg = f"Optimizer: Tải {count_success} thuật toán"
-        if count_fail > 0: status_msg += f" (lỗi: {count_fail})"
-        self.update_status(status_msg)
+        status_msg = f"Optimizer: Tải {count_success} thuật toán (local)"
         if count_fail > 0:
-            QMessageBox.warning(main_window, "Lỗi Tải (Optimizer)", f"Lỗi tải {count_fail} file thuật toán.\nKiểm tra log.")
+            status_msg += f" (lỗi: {count_fail})"
+        self.update_status(status_msg)
+
+        if count_fail > 0:
+            QMessageBox.warning(main_window, "Lỗi Tải (Optimizer)", f"Lỗi tải {count_fail} file thuật toán cho Optimizer.\nKiểm tra log.")
+        
         self.check_resume_possibility()
+        optimizer_logger.info("Optimizer: Algorithm loading process finished.")
 
-    def create_optimizer_algorithm_ui_qt(self, display_name, config):
-
-        if self.initial_algo_label:
-             self.algo_list_layout.removeWidget(self.initial_algo_label)
-             self.initial_algo_label.deleteLater()
-             self.initial_algo_label = None
-
-        algo_frame = QFrame()
-        algo_frame.setFrameShape(QFrame.StyledPanel)
-        algo_frame.setFrameShadow(QFrame.Raised)
-        algo_frame.setLineWidth(1)
-        algo_frame.setObjectName("CardFrame")
-
-        algo_frame_layout = QHBoxLayout(algo_frame)
-        algo_frame_layout.setContentsMargins(10, 8, 10, 8)
-
-        info_container = QWidget()
-        info_layout = QVBoxLayout(info_container)
-        info_layout.setContentsMargins(0,0,0,0)
-        info_layout.setSpacing(2)
-
+    def _create_optimizer_local_algorithm_card_qt(self,
+                                                display_name_key: str,
+                                                algo_name_for_display: str,
+                                                description: str,
+                                                algo_path: Path,
+                                                algo_id: str | None,
+                                                algo_date_str: str | None):
+        optimizer_logger.debug(f"Optimizer: Creating local algo card UI for: {algo_name_for_display} (key: {display_name_key})")
         try:
-             algo_data = self.loaded_algorithms[display_name]
-             class_name = algo_data.get('class_name', 'UnknownClass')
-             file_name = algo_data.get('path', Path('unknown.py')).name
-             desc = config.get("description", "N/A")
-        except KeyError:
-             class_name = "Error"; file_name = "error.py"; desc = "Lỗi tải thông tin thuật toán."
+            if not hasattr(self, 'opt_local_algo_list_layout'):
+                optimizer_logger.error("Optimizer: opt_local_algo_list_layout not found, cannot add card.")
+                return
 
-        display_string = f"{class_name} ({file_name})"
-        name_file_label = QLabel(display_string)
-        name_file_label.setFont(self.main_app.get_qfont("bold"))
-        name_file_label.setStyleSheet(f"color: #212529;")
-        info_layout.addWidget(name_file_label)
+            card_frame = QFrame()
+            card_frame.setObjectName("CardFrame")
+            card_layout = QVBoxLayout(card_frame)
+            card_layout.setContentsMargins(8, 8, 8, 8)
+            card_layout.setSpacing(5)
 
-        desc_label = QLabel(desc)
-        desc_label.setWordWrap(True)
-        desc_label.setFont(self.main_app.get_qfont("small"))
-        desc_label.setStyleSheet("color: #5a5a5a;")
-        desc_label.setToolTip(desc)
-        info_layout.addWidget(desc_label)
+            name_label_text_ui = algo_name_for_display
+            if algo_id:
+                name_label_text_ui += f" (ID: {algo_id})"
+            name_label = QLabel(name_label_text_ui)
+            name_label.setFont(self.main_app.get_qfont("bold"))
+            name_label.setWordWrap(True)
+            name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            name_label.setMinimumWidth(1)
+            card_layout.addWidget(name_label)
 
-        algo_frame_layout.addWidget(info_container, 1)
+            desc_label = QLabel(description)
+            desc_label.setFont(self.main_app.get_qfont("small"))
+            desc_label.setWordWrap(True)
+            desc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            desc_label.setMinimumWidth(1)
+            card_layout.addWidget(desc_label)
+            
+            file_info_parts = [f"File: {algo_path.name}"]
+            if algo_date_str:
+                file_info_parts.append(f"Ngày: {algo_date_str}")
+            file_label = QLabel(" - ".join(file_info_parts))
+            file_label.setFont(self.main_app.get_qfont("italic_small"))
+            file_label.setStyleSheet("color: #6c757d;")
+            file_label.setWordWrap(True)
+            file_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            file_label.setMinimumWidth(1)
+            card_layout.addWidget(file_label)
 
-        button_container = QWidget()
-        button_layout = QVBoxLayout(button_container)
-        button_layout.setContentsMargins(5, 0, 0, 0)
-        button_layout.setSpacing(4)
-        button_layout.setAlignment(Qt.AlignTop)
+            button_container = QWidget()
+            button_layout_h = QHBoxLayout(button_container)
+            button_layout_h.setContentsMargins(0, 5, 0, 0)
+            button_layout_h.setSpacing(5)
 
-        edit_button = QPushButton("Chỉnh Sửa")
-        edit_button.setObjectName("ListAccentButton")
-        edit_button.clicked.connect(lambda checked=False, name=display_name: self.trigger_select_for_edit(name))
-        button_layout.addWidget(edit_button)
+            edit_button = QPushButton("✍️ Sửa")
+            edit_button.setObjectName("ListAccentButton")
+            edit_button.setToolTip(f"Chỉnh sửa tham số của: {algo_name_for_display}")
+            edit_button.clicked.connect(lambda checked=False, dn_key=display_name_key: self.trigger_select_for_edit(dn_key))
 
-        optimize_button = QPushButton("Tối Ưu")
-        optimize_button.setObjectName("ListAccentButton")
-        optimize_button.clicked.connect(lambda checked=False, name=display_name: self.trigger_select_for_optimize(name))
-        button_layout.addWidget(optimize_button)
+            optimize_button = QPushButton("🚀 Tối ưu")
+            optimize_button.setObjectName("ListAccentButton")
+            optimize_button.setToolTip(f"Tối ưu hóa thuật toán: {algo_name_for_display}")
+            optimize_button.clicked.connect(lambda checked=False, dn_key=display_name_key: self.trigger_select_for_optimize(dn_key))
+            
+            delete_button = QPushButton("❎ Xóa")
+            delete_button.setObjectName("DangerButton")
+            delete_button.setToolTip(f"Xóa file thuật toán: {algo_path.name}")
+            delete_button.clicked.connect(lambda checked=False, path_to_delete=algo_path: self._handle_delete_optimizer_local_algorithm(path_to_delete))
 
-        algo_frame_layout.addWidget(button_container)
+            button_layout_h.addWidget(edit_button, 1)
+            button_layout_h.addWidget(optimize_button, 1)
+            button_layout_h.addWidget(delete_button, 1)
+            
+            button_fixed_height = 32
+            edit_button.setFixedHeight(button_fixed_height)
+            optimize_button.setFixedHeight(button_fixed_height)
+            delete_button.setFixedHeight(button_fixed_height)
+            
 
-        self.algo_list_layout.addWidget(algo_frame)
-        if display_name in self.loaded_algorithms:
-            self.loaded_algorithms[display_name]['ui_frame'] = algo_frame
+            card_layout.addWidget(button_container)
 
+            self.opt_local_algo_list_layout.addWidget(card_frame)
+            
+            if not hasattr(self, 'optimizer_local_algorithms_managed_ui'):
+                 self.optimizer_local_algorithms_managed_ui = {}
+            self.optimizer_local_algorithms_managed_ui[str(algo_path)] = card_frame
 
+        except Exception as e:
+            optimizer_logger.error(f"Optimizer: Error creating local algorithm card UI for '{algo_name_for_display}': {e}", exc_info=True)
+
+    
     def reload_algorithms(self):
         optimizer_logger.info("Optimizer: Reloading algorithms (PyQt5)...")
         self.selected_algorithm_for_edit = None
@@ -1768,6 +1982,7 @@ class OptimizerEmbedded(QWidget):
         self.load_algorithms()
         self.check_resume_possibility()
 
+    
 
     
     def trigger_select_for_edit(self, display_name):
@@ -1782,9 +1997,29 @@ class OptimizerEmbedded(QWidget):
         self._clear_combination_selection()
 
         self.populate_editor(display_name)
-        self.tab_widget.setTabEnabled(1, True)
-        self.tab_widget.setTabEnabled(2, False)
-        self.tab_widget.setCurrentIndex(1)
+
+        if hasattr(self, 'tab_widget'):
+            edit_tab_widget = getattr(self, 'tab_edit', None)
+            optimize_tab_widget = getattr(self, 'tab_optimize', None)
+
+            if edit_tab_widget:
+                edit_tab_index = self.tab_widget.indexOf(edit_tab_widget)
+                if edit_tab_index != -1:
+                    self.tab_widget.setTabEnabled(edit_tab_index, True)
+                    self.tab_widget.setCurrentIndex(edit_tab_index)
+                    optimizer_logger.debug(f"Enabled and switched to Edit tab (index {edit_tab_index}).")
+                else:
+                    optimizer_logger.error("Could not find Edit tab to enable/switch.")
+            
+            if optimize_tab_widget:
+                optimize_tab_index = self.tab_widget.indexOf(optimize_tab_widget)
+                if optimize_tab_index != -1:
+                    self.tab_widget.setTabEnabled(optimize_tab_index, False)
+                    optimizer_logger.debug(f"Disabled Optimize tab (index {optimize_tab_index}).")
+            
+        else:
+            optimizer_logger.error("OptimizerEmbedded.tab_widget not found in trigger_select_for_edit.")
+
 
         self.update_status(f"Optimizer: Đang chỉnh sửa: {self.loaded_algorithms[display_name]['class_name']}")
         self.check_resume_possibility()
@@ -1863,8 +2098,30 @@ class OptimizerEmbedded(QWidget):
 
     def disable_edit_optimize_tabs(self):
         if hasattr(self, 'tab_widget'):
-            self.tab_widget.setTabEnabled(1, False)
-            self.tab_widget.setTabEnabled(2, False)
+            edit_tab_widget = getattr(self, 'tab_edit', None)
+            optimize_tab_widget = getattr(self, 'tab_optimize', None)
+
+            if edit_tab_widget:
+                edit_tab_index = self.tab_widget.indexOf(edit_tab_widget)
+                if edit_tab_index != -1:
+                    self.tab_widget.setTabEnabled(edit_tab_index, False)
+                    optimizer_logger.debug(f"Disabled Edit tab (index {edit_tab_index}) in disable_edit_optimize_tabs.")
+            
+            if optimize_tab_widget:
+                optimize_tab_index = self.tab_widget.indexOf(optimize_tab_widget)
+                if optimize_tab_index != -1:
+                    self.tab_widget.setTabEnabled(optimize_tab_index, False)
+                    optimizer_logger.debug(f"Disabled Optimize tab (index {optimize_tab_index}) in disable_edit_optimize_tabs.")
+            
+            gemini_tab_widget_frame = getattr(self, 'tab_gemini_builder_frame', None)
+            if gemini_tab_widget_frame and HAS_GEMINI:
+                gemini_tab_index = self.tab_widget.indexOf(gemini_tab_widget_frame)
+                if gemini_tab_index != -1:
+                    self.tab_widget.setTabEnabled(gemini_tab_index, True)
+                    optimizer_logger.debug(f"Ensured Gemini tab (index {gemini_tab_index}) is enabled in disable_edit_optimize_tabs.")
+                else:
+                    optimizer_logger.warning("Could not find Gemini tab to ensure it's enabled in disable_edit_optimize_tabs.")
+
             self._clear_advanced_opt_fields()
             self._clear_combination_selection()
 
@@ -1935,6 +2192,450 @@ class OptimizerEmbedded(QWidget):
             self.tab_widget.setCurrentIndex(0)
         self.update_status("Optimizer: Đã hủy chỉnh sửa.")
 
+    def _refresh_optimizer_algo_lists(self):
+        if self._is_refreshing_algos:
+            optimizer_logger.info("Optimizer: Refresh algorithms (local & online) already in progress. Ignoring request.")
+            return
+
+        self._is_refreshing_algos = True
+        if hasattr(self, 'opt_algo_refresh_button'):
+            self.opt_algo_refresh_button.setEnabled(False)
+
+        optimizer_logger.info("Refreshing Optimizer's local and online algorithm lists...")
+        self.update_status("Đang làm mới danh sách thuật toán (Optimizer)...")
+        QApplication.processEvents()
+
+        try:
+            self.load_algorithms()
+            self._fetch_and_populate_optimizer_online_algorithms_list()
+            self.update_status("Làm mới danh sách thuật toán (Optimizer) hoàn tất.")
+        except Exception as e:
+            optimizer_logger.error(f"Error during _refresh_optimizer_algo_lists: {e}", exc_info=True)
+            self.update_status(f"Lỗi khi làm mới danh sách: {type(e).__name__}")
+        finally:
+            self._is_refreshing_algos = False
+            if hasattr(self, 'opt_algo_refresh_button'):
+                self.opt_algo_refresh_button.setEnabled(True)
+
+    def _populate_optimizer_local_algorithms_list(self):
+        optimizer_logger.info("Optimizer: Populating Optimizer's local algorithms list for its 'Select Algorithm' tab...")
+
+        if not hasattr(self, 'opt_local_algo_list_layout'):
+            optimizer_logger.error("Optimizer: opt_local_algo_list_layout not found in OptimizerEmbedded during populate.")
+            return
+
+
+        if not self.loaded_algorithms:
+            if not hasattr(self, 'opt_initial_local_algo_label') or self.opt_initial_local_algo_label is None:
+                self.opt_initial_local_algo_label = QLabel("Không có thuật toán nào trên máy.")
+                self.opt_initial_local_algo_label.setStyleSheet("font-style: italic; color: #6c757d;")
+                self.opt_initial_local_algo_label.setAlignment(Qt.AlignCenter)
+                if self.opt_local_algo_list_layout.indexOf(self.opt_initial_local_algo_label) == -1:
+                    self.opt_local_algo_list_layout.addWidget(self.opt_initial_local_algo_label)
+            else:
+                self.opt_initial_local_algo_label.setText("Không có thuật toán nào trên máy.")
+                self.opt_initial_local_algo_label.setVisible(True)
+                if self.opt_local_algo_list_layout.indexOf(self.opt_initial_local_algo_label) == -1:
+                    for i in reversed(range(self.opt_local_algo_list_layout.count())):
+                        item = self.opt_local_algo_list_layout.itemAt(i)
+                        widget = item.widget()
+                        if widget and widget != self.opt_initial_local_algo_label :
+                            self.opt_local_algo_list_layout.removeWidget(widget)
+                            widget.deleteLater()
+                    self.opt_local_algo_list_layout.addWidget(self.opt_initial_local_algo_label)
+
+
+            optimizer_logger.info("Optimizer: No local algorithms loaded. Displaying placeholder message.")
+            return
+        else:
+            if hasattr(self, 'opt_initial_local_algo_label') and self.opt_initial_local_algo_label is not None:
+                self.opt_initial_local_algo_label.setVisible(False)
+                optimizer_logger.debug("Optimizer: Local algorithms found. Hiding/removing placeholder label.")
+
+
+        for display_name_key, algo_data in self.loaded_algorithms.items():
+            try:
+                algo_path = algo_data['path']
+                content = algo_path.read_text(encoding='utf-8')
+                metadata = self.main_app._extract_metadata_from_py_content(content)
+
+                algo_name_display = metadata.get("name") or algo_data.get('class_name') or algo_path.stem
+                description = metadata.get("description") or algo_data.get('config', {}).get('description') or "Không có mô tả."
+                algo_id = metadata.get("id")
+                algo_date_str = metadata.get("date_str")
+
+                self._create_optimizer_local_algorithm_card_qt(
+                    display_name_key,
+                    algo_name_display,
+                    description,
+                    algo_path,
+                    algo_id,
+                    algo_date_str
+                )
+            except Exception as e:
+                optimizer_logger.error(f"Optimizer: Error creating UI card for local algo '{display_name_key}' in Optimizer's list: {e}", exc_info=True)
+
+    def sync_data(self):
+        """Downloads data from the sync URL and replaces the current data file."""
+        main_logger.info("Sync data request initiated.")
+
+        if hasattr(self, '_data_sync_server_online') and self._data_sync_server_online is False:
+            main_logger.warning("Sync aborted: Server Data Sync is offline.")
+            QMessageBox.warning(self, "Không có kết nối", "Không thể đồng bộ dữ liệu do không có kết nối mạng (Server Data Sync: Offline). Vui lòng kiểm tra kết nối và thử lại sau ít phút.")
+            self.update_status("Đồng bộ thất bại: Không có kết nối mạng.")
+            return
+
+        url_to_sync = ""
+        if hasattr(self, 'sync_url_input') and self.sync_url_input:
+            url_to_sync = self.sync_url_input.text().strip()
+        
+        if not url_to_sync:
+            url_to_sync = self.config.get('DATA', 'sync_url', fallback="").strip()
+            if not url_to_sync:
+                 main_logger.warning("Sync failed: Sync URL is empty in UI and config.")
+                 QMessageBox.warning(self, "Thiếu URL", "Vui lòng nhập URL vào ô 'Đồng bộ' hoặc cấu hình trong tab Cài đặt.")
+                 return
+            else:
+                if hasattr(self, 'sync_url_input') and self.sync_url_input:
+                    self.sync_url_input.setText(url_to_sync)
+
+        target_file_str = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
+        target_file = Path(target_file_str)
+        backup_file = target_file.with_suffix(target_file.suffix + '.bak-' + datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+        backed_up_successfully = False
+
+        try: import requests
+        except ImportError:
+            main_logger.critical("Requests library not found. Sync data cannot proceed.")
+            QMessageBox.critical(self, "Thiếu Thư Viện", "Chức năng đồng bộ yêu cầu thư viện 'requests'.\nVui lòng cài đặt bằng lệnh:\n\npip install requests")
+            return
+
+        self.update_status(f"Đang tải dữ liệu từ URL...")
+        QApplication.processEvents()
+
+        try:
+            main_logger.info(f"Attempting to download data from: {url_to_sync}")
+            response = requests.get(url_to_sync, timeout=30, headers={'Cache-Control': 'no-cache', 'Pragma': 'no-cache'})
+            response.raise_for_status()
+            main_logger.info(f"Download successful (Status: {response.status_code}). Size: {len(response.content)} bytes.")
+
+            try:
+                 downloaded_data = response.json()
+                 is_valid_format = isinstance(downloaded_data, list) or \
+                                  (isinstance(downloaded_data, dict) and 'results' in downloaded_data and isinstance(downloaded_data.get('results'), dict))
+                 if not is_valid_format:
+                     raise ValueError("Định dạng JSON tải về không hợp lệ (không phải list hoặc dict có key 'results').")
+                 main_logger.info("Downloaded data appears to be valid JSON format.")
+            except (json.JSONDecodeError, ValueError) as json_err:
+                main_logger.error(f"Downloaded data validation failed: {json_err}")
+                QMessageBox.critical(self, "Lỗi Dữ Liệu Tải Về", f"Dữ liệu tải về từ URL không phải là file JSON hợp lệ hoặc có cấu trúc không đúng:\n{json_err}")
+                self.update_status("Đồng bộ thất bại: dữ liệu tải về không hợp lệ.")
+                return
+
+            if target_file.exists():
+                try:
+                    shutil.copy2(target_file, backup_file)
+                    backed_up_successfully = True
+                    main_logger.info(f"Backed up existing data file to: {backup_file.name}")
+                except Exception as backup_err:
+                    main_logger.error(f"Failed to backup data file: {backup_err}", exc_info=True)
+                    reply = QMessageBox.warning(self, "Lỗi Sao Lưu", f"Không thể tạo file sao lưu cho:\n{target_file.name}\n\nLỗi: {backup_err}\n\nTiếp tục đồng bộ mà không sao lưu?",
+                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                    if reply == QMessageBox.No:
+                        self.update_status("Đồng bộ đã hủy do lỗi sao lưu.")
+                        return
+
+            try:
+                with open(target_file, 'wb') as f:
+                    f.write(response.content)
+                main_logger.info(f"Successfully wrote downloaded data to: {target_file.name}")
+            except IOError as save_err:
+                main_logger.error(f"Failed to write downloaded data to {target_file.name}: {save_err}", exc_info=True)
+                QMessageBox.critical(self, "Lỗi Lưu File", f"Không thể ghi dữ liệu tải về vào file:\n{target_file.name}\n\nLỗi: {save_err}")
+                if backed_up_successfully:
+                    self._restore_backup(backup_file, target_file)
+                self.update_status("Đồng bộ thất bại: lỗi ghi file.")
+                return
+
+            if hasattr(self, 'data_file_path_label'):
+                 self.data_file_path_label.setText(str(target_file))
+                 self.data_file_path_label.setToolTip(str(target_file))
+
+            self.load_data()
+            self.reload_algorithms()
+
+            if self.optimizer_app_instance:
+                 self.optimizer_app_instance.data_file_path_label.setText(str(target_file))
+                 self.optimizer_app_instance.load_data()
+
+            self.update_status("Đồng bộ dữ liệu thành công.")
+            QMessageBox.information(self, "Hoàn Tất", f"Đã đồng bộ và cập nhật dữ liệu thành công từ:\n{url_to_sync}")
+
+        except requests.exceptions.RequestException as req_err:
+            main_logger.error(f"Failed to download data from {url_to_sync}: {req_err}", exc_info=True)
+            QMessageBox.critical(self, "Lỗi Kết Nối", f"Không thể tải dữ liệu từ URL:\n{url_to_sync}\n\nLỗi: {type(req_err).__name__} - {req_err}")
+            self.update_status(f"Đồng bộ thất bại: lỗi kết nối hoặc URL không hợp lệ.")
+            if backed_up_successfully: self._restore_backup(backup_file, target_file)
+        except Exception as e:
+            main_logger.error(f"Unexpected error during data sync: {e}", exc_info=True)
+            QMessageBox.critical(self, "Lỗi Đồng Bộ", f"Đã xảy ra lỗi không mong muốn trong quá trình đồng bộ:\n{e}")
+            self.update_status(f"Đồng bộ thất bại: lỗi không xác định.")
+            if backed_up_successfully: self._restore_backup(backup_file, target_file)
+
+    def _fetch_and_populate_optimizer_online_algorithms_list(self):
+        optimizer_logger.info("Optimizer: (Safe) Fetching and populating its online algorithms list...")
+
+        if not hasattr(self, 'opt_online_algo_scroll_area'):
+            optimizer_logger.error("Optimizer: opt_online_algo_scroll_area not found.")
+            return
+
+        old_content_widget = self.opt_online_algo_scroll_area.takeWidget()
+        if old_content_widget:
+            old_content_widget.deleteLater()
+
+        new_content_widget = QWidget()
+        self.opt_online_algo_list_layout = QVBoxLayout(new_content_widget)
+        self.opt_online_algo_list_layout.setAlignment(Qt.AlignTop)
+        self.opt_online_algo_list_layout.setSpacing(8)
+        self.opt_online_algo_scroll_area.setWidget(new_content_widget)
+
+        status_label = QLabel("Đang tải danh sách thuật toán online...")
+        status_label.setStyleSheet("font-style: italic; color: #007bff; padding: 20px;")
+        status_label.setAlignment(Qt.AlignCenter)
+        status_label.setWordWrap(True)
+        self.opt_online_algo_list_layout.addWidget(status_label)
+        QApplication.processEvents()
+
+        if hasattr(self, 'optimizer_online_algorithms_ui'):
+            self.optimizer_online_algorithms_ui.clear()
+        else:
+            self.optimizer_online_algorithms_ui = {}
+
+        if not self.main_app or not hasattr(self.main_app, 'config'):
+            optimizer_logger.error("Optimizer: main_app or its config not available.")
+            status_label.setText("Lỗi: Không thể truy cập cấu hình ứng dụng chính.")
+            status_label.setStyleSheet("color: red; padding: 20px; font-style: italic;")
+            return
+
+        algo_list_url = self.main_app.config.get('DATA', 'algo_list_url', fallback="")
+        if not algo_list_url:
+            optimizer_logger.error("Optimizer: Online algorithm list URL is not configured.")
+            status_label.setText("Lỗi: URL danh sách online chưa được cấu hình (trong Cài đặt của App).")
+            status_label.setStyleSheet("color: red; padding: 20px; font-style: italic;")
+            return
+
+        online_list_content = self.main_app._fetch_online_content(algo_list_url, service_type="update_check")
+
+        if online_list_content is None:
+            status_label.setText(f"Lỗi tải danh sách online từ URL đã cấu hình.<br>(Kiểm tra kết nối mạng và URL: {algo_list_url})")
+            status_label.setStyleSheet("color: red; padding: 20px; font-style: italic;")
+            return
+
+        if status_label.parentWidget() is not None:
+            self.opt_online_algo_list_layout.removeWidget(status_label)
+        status_label.deleteLater()
+
+        parsed_online_algos = []
+        if online_list_content:
+            line_pattern = re.compile(r"\[([^\]]+?)\]-\[([^\]]+?)\]-\[([^\]]+?)\]-\[(ID:\s*\d{6})\]", re.IGNORECASE)
+            lines = online_list_content.splitlines()
+            for line_num, line in enumerate(lines):
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                match = line_pattern.fullmatch(line)
+                if match:
+                    parsed_url, name, date_str, id_full_part = match.group(1).strip(), match.group(2).strip(), match.group(3).strip(), match.group(4).strip()
+                    id_numeric_match = re.search(r"\d{6}", id_full_part)
+                    if id_numeric_match:
+                        actual_id = id_numeric_match.group(0)
+                        parsed_online_algos.append({"url": parsed_url, "name": name, "date_str": date_str, "id": actual_id})
+                    else:
+                        optimizer_logger.warning(f"Optimizer: Cannot extract ID from '{id_full_part}' in line: {line}")
+                else:
+                    optimizer_logger.warning(f"Optimizer: Skipping malformed online algo line: '{line}'")
+
+        if not parsed_online_algos:
+            no_online_algos_label = QLabel("<div style='text-align: center;'><br><br><br><br>Không tìm thấy thuật toán nào trong danh sách online hoặc định dạng file không đúng.</div>")
+            no_online_algos_label.setTextFormat(Qt.RichText)
+            no_online_algos_label.setStyleSheet("font-style: italic; color: #6c757d; padding: 20px;")
+            no_online_algos_label.setAlignment(Qt.AlignCenter)
+            self.opt_online_algo_list_layout.addWidget(no_online_algos_label)
+            return
+
+        optimizer_logger.info(f"Optimizer: Parsed {len(parsed_online_algos)} online algorithms. Creating UI cards...")
+        for online_algo_data in parsed_online_algos:
+            self._create_optimizer_online_algorithm_card_qt(online_algo_data)
+
+        optimizer_logger.info("Optimizer: Finished populating its online algorithms list.")
+
+    def _get_optimizer_local_algorithm_metadata_by_id(self, target_id: str) -> tuple[Path | None, dict | None]:
+         """Optimizer: Finds a local algorithm (from its own loaded_algorithms) by ID."""
+         if not target_id: return None, None
+         for algo_data in self.loaded_algorithms.values():
+             algo_path = algo_data.get('path')
+             if algo_path:
+                 try:
+                     content = algo_path.read_text(encoding='utf-8')
+                     metadata = self.main_app._extract_metadata_from_py_content(content)
+                     if metadata.get("id") == target_id:
+                         return algo_path, metadata
+                 except Exception:
+                     continue
+         return None, None
+
+    def _create_optimizer_online_algorithm_card_qt(self, online_algo_data: dict):
+         optimizer_logger.debug(f"Optimizer: Creating online algo card for: {online_algo_data.get('name')}")
+         
+         online_url = online_algo_data["url"]
+         online_name = online_algo_data["name"]
+         online_date_str = online_algo_data["date_str"]
+         online_id = online_algo_data["id"]
+
+         description = "Đang tải mô tả..."
+         online_code_content = None
+         try:
+             import requests
+             py_response = requests.get(online_url, timeout=10)
+             py_response.raise_for_status()
+             online_code_content = py_response.text
+             metadata_from_online_code = self.main_app._extract_metadata_from_py_content(online_code_content)
+             description = metadata_from_online_code.get("description") or "Không có mô tả trong code."
+         except Exception as e_desc:
+             description = f"Lỗi tải/xử lý mô tả: {type(e_desc).__name__}"
+             optimizer_logger.warning(f"Optimizer: Failed to fetch/process desc for {online_name}: {e_desc}")
+
+         card_frame = QFrame()
+         card_frame.setObjectName("CardFrame")
+         card_layout = QVBoxLayout(card_frame)
+         name_label = QLabel(f"{online_name} (ID: {online_id})")
+         name_label.setFont(self.main_app.get_qfont("bold"))
+         card_layout.addWidget(name_label)
+         desc_label = QLabel(description)
+         desc_label.setFont(self.main_app.get_qfont("small")); desc_label.setWordWrap(True)
+         card_layout.addWidget(desc_label)
+         info_label = QLabel(f"Online Date: {online_date_str}")
+         info_label.setFont(self.main_app.get_qfont("italic_small")); info_label.setStyleSheet("color: #5a5a5a;")
+         card_layout.addWidget(info_label)
+
+         button_container = QWidget()
+         button_layout_h = QHBoxLayout(button_container)
+         button_layout_h.setContentsMargins(0,5,0,0); button_layout_h.addStretch(1)
+
+         local_algo_path, local_metadata = self._get_optimizer_local_algorithm_metadata_by_id(online_id)
+         
+         action_widget = None
+         if local_algo_path and local_metadata:
+             status_label_text = f"Đã có: {local_algo_path.name}"
+             local_date_str = local_metadata.get("date_str")
+             needs_update = False
+             if local_date_str and online_date_str:
+                 try:
+                     online_dt = datetime.datetime.strptime(online_date_str, "%d/%m/%Y")
+                     local_dt = datetime.datetime.strptime(local_date_str, "%d/%m/%Y")
+                     if online_dt > local_dt: needs_update = True
+                 except ValueError: pass
+             
+             if needs_update:
+                 update_button = QPushButton("⬆️ Cập nhật")
+                 update_button.setObjectName("AccentButton")
+                 update_button.setToolTip(f"Cập nhật file local '{local_algo_path.name}'")
+                 update_button.clicked.connect(lambda chk=False, o_data=online_algo_data, l_path=local_algo_path, o_content=online_code_content : self._handle_update_optimizer_online_algorithm(o_data, l_path, o_content))
+                 action_widget = update_button
+             else:
+                 status_widget = QLabel(status_label_text + (" (Đã cập nhật)" if local_date_str else ""))
+                 status_widget.setStyleSheet("color: green; font-style: italic;")
+                 action_widget = status_widget
+         else:
+             download_button = QPushButton("⬇️ Tải về")
+             download_button.setObjectName("AccentButton")
+             download_button.setToolTip(f"Tải '{online_name}' vào thư mục algorithms của Optimizer")
+             download_button.clicked.connect(lambda chk=False, o_data=online_algo_data, o_content=online_code_content : self._handle_download_optimizer_online_algorithm(o_data, o_content))
+             action_widget = download_button
+         
+         if action_widget: button_layout_h.addWidget(action_widget)
+         card_layout.addWidget(button_container)
+         
+         self.opt_online_algo_list_layout.addWidget(card_frame)
+         self.optimizer_online_algorithms_ui[online_url] = card_frame
+
+
+    def _handle_download_optimizer_online_algorithm(self, online_algo_data: dict, online_code_content: str | None = None):
+         online_url = online_algo_data["url"]
+         online_name = online_algo_data["name"]
+         
+         filename_from_url_obj = Path(online_url)
+         target_filename = filename_from_url_obj.stem + ".py"
+         save_path = self.algorithms_dir / target_filename
+
+         optimizer_logger.info(f"Optimizer: Downloading '{online_name}' to {save_path}")
+         self.update_status(f"Optimizer: Đang tải về {target_filename}...")
+         QApplication.processEvents()
+
+         try:
+             final_code_content = online_code_content
+             if final_code_content is None:
+                 import requests
+                 response = requests.get(online_url, timeout=15)
+                 response.raise_for_status()
+                 final_code_content = response.text
+             
+             if not isinstance(final_code_content, str):
+                 raise ValueError("Nội dung tải về không phải là chuỗi.")
+
+             normalized_content = final_code_content.replace('\r\n', '\n').replace('\r', '\n')
+             save_path.write_text(normalized_content, encoding='utf-8', newline='\n')
+             optimizer_logger.info(f"Optimizer: Downloaded and saved to {save_path}")
+             QMessageBox.information(self.get_main_window(), "Tải Thành Công (Optimizer)", f"Đã tải '{target_filename}' vào '{self.algorithms_dir.name}'.")
+             
+             self._refresh_optimizer_algo_lists()
+             if self.main_app:
+                 self.main_app.reload_algorithms()
+                 if hasattr(self.main_app, '_refresh_algo_management_page'):
+                     self.main_app._refresh_algo_management_page()
+             self.update_status(f"Optimizer: Tải thành công {target_filename}")
+
+         except Exception as e:
+             optimizer_logger.error(f"Optimizer: Error downloading/saving {online_name}: {e}", exc_info=True)
+             QMessageBox.critical(self.get_main_window(), "Lỗi Tải (Optimizer)", f"Lỗi khi tải {target_filename}:\n{e}")
+             self.update_status(f"Optimizer: Lỗi tải {target_filename}")
+
+
+    def _handle_update_optimizer_online_algorithm(self, online_algo_data: dict, local_algo_path: Path, online_code_content: str | None = None):
+         online_url = online_algo_data["url"]
+         optimizer_logger.info(f"Optimizer: Updating '{local_algo_path.name}' from {online_url}")
+         self.update_status(f"Optimizer: Đang cập nhật {local_algo_path.name}...")
+         QApplication.processEvents()
+
+         try:
+             final_code_content = online_code_content
+             if final_code_content is None:
+                 import requests
+                 response = requests.get(online_url, timeout=15)
+                 response.raise_for_status()
+                 final_code_content = response.text
+
+             if not isinstance(final_code_content, str):
+                 raise ValueError("Nội dung tải về không phải là chuỗi.")
+
+             backup_path = local_algo_path.with_suffix(local_algo_path.suffix + ".bak")
+             if local_algo_path.exists(): shutil.copy2(local_algo_path, backup_path)
+
+             normalized_content = final_code_content.replace('\r\n', '\n').replace('\r', '\n')
+             local_algo_path.write_text(normalized_content, encoding='utf-8', newline='\n')
+             optimizer_logger.info(f"Optimizer: Updated {local_algo_path}")
+             QMessageBox.information(self.get_main_window(), "Cập Nhật Thành Công (Optimizer)", f"Đã cập nhật:\n{local_algo_path.name}")
+
+             self._refresh_optimizer_algo_lists()
+             if self.main_app:
+                 self.main_app.reload_algorithms()
+             self.update_status(f"Optimizer: Cập nhật thành công {local_algo_path.name}")
+
+         except Exception as e:
+             optimizer_logger.error(f"Optimizer: Error updating {local_algo_path.name}: {e}", exc_info=True)
+             QMessageBox.critical(self.get_main_window(), "Lỗi Cập Nhật (Optimizer)", f"Lỗi khi cập nhật {local_algo_path.name}:\n{e}")
+             self.update_status(f"Optimizer: Lỗi cập nhật {local_algo_path.name}")
+
     def save_edited_copy(self):
         if not self.selected_algorithm_for_edit: return
         display_name = self.selected_algorithm_for_edit
@@ -1998,6 +2699,76 @@ class OptimizerEmbedded(QWidget):
             optimizer_logger.error(f"Error saving edited copy: {e}", exc_info=True)
             QMessageBox.critical(main_window, "Lỗi Lưu File", f"Không thể lưu bản sao:\n{e}")
 
+
+    def _handle_delete_optimizer_local_algorithm(self, algo_path_to_delete: Path):
+        optimizer_logger.info(f"Optimizer: Request to delete local algorithm file: {algo_path_to_delete}")
+        
+        if not algo_path_to_delete or not isinstance(algo_path_to_delete, Path):
+            optimizer_logger.error("Optimizer: Invalid path provided for deletion.")
+            QMessageBox.critical(self.get_main_window(), "Lỗi Tham Số (Optimizer)", "Đường dẫn file không hợp lệ để xóa.")
+            return
+
+        main_window_ref = self.get_main_window()
+
+        msg_box = QMessageBox(main_window_ref)
+        msg_box.setWindowTitle("Xác nhận Xóa (Optimizer)")
+        msg_box.setIcon(QMessageBox.Question)
+        
+        msg_box.setText("Bạn có chắc chắn muốn xóa file thuật toán này không?")
+        
+        informative_text_html = (
+            f"<p><b>{algo_path_to_delete.name}</b></p>"
+            "<p>Thao tác này sẽ xóa file vĩnh viễn và không thể hoàn tác!</p>"
+        )
+        msg_box.setInformativeText(informative_text_html)
+        
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.No)
+
+        reply = msg_box.exec_()
+        
+        if reply == QMessageBox.Yes:
+            try:
+                display_name_key_to_remove = None
+                for dn_key, data_dict in self.loaded_algorithms.items():
+                    if data_dict.get('path') == algo_path_to_delete:
+                        display_name_key_to_remove = dn_key
+                        break
+                
+                algo_path_to_delete.unlink()
+                optimizer_logger.info(f"Optimizer: Successfully deleted algorithm file: {algo_path_to_delete}")
+                self.update_status(f"Optimizer: Đã xóa {algo_path_to_delete.name}")
+
+                if display_name_key_to_remove and display_name_key_to_remove in self.loaded_algorithms:
+                    del self.loaded_algorithms[display_name_key_to_remove]
+                    optimizer_logger.debug(f"Optimizer: Removed '{display_name_key_to_remove}' from self.loaded_algorithms.")
+                
+                path_str_key = str(algo_path_to_delete)
+                if path_str_key in self.optimizer_local_algorithms_managed_ui:
+                    del self.optimizer_local_algorithms_managed_ui[path_str_key]
+                    optimizer_logger.debug(f"Optimizer: Removed UI reference for '{path_str_key}'.")
+                
+                self._populate_optimizer_local_algorithms_list() 
+                
+                if self.main_app:
+                    self.main_app.reload_algorithms() 
+                
+                self.check_resume_possibility()
+
+            except FileNotFoundError:
+                optimizer_logger.warning(f"Optimizer: File to delete not found: {algo_path_to_delete} (possibly already deleted).")
+                QMessageBox.warning(main_window_ref, "File Không Tìm Thấy (Optimizer)", f"Không tìm thấy file: {algo_path_to_delete.name}")
+                self._populate_optimizer_local_algorithms_list()
+                if self.main_app: self.main_app.reload_algorithms()
+            except OSError as e_os:
+                optimizer_logger.error(f"Optimizer: OSError deleting algorithm file {algo_path_to_delete}: {e_os}", exc_info=True)
+                QMessageBox.critical(main_window_ref, "Lỗi Xóa File (Optimizer)", f"Không thể xóa file thuật toán:\n{algo_path_to_delete.name}\n\nLỗi hệ thống: {e_os}")
+            except Exception as e_gen:
+                optimizer_logger.error(f"Optimizer: Unexpected error during algorithm deletion {algo_path_to_delete}: {e_gen}", exc_info=True)
+                QMessageBox.critical(main_window_ref, "Lỗi Không Xác Định (Optimizer)", f"Đã xảy ra lỗi không mong muốn khi xóa thuật toán:\n{e_gen}")
+        else:
+            optimizer_logger.info(f"Optimizer: Deletion of {algo_path_to_delete.name} cancelled by user.")
+            self.update_status(f"Optimizer: Đã hủy xóa {algo_path_to_delete.name}.")
 
     def modify_algorithm_source_ast(self, source_code, target_class_name, new_params):
         main_window = self.get_main_window()
@@ -4753,11 +5524,10 @@ class SquareQLabel(QLabel):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v5.1)")
+        self.setWindowTitle("Lottery Predictor (v5.2)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
-        self.gemini_creator_tab_instance = None
 
         self.font_family_base = 'Segoe UI'
         self.font_size_base = 10
@@ -4786,8 +5556,6 @@ class LotteryPredictionApp(QMainWindow):
         self.algorithms = {}
         self.algorithm_instances = {}
         self.loaded_tools = {}
-        self.local_algorithms_managed_ui = {}
-        self.online_algorithms_ui = {}
 
 
         self.calculation_queue = queue.Queue()
@@ -4812,8 +5580,8 @@ class LotteryPredictionApp(QMainWindow):
         self.cpu_throttling_enabled = False
         self.throttle_sleep_duration = 0.005
 
-        self.algo_count_label = QLabel("Thuật toán: 0")
-        self.tool_count_label = QLabel("Công cụ: 0")
+        self.server_data_sync_status_label = QLabel("Server Data Sync: Checking...")
+        self.server_update_status_label = QLabel("Server Update: Checking...")
         self.ram_usage_label = QLabel("Ram sử dụng: N/A MB")
         self.cpu_usage_label = QLabel("CPU (tổng): N/A %")
         self.system_ram_label = QLabel("Ram hệ thống: N/A GB")
@@ -4825,6 +5593,14 @@ class LotteryPredictionApp(QMainWindow):
         self.system_stats_timer = QTimer(self)
         self.system_stats_timer.timeout.connect(self._update_system_stats)
         self.system_stats_timer.start(2000)
+
+        self.server_status_timer = QTimer(self)
+        self.server_status_timer.timeout.connect(self._check_server_statuses_thread)
+        self.server_status_timer.start(600000)
+        self._last_data_sync_url_checked = ""
+        self._last_update_url_checked = ""
+        self._data_sync_server_online = None
+        self._update_server_online = None
 
         self.update_logger = logging.getLogger("AppUpdate")
         self.update_project_path_edit = None
@@ -4894,12 +5670,23 @@ class LotteryPredictionApp(QMainWindow):
 
         QTimer.singleShot(1500, self.perform_auto_sync_if_needed)
         QTimer.singleShot(2500, self.perform_auto_update_check_if_needed)
+        QTimer.singleShot(3500, self._check_server_statuses_thread)
 
         self.update_status("Ứng dụng sẵn sàng.")
         QTimer.singleShot(200, self._log_actual_window_size)
 
         main_logger.info("LotteryPredictionApp (PyQt5) initialization complete.")
         self.show()
+
+
+    @pyqtSlot(str, bool)
+    def _handle_server_status_updated(self, service_name: str, is_online: bool):
+        """Slot để nhận tín hiệu và cập nhật UI trạng thái server."""
+        main_logger.debug(f"Slot _handle_server_status_updated: Service='{service_name}', Online={is_online}")
+        if service_name == "Data Sync":
+            self._update_server_status_label(self.server_data_sync_status_label, "Data Sync", is_online)
+        elif service_name == "Update":
+            self._update_server_status_label(self.server_update_status_label, "Update", is_online)
 
     def cleanup_on_quit(self):
         """Được gọi khi QApplication chuẩn bị thoát."""
@@ -4929,40 +5716,6 @@ class LotteryPredictionApp(QMainWindow):
         else:
             main_logger.info("SignallingLogHandler là None hoặc đã được dọn dẹp trong cleanup_on_quit.")
 
-    def closeEvent(self, event):
-        main_logger.info("Sự kiện closeEvent của QMainWindow được kích hoạt.")
-
-
-        optimizer_cancelled_exit = False
-        if hasattr(self, 'optimizer_app_instance') and self.optimizer_app_instance and \
-           hasattr(self.optimizer_app_instance, 'optimizer_running') and self.optimizer_app_instance.optimizer_running:
-            reply = QMessageBox.question(self, 'Xác Nhận Thoát',
-                                         "Quá trình tối ưu hóa đang chạy. Bạn có chắc chắn muốn thoát?\nQuá trình sẽ bị dừng.",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.Yes:
-                main_logger.info("Người dùng xác nhận thoát khi optimizer đang chạy. Đang dừng optimizer.")
-                try:
-                    if hasattr(self.optimizer_app_instance, 'optimizer_timer') and self.optimizer_app_instance.optimizer_timer.isActive():
-                         self.optimizer_app_instance.optimizer_timer.stop()
-                    if hasattr(self.optimizer_app_instance, 'display_timer') and self.optimizer_app_instance.display_timer.isActive():
-                         self.optimizer_app_instance.display_timer.stop()
-
-                    self.optimizer_app_instance.stop_optimization(force_stop=True)
-                    if self.optimizer_app_instance.optimizer_thread and self.optimizer_app_instance.optimizer_thread.is_alive():
-                        self.optimizer_app_instance.optimizer_thread.join(timeout=0.5)
-                except Exception as stop_err:
-                    main_logger.error(f"Lỗi khi dừng optimizer khi đóng: {stop_err}")
-            else:
-                main_logger.info("Người dùng hủy thoát do optimizer đang chạy.")
-                optimizer_cancelled_exit = True
-                event.ignore()
-                return
-
-        if optimizer_cancelled_exit:
-            return
-
-        main_logger.info("Chấp nhận sự kiện đóng trong QMainWindow.")
-        event.accept()
 
     def _apply_performance_settings(self):
         main_logger.info("Applying performance settings from config...")
@@ -5085,16 +5838,69 @@ class LotteryPredictionApp(QMainWindow):
 
         spacer = QLabel(" ⭐ ")
 
-        self.bottom_status_bar.addPermanentWidget(self.algo_count_label)
+        self.bottom_status_bar.addPermanentWidget(self.server_data_sync_status_label)
         self.bottom_status_bar.addPermanentWidget(QLabel("   "))
-        self.bottom_status_bar.addPermanentWidget(self.tool_count_label)
+        self.bottom_status_bar.addPermanentWidget(self.server_update_status_label)
         self.bottom_status_bar.addPermanentWidget(QLabel("   "))
+
         self.bottom_status_bar.addPermanentWidget(self.ram_usage_label)
         self.bottom_status_bar.addPermanentWidget(QLabel("   "))
         self.bottom_status_bar.addPermanentWidget(self.cpu_usage_label)
         self.bottom_status_bar.addPermanentWidget(QLabel("   "))
         self.bottom_status_bar.addPermanentWidget(self.system_ram_label)
-        main_logger.info("Bottom status bar with system stats initialized.")
+        main_logger.info("Bottom status bar with server and system stats initialized.")
+
+    def _check_url_connectivity(self, url: str, timeout=5) -> bool:
+        """Kiểm tra kết nối đến một URL cụ thể."""
+        try:
+            import requests
+            response = requests.head(url, timeout=timeout, headers={'Cache-Control': 'no-cache', 'Pragma': 'no-cache'})
+            return 200 <= response.status_code < 400
+        except ImportError:
+            main_logger.warning("Thư viện 'requests' không có, không thể kiểm tra trạng thái server.")
+            return False
+        except requests.exceptions.RequestException as e:
+            main_logger.debug(f"Lỗi kết nối khi kiểm tra URL '{url}': {type(e).__name__} - {e}")
+            return False
+        except Exception as e_gen:
+            main_logger.warning(f"Lỗi không xác định khi kiểm tra URL '{url}': {type(e_gen).__name__} - {e_gen}")
+            return False
+
+    def _update_server_status_label(self, label_widget: QLabel, service_name: str, is_online: bool):
+        """Cập nhật text và style cho một label trạng thái server."""
+        if is_online:
+            label_widget.setText(f"Server {service_name}: <font color='#006400'><b>Online</b></font>")
+        else:
+            label_widget.setText(f"Server {service_name}: <font color='red'><b>Offline</b></font>")
+        label_widget.setTextFormat(Qt.RichText)
+
+    
+    def _check_server_statuses_thread(self):
+        """Khởi chạy luồng kiểm tra trạng thái server."""
+        if hasattr(self, '_server_status_worker_thread') and self._server_status_worker_thread is not None:
+            try:
+                if self._server_status_worker_thread.isRunning():
+                    main_logger.debug("Luồng kiểm tra trạng thái server vẫn đang chạy, bỏ qua lần này.")
+                    return
+            except RuntimeError:
+                main_logger.debug("RuntimeError caught checking previous server status thread; it was likely deleted. Proceeding to create a new one.")
+                self._server_status_worker_thread = None
+
+        self._server_status_worker_object = ServerStatusCheckWorker(self)
+        self._server_status_worker_thread = QThread(self)
+
+        self._server_status_worker_object.moveToThread(self._server_status_worker_thread)
+
+        self._server_status_worker_object.status_updated_signal.connect(self._handle_server_status_updated)
+        self._server_status_worker_object.finished_checking_signal.connect(self._server_status_worker_thread.quit)
+        
+        self._server_status_worker_thread.finished.connect(self._server_status_worker_object.deleteLater)
+        self._server_status_worker_thread.finished.connect(self._server_status_worker_thread.deleteLater)
+        self._server_status_worker_thread.finished.connect(self._clear_server_status_thread_ref)
+
+        self._server_status_worker_thread.started.connect(self._server_status_worker_object.run_check)
+        self._server_status_worker_thread.start()
+        main_logger.info("Đã khởi chạy luồng kiểm tra trạng thái server bằng QThread và Worker.")
 
     def _update_system_stats(self):
         if not HAS_PSUTIL or not self.current_process:
@@ -5133,6 +5939,10 @@ class LotteryPredictionApp(QMainWindow):
         except Exception as e:
             main_logger.error(f"Error updating system stats: {e}", exc_info=False)
 
+    def _clear_server_status_thread_ref(self):
+        main_logger.debug("Server status worker thread finished. Clearing Python reference to QThread.")
+        self._server_status_worker_thread = None
+
 
     def setup_main_ui_structure(self):
         """Thiết lập cấu trúc giao diện người dùng chính của ứng dụng, bao gồm các tab."""
@@ -5161,89 +5971,22 @@ class LotteryPredictionApp(QMainWindow):
         self.tab_widget.setObjectName("MainTabWidget")
 
         self.main_tab_frame = QWidget()
-        self.algo_management_tab_frame = QWidget()
         self.optimizer_tab_frame = QWidget()
         self.tools_tab_frame = QWidget()
-        self.gemini_creator_tab_frame = QWidget()
         self.settings_tab_frame = QWidget()
         self.update_tab_frame = QWidget()
 
         self.tab_widget.addTab(self.main_tab_frame, " Main 🏠")
-        self.tab_widget.addTab(self.algo_management_tab_frame, "  Thuật Toán 🛠️")
-        self.tab_widget.addTab(self.optimizer_tab_frame, " Tối ưu 🚀 ")
+        self.tab_widget.addTab(self.optimizer_tab_frame, " 🎰 Thuật toán🔧  ")
         self.tab_widget.addTab(self.tools_tab_frame, " Công Cụ 🧰")
-        self.tab_widget.addTab(self.gemini_creator_tab_frame, "  Tạo thuật toán 🧠 ")
         self.tab_widget.addTab(self.settings_tab_frame, " Cài Đặt ⚙️")
         self.tab_widget.addTab(self.update_tab_frame, " Update 🔄 ")
 
-        tools_tab_index = -1
-        gemini_tab_index = -1
-        settings_tab_index = -1
         
-        current_tab_count = self.tab_widget.count()
-        for i in range(current_tab_count):
-            widget_at_i = self.tab_widget.widget(i)
-            if widget_at_i == self.tools_tab_frame:
-                tools_tab_index = i
-            elif widget_at_i == self.gemini_creator_tab_frame:
-                gemini_tab_index = i
-            elif widget_at_i == self.settings_tab_frame:
-                settings_tab_index = i
-
-        main_logger.debug(f"Initial Tab Indices - Tools: {tools_tab_index}, Gemini: {gemini_tab_index}, Settings: {settings_tab_index}")
-
-        if gemini_tab_index != -1:
-            target_insert_position = -1
-            if tools_tab_index != -1:
-                target_insert_position = tools_tab_index + 1
-            elif settings_tab_index != -1:
-                target_insert_position = settings_tab_index
-            
-            if target_insert_position != -1 and target_insert_position != gemini_tab_index:
-                gemini_widget_temp = self.tab_widget.widget(gemini_tab_index)
-                gemini_text_temp = self.tab_widget.tabText(gemini_tab_index)
-                
-                self.tab_widget.removeTab(gemini_tab_index)
-                main_logger.info(f"Removed Gemini tab from index {gemini_tab_index}")
-                
-                
-
-                if settings_tab_index > gemini_tab_index and target_insert_position >= settings_tab_index:
-                     current_settings_index_after_remove = -1
-                     for k_idx in range(self.tab_widget.count()):
-                         if self.tab_widget.widget(k_idx) == self.settings_tab_frame:
-                             current_settings_index_after_remove = k_idx
-                             break
-                     if current_settings_index_after_remove != -1:
-                         target_insert_position = current_settings_index_after_remove
-
-                elif tools_tab_index != -1 and target_insert_position > tools_tab_index:
-                     current_tools_index_after_remove = -1
-                     for k_idx in range(self.tab_widget.count()):
-                         if self.tab_widget.widget(k_idx) == self.tools_tab_frame:
-                             current_tools_index_after_remove = k_idx
-                             break
-                     if current_tools_index_after_remove != -1:
-                         target_insert_position = current_tools_index_after_remove + 1
-
-
-                self.tab_widget.insertTab(target_insert_position, gemini_widget_temp, gemini_text_temp)
-                main_logger.info(f"Re-inserted Gemini tab at index {target_insert_position}")
-
-            elif target_insert_position == -1 :
-                main_logger.warning("Không tìm thấy tab Công cụ hoặc Cài đặt để định vị tab Tạo Algo, tab sẽ ở cuối cùng (hoặc vị trí đã add).")
-            else:
-                main_logger.info("Tab Gemini đã ở đúng vị trí, không cần di chuyển.")
-        else:
-            main_logger.error("Không tìm thấy tab Gemini đã thêm ban đầu để di chuyển.")
-
-
         main_layout.addWidget(self.tab_widget)
 
         self.setup_main_tab()
-        self.setup_algo_management_tab()
         self.setup_tools_tab()
-        self.setup_gemini_creator_tab()
         self.setup_settings_tab()
         self.setup_update_tab()
 
@@ -5958,7 +6701,7 @@ class LotteryPredictionApp(QMainWindow):
         bottom_splitter = QSplitter(Qt.Horizontal)
         main_tab_layout.addWidget(bottom_splitter, 1)
 
-        left_groupbox = QGroupBox("Danh sách thuật toán ♻️")
+        left_groupbox = QGroupBox("Danh sách thuật toán 🎰")
         left_outer_layout = QVBoxLayout(left_groupbox)
         left_outer_layout.setContentsMargins(5, 5, 5, 5)
         left_outer_layout.setSpacing(8)
@@ -6390,6 +7133,7 @@ class LotteryPredictionApp(QMainWindow):
         update_settings_form = QFormLayout(update_settings_widget)
         update_settings_form.setSpacing(8)
         update_settings_form.setContentsMargins(0,0,0,10)
+        update_settings_form.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
 
         project_path_layout = QHBoxLayout()
         self.update_project_path_edit = QLineEdit("https://github.com/junlangzi/Lottery-Predictor/")
@@ -6408,7 +7152,7 @@ class LotteryPredictionApp(QMainWindow):
         self.update_save_filename_edit = QLineEdit("main.py")
         self.update_save_filename_edit.setFixedWidth(150)
         save_and_check_layout.addWidget(self.update_save_filename_edit)
-        self.update_check_button = QPushButton("Kiểm tra cập nhật")
+        self.update_check_button = QPushButton("🔄 Kiểm tra cập nhật")
         self.update_check_button.clicked.connect(self._handle_check_for_updates_thread)
         save_and_check_layout.addWidget(self.update_check_button)
         save_and_check_layout.addStretch(1)
@@ -6421,7 +7165,7 @@ class LotteryPredictionApp(QMainWindow):
         update_info_container_widget = QWidget()
         update_info_layout = QVBoxLayout(update_info_container_widget)
         update_info_layout.setContentsMargins(0,0,0,0)
-        update_info_layout.addWidget(QLabel("<b>Thông tin cập nhật:</b>"))
+        update_info_layout.addWidget(QLabel("<b>📥Thông tin cập nhật:</b>"))
         self.update_info_display_textedit = QTextEdit()
         self.update_info_display_textedit.setReadOnly(True)
         self.update_info_display_textedit.setFont(self.get_qfont("code"))
@@ -6450,7 +7194,7 @@ class LotteryPredictionApp(QMainWindow):
         commit_history_container_widget = QWidget()
         commit_history_layout = QVBoxLayout(commit_history_container_widget)
         commit_history_layout.setContentsMargins(0,0,0,0)
-        commit_history_layout.addWidget(QLabel("<b>Lịch sử cập nhật Repository:</b>"))
+        commit_history_layout.addWidget(QLabel("<b>📖Lịch sử cập nhật chương trình:</b>"))
         self.update_commit_history_textedit = QTextEdit()
         self.update_commit_history_textedit.setReadOnly(True)
         self.update_commit_history_textedit.setFont(self.get_qfont("code"))
@@ -6552,11 +7296,31 @@ class LotteryPredictionApp(QMainWindow):
             )
             self.update_info_display_textedit.setHtml(formatted_info)
 
-    def _fetch_online_content(self, url: str, timeout=15) -> str | None:
-        """Tải nội dung từ URL (ví dụ: file Python online, Atom feed)."""
+    def _fetch_online_content(self, url: str, timeout=15, service_type="generic") -> str | None:
+        """
+        Tải nội dung từ URL.
+        service_type có thể là "data_sync", "update_check", "algo_list", "commit_history" để kiểm tra trạng thái cụ thể.
+        """
         import requests
 
-        self.update_logger.info(f"Đang tải nội dung từ: {url}")
+        server_online_flag = True
+        server_name_for_message = "máy chủ"
+
+        if service_type == "data_sync":
+            if hasattr(self, '_data_sync_server_online') and self._data_sync_server_online is False:
+                server_online_flag = False
+                server_name_for_message = "Server Data Sync"
+        elif service_type in ["update_check", "commit_history"]:
+            if hasattr(self, '_update_server_online') and self._update_server_online is False:
+                server_online_flag = False
+                server_name_for_message = "Server Update"
+
+        if not server_online_flag:
+            self.update_logger.warning(f"Từ chối tải từ {url} do {server_name_for_message} đang offline.")
+            self.update_status(f"Không thể tải từ {url.split('/')[-1]} (mạng offline).")
+            return None
+
+        self.update_logger.info(f"Đang tải nội dung từ: {url} (Service: {service_type})")
         self.update_status(f"Đang kết nối tới {url.split('/')[2]}...")
         QApplication.processEvents()
         try:
@@ -6574,68 +7338,7 @@ class LotteryPredictionApp(QMainWindow):
             self.update_status(f"Lỗi không xác định khi tải {url.split('/')[-1]}.")
             return None
 
-    def _parse_github_atom_feed(self, atom_content: str) -> str:
-        """Phân tích Atom feed từ GitHub và định dạng thành HTML."""
-        if not atom_content:
-            return "<p>Không thể tải lịch sử commit.</p>"
-        self.update_logger.info("Đang phân tích GitHub Atom feed...")
-        try:
-            root = ET.fromstring(atom_content)
-            ns = {'atom': 'http://www.w3.org/2005/Atom'}
-
-            repo_name_text = "Repository"
-            feed_title_node = root.find('atom:title', ns)
-            if feed_title_node is not None and feed_title_node.text:
-                 match_repo = re.search(r"Recent Commits to ([^:]+):", feed_title_node.text)
-                 if match_repo:
-                     repo_name_text = match_repo.group(1)
-
-            font_family_code = self.get_qfont('code').family()
-            font_size_code = self.get_font_size('code')
-
-            formatted_history = [f"<div style='font-family: \"{font_family_code}\", monospace; font-size: {font_size_code}pt;'>"]
-            formatted_history.append(f"<b>Lịch sử cập nhật ({repo_name_text})</b><br>")
-
-            entries_found = 0
-            for entry in root.findall('atom:entry', ns):
-                if entries_found >= 20:
-                    break
-                title_node = entry.find('atom:title', ns)
-                updated_node = entry.find('atom:updated', ns)
-
-                title = title_node.text.strip() if title_node is not None and title_node.text else "N/A"
-                updated_str = updated_node.text.strip() if updated_node is not None and updated_node.text else "N/A"
-
-                dt_display = updated_str
-                if updated_str != "N/A":
-                    try:
-                        utc_dt = datetime.datetime.strptime(updated_str, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=datetime.timezone.utc)
-                        vn_tz = datetime.timezone(datetime.timedelta(hours=7))
-                        vn_dt = utc_dt.astimezone(vn_tz)
-                        dt_display = vn_dt.strftime("%d-%m-%Y %H:%M:%S (GMT+7)")
-                    except ValueError:
-                        dt_display = updated_str + " (UTC)"
-
-                title_escaped = title.replace('<', '<').replace('>', '>').replace('\n', '<br>                 ')
-
-                formatted_history.append(f"<b>Ngày giờ:</b><br>  {dt_display}")
-                formatted_history.append(f"<br>")
-                formatted_history.append(f"<b>Hoạt động</b><br>  {title_escaped}")
-                formatted_history.append("<hr style='border:none; border-top:1px dashed #ccc; margin:3px 0;'>")
-                entries_found += 1
-
-            if entries_found == 0:
-                formatted_history.append("<br><i>Không có commit nào trong lịch sử hoặc lỗi parse.</i>")
-
-            formatted_history.append("</div>")
-            return "".join(formatted_history)
-        except ET.ParseError as e:
-            self.update_logger.error(f"Lỗi ParseError XML cho Atom feed: {e}")
-            return f"<p>Lỗi parse XML Atom feed: {e}</p>"
-        except Exception as e:
-            self.update_logger.error(f"Lỗi phân tích Atom feed: {e}")
-            return f"<p>Lỗi xử lý lịch sử commit: {e}</p>"
-
+    
     def _compare_versions(self, current_info: dict, online_info: dict) -> bool:
         """
         So sánh phiên bản và ngày tháng.
@@ -6698,6 +7401,91 @@ class LotteryPredictionApp(QMainWindow):
             self.update_file_url_edit.setEnabled(True)
             if self.update_file_url_edit.text() == default_raw_file_url and project_path_text != default_project_url:
                 self.update_file_url_edit.setText("")
+
+    def _parse_markdown_update_list(self, md_content: str) -> str:
+         self.update_logger.info("Đang phân tích danh sách cập nhật Markdown...")
+         if not md_content:
+             return "<p>Không có nội dung cập nhật để hiển thị.</p>"
+
+         html_output = []
+         font_family_code = self.get_qfont('code').family()
+         font_size_code = self.get_font_size('code')
+         
+         html_output.append(f"<div style='font-family: \"{font_family_code}\", monospace; font-size: {font_size_code}pt; line-height: 1.4;'>")
+         
+         update_entries_raw = re.split(r'(?=### \d{2}/\d{2}/\d{4})', md_content)
+         
+         entries_found = 0
+         first_entry_processed = False
+
+         for entry_raw in update_entries_raw:
+             entry_raw = entry_raw.strip()
+             if not entry_raw or entry_raw.lower().startswith("# update list"):
+                 continue
+
+             if first_entry_processed:
+                 html_output.append("<hr style='border:none; border-top:1px dashed #ccc; margin:15px 0;'>")
+             first_entry_processed = True
+
+             lines = entry_raw.splitlines()
+             if not lines:
+                 continue
+
+             date_line = lines.pop(0).strip() 
+             date_match = re.match(r"### (\d{2}/\d{2}/\d{4})", date_line)
+             date_str = date_match.group(1) if date_match else "Không rõ ngày"
+             
+             html_output.append(f"<div style='margin-bottom: 10px;'>")
+             html_output.append(f"<p style='margin-top:0; margin-bottom: 3px;'><b style='color: red;'>Ngày cập nhật: {date_str}</b></p>")
+
+             version_line_found = False
+             notes_content_html = ""
+             
+             for line_content in lines:
+                 line_strip = line_content.strip()
+                 
+                 if not version_line_found:
+                     version_match = re.match(r"\*\*(Update ver .*?|Update \[.*?\]\(.*?\)|Update .*?)\*\*", line_strip, re.IGNORECASE)
+                     if version_match:
+                         version_text_raw = version_match.group(1).strip()
+                         version_text_html = re.sub(r"\[([^\]]+?)\]\(([^)]+?)\)", r"<a href='\2' style='color: #0056b3; text-decoration:none;'>\1</a>", version_text_raw)
+                         html_output.append(f"<p style='margin-top:0; margin-bottom: 5px;'><b style='color: blue;'>Phiên bản: {version_text_html}</b></p>")
+                         version_line_found = True
+                         continue
+                 
+                 if line_strip:
+                     processed_line_html = re.sub(r"\[([^\]]+?)\]\(([^)]+?)\)", r"<a href='\2' style='color: #0056b3; text-decoration:none;'>\1</a>", line_content)
+                     if processed_line_html.strip().lower() == "<br>" or processed_line_html.strip().lower() == "<br><br>":
+                         notes_content_html += processed_line_html.strip()
+                     else:
+                         notes_content_html += processed_line_html + "<br>"
+             
+             if notes_content_html:
+                 if notes_content_html.endswith("<br>"):
+                     original_last_note_line = ""
+                     temp_notes_lines_for_check = [l.strip() for l in lines if l.strip()]
+                     if temp_notes_lines_for_check:
+                         for l_idx in range(len(lines)-1, -1, -1):
+                             current_line_to_check = lines[l_idx].strip()
+                             is_a_version_line = bool(re.match(r"\*\*(Update ver .*?|Update \[.*?\]\(.*?\)|Update .*?)\*\*", current_line_to_check, re.IGNORECASE))
+                             if not is_a_version_line :
+                                 original_last_note_line = current_line_to_check.lower()
+                                 break
+                     if not (original_last_note_line == "<br>" or original_last_note_line == "<br><br>"):
+                         notes_content_html = notes_content_html[:-4]
+
+                 html_output.append("<b>Nội dung:</b><br><div style='padding-left: 15px; margin-top: 3px;'>")
+                 html_output.append(notes_content_html)
+                 html_output.append("</div>")
+
+             html_output.append("</div>")
+             entries_found +=1
+
+         if entries_found == 0:
+             html_output.append("<p><i>Không có mục cập nhật nào được tìm thấy hoặc định dạng file không đúng.</i></p>")
+
+         html_output.append("</div>")
+         return "".join(html_output)
 
     def _handle_check_for_updates_thread(self):
         """Xử lý việc kiểm tra cập nhật trong một luồng riêng."""
@@ -6973,323 +7761,7 @@ class LotteryPredictionApp(QMainWindow):
             target_label.setStyleSheet("color: red; font-weight: bold; border: 1px solid red;")
             target_label.setWordWrap(True)
 
-    def _populate_local_algorithms_management_list(self):
-        algo_mgmnt_logger.info("Populating local algorithms list for management tab...")
         
-        if hasattr(self, 'local_algo_manage_list_layout'):
-            while self.local_algo_manage_list_layout.count() > 0:
-                item = self.local_algo_manage_list_layout.takeAt(0)
-                widget = item.widget()
-                if widget:
-                    widget.deleteLater()
-        else:
-            algo_mgmnt_logger.error("local_algo_manage_list_layout not found.")
-            return
-
-        self.local_algorithms_managed_ui.clear()
-
-        if not hasattr(self, 'initial_local_algo_manage_label') or not self.initial_local_algo_manage_label:
-            self.initial_local_algo_manage_label = QLabel("Đang tải thuật toán trên máy...")
-            self.initial_local_algo_manage_label.setStyleSheet("font-style: italic; color: #6c757d;")
-            self.initial_local_algo_manage_label.setAlignment(Qt.AlignCenter)
-        
-        if self.local_algo_manage_list_layout.indexOf(self.initial_local_algo_manage_label) == -1:
-            self.local_algo_manage_list_layout.addWidget(self.initial_local_algo_manage_label)
-        else:
-            self.initial_local_algo_manage_label.setText("Đang tải thuật toán trên máy...")
-            self.initial_local_algo_manage_label.setStyleSheet("font-style: italic; color: #6c757d;")
-
-
-        if not self.algorithms_dir.is_dir():
-            algo_mgmnt_logger.warning(f"Algorithms directory not found: {self.algorithms_dir}")
-            if self.initial_local_algo_manage_label:
-                 self.initial_local_algo_manage_label.setText(f"Lỗi: Không tìm thấy thư mục thuật toán:\n{self.algorithms_dir}")
-                 self.initial_local_algo_manage_label.setStyleSheet("color: red;")
-            return
-
-        local_algo_files = [
-            f for f in self.algorithms_dir.glob('*.py')
-            if f.is_file() and f.name not in ["__init__.py", "base.py"]
-        ]
-
-        if not local_algo_files:
-            if self.initial_local_algo_manage_label: 
-                 self.initial_local_algo_manage_label.setText("Không có thuật toán nào trên máy.")
-                 if self.local_algo_manage_list_layout.indexOf(self.initial_local_algo_manage_label) == -1:
-                     self.local_algo_manage_list_layout.addWidget(self.initial_local_algo_manage_label)
-            return
-        
-        if self.initial_local_algo_manage_label and \
-           self.local_algo_manage_list_layout.indexOf(self.initial_local_algo_manage_label) != -1:
-            self.local_algo_manage_list_layout.removeWidget(self.initial_local_algo_manage_label)
-            self.initial_local_algo_manage_label.deleteLater()
-            self.initial_local_algo_manage_label = None 
-
-
-        for algo_path in local_algo_files:
-            try: 
-                content = algo_path.read_text(encoding='utf-8')
-                metadata = self._extract_metadata_from_py_content(content) 
-                
-                algo_name_display = metadata.get("name") or algo_path.stem
-                description = metadata.get("description") or "Không có mô tả."
-                algo_id = metadata.get("id")
-                algo_date_str = metadata.get("date_str")
-
-                display_name_for_optimizer = f"{algo_name_display} ({algo_path.name})"
-
-                card_frame = QFrame()
-                card_frame.setObjectName("CardFrame")
-                card_layout = QVBoxLayout(card_frame)
-                card_layout.setContentsMargins(8,8,8,8)
-                card_layout.setSpacing(5)
-
-                name_label_text = algo_name_display
-                if algo_id: name_label_text += f" (ID: {algo_id})"
-                name_label = QLabel(name_label_text)
-                name_label.setFont(self.get_qfont("bold"))
-                name_label.setWordWrap(True)
-                name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-                name_label.setMinimumWidth(1)
-                card_layout.addWidget(name_label)
-
-                desc_label = QLabel(description)
-                desc_label.setFont(self.get_qfont("small"))
-                desc_label.setWordWrap(True)
-                desc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-                desc_label.setMinimumWidth(1)
-                card_layout.addWidget(desc_label)
-                
-                file_info_text = f"Tên File:<br> {algo_path.name}"
-                if algo_date_str: file_info_text += f" <br> Date update: {algo_date_str}"
-                file_label = QLabel(file_info_text)
-                file_label.setFont(self.get_qfont("italic_small"))
-                file_label.setStyleSheet("color: #6c757d;")
-                file_label.setWordWrap(True)
-                file_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-                file_label.setMinimumWidth(1)
-                card_layout.addWidget(file_label)
-
-                button_container = QWidget()
-                button_container_layout = QHBoxLayout(button_container)
-                button_container_layout.setContentsMargins(0,5,0,0)
-                button_container_layout.setSpacing(5) 
-                button_container_layout.addStretch(1)
-
-                edit_button = QPushButton(" 🔨 Sửa  ")
-                edit_button.setObjectName("ListAccentButton")
-                edit_button.setToolTip(f"Chỉnh sửa tham số thuật toán: {algo_name_display}")
-                edit_button.clicked.connect(
-                    lambda checked=False, dn=display_name_for_optimizer: self._handle_manage_tab_edit_request(dn)
-                )
-                button_container_layout.addWidget(edit_button)
-
-                optimize_button = QPushButton("🚀 Tối ưu")
-                optimize_button.setObjectName("ListAccentButton")
-                optimize_button.setToolTip(f"Tối ưu hóa thuật toán: {algo_name_display}")
-                optimize_button.clicked.connect(
-                    lambda checked=False, dn=display_name_for_optimizer: self._handle_manage_tab_optimize_request(dn)
-                )
-                button_container_layout.addWidget(optimize_button)
-                
-                delete_button = QPushButton("❎ Xóa") 
-                delete_button.setObjectName("DangerButton") 
-                delete_button.setToolTip(f"Xóa file thuật toán: {algo_path.name}")
-                delete_button.clicked.connect(lambda checked=False, p=algo_path: self._handle_delete_local_algorithm(p))
-                button_container_layout.addWidget(delete_button)
-                
-                card_layout.addWidget(button_container)
-
-                self.local_algo_manage_list_layout.addWidget(card_frame)
-                self.local_algorithms_managed_ui[str(algo_path)] = card_frame
-
-            except AttributeError as ae: 
-                if "_extract_metadata_from_py_content" in str(ae):
-                    algo_mgmnt_logger.critical(f"CRITICAL: Method _extract_metadata_from_py_content not found in LotteryPredictionApp for {algo_path.name}. Please define it.")
-                    error_item = QLabel(f"Lỗi nghiêm trọng khi xử lý {algo_path.name}: Thiếu phương thức nội bộ.")
-                    error_item.setStyleSheet("color: red; font-weight: bold;")
-                    self.local_algo_manage_list_layout.addWidget(error_item)
-                else: 
-                    algo_mgmnt_logger.error(f"AttributeError creating UI for local algorithm {algo_path.name}: {ae}", exc_info=True)
-                    error_item = QLabel(f"Lỗi thuộc tính khi tải {algo_path.name}: {ae}")
-                    error_item.setStyleSheet("color: red;")
-                    self.local_algo_manage_list_layout.addWidget(error_item)
-            except Exception as e:
-                algo_mgmnt_logger.error(f"Error creating UI for local algorithm {algo_path.name}: {e}", exc_info=True)
-                error_item = QLabel(f"Lỗi tải {algo_path.name}: {e}")
-                error_item.setStyleSheet("color: red;")
-                self.local_algo_manage_list_layout.addWidget(error_item)
-
-            except AttributeError as ae: 
-                if "_extract_metadata_from_py_content" in str(ae):
-                    algo_mgmnt_logger.critical(f"CRITICAL: Method _extract_metadata_from_py_content not found in LotteryPredictionApp for {algo_path.name}. Please define it.")
-                    error_item = QLabel(f"Lỗi nghiêm trọng khi xử lý {algo_path.name}: Thiếu phương thức nội bộ.")
-                    error_item.setStyleSheet("color: red; font-weight: bold;")
-                    self.local_algo_manage_list_layout.addWidget(error_item)
-                else:
-                    algo_mgmnt_logger.error(f"AttributeError creating UI for local algorithm {algo_path.name}: {ae}", exc_info=True)
-                    error_item = QLabel(f"Lỗi thuộc tính khi tải {algo_path.name}: {ae}")
-                    error_item.setStyleSheet("color: red;")
-                    self.local_algo_manage_list_layout.addWidget(error_item)
-            except Exception as e:
-                algo_mgmnt_logger.error(f"Error creating UI for local algorithm {algo_path.name}: {e}", exc_info=True)
-                error_item = QLabel(f"Lỗi tải {algo_path.name}: {e}")
-                error_item.setStyleSheet("color: red;")
-                self.local_algo_manage_list_layout.addWidget(error_item)
-
-            except AttributeError as ae:
-                if "_extract_metadata_from_py_content" in str(ae):
-                    algo_mgmnt_logger.critical(f"CRITICAL: Method _extract_metadata_from_py_content not found in LotteryPredictionApp for {algo_path.name}. Please define it.")
-                    error_item = QLabel(f"Lỗi nghiêm trọng khi xử lý {algo_path.name}: Thiếu phương thức nội bộ.")
-                    error_item.setStyleSheet("color: red; font-weight: bold;")
-                    self.local_algo_manage_list_layout.addWidget(error_item)
-                else:
-                    algo_mgmnt_logger.error(f"AttributeError creating UI for local algorithm {algo_path.name}: {ae}", exc_info=True)
-                    error_item = QLabel(f"Lỗi thuộc tính khi tải {algo_path.name}: {ae}")
-                    error_item.setStyleSheet("color: red;")
-                    self.local_algo_manage_list_layout.addWidget(error_item)
-            except Exception as e:
-                algo_mgmnt_logger.error(f"Error creating UI for local algorithm {algo_path.name}: {e}", exc_info=True)
-                error_item = QLabel(f"Lỗi tải {algo_path.name}: {e}")
-                error_item.setStyleSheet("color: red;")
-                self.local_algo_manage_list_layout.addWidget(error_item)
-
-    def _handle_delete_local_algorithm(self, algo_path: Path):
-        algo_mgmnt_logger.info(f"Attempting to delete local algorithm: {algo_path}")
-        
-        reply = QMessageBox.question(self, "Xác nhận Xóa",
-                                     f"Bạn có chắc chắn muốn xóa file thuật toán này không?\n\n{algo_path.name}\n\nThao tác này không thể hoàn tác!",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        
-        if reply == QMessageBox.Yes:
-            try:
-                algo_path.unlink()
-                algo_mgmnt_logger.info(f"Successfully deleted algorithm file: {algo_path}")
-                self.update_status(f"Đã xóa thuật toán: {algo_path.name}")
-
-                self._populate_local_algorithms_management_list()
-                
-                self.reload_algorithms()
-
-            except OSError as e:
-                algo_mgmnt_logger.error(f"Error deleting algorithm file {algo_path}: {e}", exc_info=True)
-                QMessageBox.critical(self, "Lỗi Xóa File", f"Không thể xóa file thuật toán:\n{algo_path.name}\n\nLỗi: {e}")
-            except Exception as e:
-                algo_mgmnt_logger.error(f"Unexpected error during algorithm deletion {algo_path}: {e}", exc_info=True)
-                QMessageBox.critical(self, "Lỗi Không Xác Định", f"Đã xảy ra lỗi không mong muốn khi xóa thuật toán:\n{e}")
-
-    def _fetch_and_populate_online_algorithms_list(self):
-        """
-        Tìm nạp danh sách thuật toán từ URL được cấu hình,
-        sau đó tìm nạp chi tiết (mô tả) cho từng thuật toán và điền vào UI.
-        """
-        algo_mgmnt_logger.info("Đang tìm nạp và điền danh sách thuật toán online...")
-        
-        if hasattr(self, 'online_algo_list_layout'):
-            while self.online_algo_list_layout.count() > 0:
-                item = self.online_algo_list_layout.takeAt(0)
-                widget = item.widget()
-                if widget:
-                    widget.deleteLater()
-        else:
-            algo_mgmnt_logger.error("online_algo_list_layout không tìm thấy.")
-            return
-
-        self.online_algorithms_ui.clear()
-
-        if not hasattr(self, 'initial_online_algo_label') or not self.initial_online_algo_label:
-            self.initial_online_algo_label = QLabel("Đang tải danh sách thuật toán online...")
-            self.initial_online_algo_label.setStyleSheet("font-style: italic; color: #6c757d;")
-            self.initial_online_algo_label.setAlignment(Qt.AlignCenter)
-        
-        if self.online_algo_list_layout.indexOf(self.initial_online_algo_label) == -1:
-            self.online_algo_list_layout.addWidget(self.initial_online_algo_label)
-        else: 
-            self.initial_online_algo_label.setText("Đang tải danh sách thuật toán online...")
-            self.initial_online_algo_label.setStyleSheet("font-style: italic; color: #6c757d;")
-        
-        QApplication.processEvents()
-
-        algo_list_url = self.config.get('DATA', 'algo_list_url', fallback="")
-        if not algo_list_url:
-            algo_mgmnt_logger.error("URL danh sách thuật toán chưa được cấu hình.")
-            if self.initial_online_algo_label:
-                self.initial_online_algo_label.setText("Lỗi: URL danh sách thuật toán chưa được cấu hình trong Cài đặt.")
-                self.initial_online_algo_label.setStyleSheet("color: red;")
-            return
-
-        online_list_content = None
-        try:
-            import requests 
-            response = requests.get(algo_list_url, timeout=15)
-            response.raise_for_status()
-            online_list_content = response.text
-            algo_mgmnt_logger.info(f"Đã tìm nạp thành công danh sách thuật toán từ: {algo_list_url}")
-        except requests.exceptions.RequestException as e:
-            algo_mgmnt_logger.error(f"Không thể tìm nạp danh sách thuật toán online từ {algo_list_url}: {e}", exc_info=True)
-            if self.initial_online_algo_label:
-                self.initial_online_algo_label.setText(f"Lỗi tải danh sách online (mạng/URL):\n{e}")
-                self.initial_online_algo_label.setStyleSheet("color: red;")
-            return
-        except Exception as e: 
-            algo_mgmnt_logger.error(f"Lỗi không xác định khi tìm nạp danh sách online: {e}", exc_info=True)
-            if self.initial_online_algo_label:
-                self.initial_online_algo_label.setText(f"Lỗi không xác định khi tải danh sách:\n{e}")
-                self.initial_online_algo_label.setStyleSheet("color: red;")
-            return
-        
-        parsed_online_algos = []
-        if online_list_content:
-            line_pattern = re.compile(r"\[([^\]]+?)\]-\[([^\]]+?)\]-\[([^\]]+?)\]-\[(ID:\s*\d{6})\]", re.IGNORECASE)
-            
-            lines = online_list_content.splitlines()
-            for line_num, line in enumerate(lines):
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                
-                match = line_pattern.fullmatch(line)
-                if match:
-                    parsed_url = match.group(1).strip()
-                    name = match.group(2).strip()
-                    date_str = match.group(3).strip()
-                    id_full_part_in_brackets = match.group(4).strip()
-
-                    id_numeric_match = re.search(r"\d{6}", id_full_part_in_brackets)
-                    if id_numeric_match:
-                        actual_id = id_numeric_match.group(0)
-                        parsed_online_algos.append({
-                            "url": parsed_url,
-                            "name": name,
-                            "date_str": date_str,
-                            "id": actual_id,
-                            "raw_line_for_debug": line 
-                        })
-                        algo_mgmnt_logger.debug(f"Parsed online algo: URL='{parsed_url}', Name='{name}', Date='{date_str}', ID='{actual_id}'")
-                    else:
-                        algo_mgmnt_logger.warning(f"Không thể trích xuất số ID từ '{id_full_part_in_brackets}' trong dòng: {line_num+1} -> '{line}'")
-                else:
-                    algo_mgmnt_logger.warning(f"Bỏ qua dòng không đúng định dạng regex {line_num+1} trong danh sách online: '{line}'")
-
-        if not parsed_online_algos:
-            if self.initial_online_algo_label:
-                self.initial_online_algo_label.setText("Không tìm thấy thuật toán nào trong danh sách online hoặc định dạng file không đúng.")
-                self.initial_online_algo_label.setStyleSheet("font-style: italic; color: #6c757d;")
-            if self.initial_online_algo_label and self.online_algo_list_layout.indexOf(self.initial_online_algo_label) == -1:
-                 self.online_algo_list_layout.addWidget(self.initial_online_algo_label)
-            return
-        
-        if self.initial_online_algo_label and \
-           self.online_algo_list_layout.indexOf(self.initial_online_algo_label) != -1:
-            self.online_algo_list_layout.removeWidget(self.initial_online_algo_label)
-            self.initial_online_algo_label.deleteLater()
-            self.initial_online_algo_label = None
-
-        algo_mgmnt_logger.info(f"Đã parse được {len(parsed_online_algos)} thuật toán online. Đang tạo UI cards...")
-        for online_algo_data in parsed_online_algos:
-            self._create_online_algorithm_card_qt(online_algo_data)
-        
-        algo_mgmnt_logger.info("Hoàn tất việc điền danh sách thuật toán online.")
 
     def _get_local_algorithm_metadata_by_id(self, target_id: str) -> tuple[Path | None, dict | None]:
         """Finds a local algorithm by its ID and returns its path and metadata."""
@@ -7306,223 +7778,8 @@ class LotteryPredictionApp(QMainWindow):
         return None, None
 
     
-
-    def _create_online_algorithm_card_qt(self, online_algo_data: dict):
-        """Creates a UI card for a single online algorithm."""
-        algo_mgmnt_logger.debug(f"Creating UI card for online algo: {online_algo_data.get('name')}")
-        
-        online_url = online_algo_data["url"]
-        online_name = online_algo_data["name"]
-        online_date_str = online_algo_data["date_str"]
-        online_id = online_algo_data["id"]
-
-        description = "Đang tải mô tả..."
-        online_code_content = None
-        try:
-            import requests
-            py_response = requests.get(online_url, timeout=10)
-            py_response.raise_for_status()
-            online_code_content = py_response.text
-            metadata_from_online_code = self._extract_metadata_from_py_content(online_code_content)
-            description = metadata_from_online_code.get("description") or "Không có mô tả trong code."
-            id_from_code = metadata_from_online_code.get("id")
-            if id_from_code and id_from_code != online_id:
-                algo_mgmnt_logger.warning(f"ID mismatch for {online_name}: List ID='{online_id}', Code ID='{id_from_code}'. Using list ID.")
-        except requests.exceptions.RequestException as e:
-            description = "Lỗi tải mô tả (mạng)."
-            algo_mgmnt_logger.warning(f"Failed to fetch .py content for description of {online_name}: {e}")
-        except Exception as e_desc:
-            description = "Lỗi xử lý mô tả."
-            algo_mgmnt_logger.warning(f"Failed to extract description for {online_name}: {e_desc}")
-
-
-        card_frame = QFrame()
-        card_frame.setObjectName("CardFrame")
-        card_layout = QVBoxLayout(card_frame)
-        card_layout.setContentsMargins(8,8,8,8)
-        card_layout.setSpacing(5)
-
-        name_label_text = online_name
-        name_label = QLabel(name_label_text)
-        name_label.setFont(self.get_qfont("bold"))
-        name_label.setWordWrap(True)
-        card_layout.addWidget(name_label)
-
-        desc_label = QLabel(description)
-        desc_label.setFont(self.get_qfont("small"))
-        desc_label.setWordWrap(True)
-        card_layout.addWidget(desc_label)
-
-        info_text = f"ID: {online_id} - Online Date: {online_date_str}"
-        info_label = QLabel(info_text)
-        info_label.setFont(self.get_qfont("italic_small"))
-        info_label.setStyleSheet("color: #5a5a5a;")
-        card_layout.addWidget(info_label)
-
-        button_container = QWidget()
-        button_layout = QHBoxLayout(button_container)
-        button_layout.setContentsMargins(0,5,0,0)
-        button_layout.addStretch(1)
-
-        local_algo_path, local_metadata = self._get_local_algorithm_metadata_by_id(online_id)
-        
-        action_widget = None
-
-        if local_algo_path and local_metadata:
-            status_label_text = f"Đã có: {local_algo_path.name}"
-            local_date_str = local_metadata.get("date_str")
-            needs_update = False
-            if local_date_str and online_date_str:
-                try:
-                    online_dt = datetime.datetime.strptime(online_date_str, "%d/%m/%Y")
-                    local_dt = datetime.datetime.strptime(local_date_str, "%d/%m/%Y")
-                    if online_dt > local_dt:
-                        needs_update = True
-                        status_label_text += f" (Local: {local_date_str} - Cần cập nhật)"
-                    else:
-                        status_label_text += f" (Local: {local_date_str} - Đã cập nhật)"
-                except ValueError:
-                    status_label_text += " (Lỗi so sánh ngày)"
-                    algo_mgmnt_logger.warning(f"Date parse error comparing online {online_date_str} and local {local_date_str} for ID {online_id}")
-            
-            if needs_update:
-                update_button = QPushButton("⬆️ Cập nhật")
-                update_button.setObjectName("AccentButton")
-                update_button.setToolTip(f"Cập nhật file local '{local_algo_path.name}' bằng phiên bản online.")
-                update_button.clicked.connect(lambda chk=False, o_data=online_algo_data, l_path=local_algo_path, o_content=online_code_content : self._handle_update_online_algorithm(o_data, l_path, o_content))
-                action_widget = update_button
-            else:
-                status_widget = QLabel(status_label_text)
-                status_widget.setStyleSheet("color: green; font-style: italic;")
-                action_widget = status_widget
-        else:
-            download_button = QPushButton("⬇️ Tải về")
-            download_button.setObjectName("AccentButton")
-            download_button.setToolTip(f"Tải và lưu thuật toán '{online_name}' vào thư mục algorithms.")
-            download_button.clicked.connect(lambda chk=False, o_data=online_algo_data, o_content=online_code_content : self._handle_download_online_algorithm(o_data, o_content))
-            action_widget = download_button
-        
-        if action_widget:
-            button_layout.addWidget(action_widget)
-        card_layout.addWidget(button_container)
-        
-        self.online_algo_list_layout.addWidget(card_frame)
-        self.online_algorithms_ui[online_url] = card_frame
-
-
-    def _handle_download_online_algorithm(self, online_algo_data: dict, online_code_content: str | None = None):
-        online_url = online_algo_data["url"]
-        online_name = online_algo_data["name"]
-        
-        filename_from_url_obj = Path(online_url)
-        if filename_from_url_obj.suffix.lower() == ".pyw":
-            target_filename = filename_from_url_obj.name
-        else:
-            target_filename = filename_from_url_obj.stem + ".py"
-
-        save_path = self.algorithms_dir / target_filename
-
-        algo_mgmnt_logger.info(f"Downloading algorithm '{online_name}' from {online_url} to {save_path}")
-        self.update_status(f"Đang tải về {target_filename}...")
-        QApplication.processEvents()
-
-        if save_path.exists():
-            reply = QMessageBox.question(self, "File Tồn Tại",
-                                         f"File '{target_filename}' đã tồn tại. Ghi đè?",
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if reply == QMessageBox.No:
-                self.update_status("Tải về bị hủy do file đã tồn tại.")
-                return
-        
-        try:
-            final_code_content_to_write = online_code_content
-            if final_code_content_to_write is None: 
-                import requests
-                response = requests.get(online_url, timeout=15)
-                response.raise_for_status()
-                final_code_content_to_write = response.text
-            
-            if isinstance(final_code_content_to_write, str):
-                normalized_content = final_code_content_to_write.replace('\r\n', '\n').replace('\r', '\n')
-            else:
-                algo_mgmnt_logger.error(f"Nội dung tải về cho {online_url} không phải là chuỗi (kiểu: {type(final_code_content_to_write)}). Tải về bị hủy.")
-                QMessageBox.critical(self, "Lỗi Tải", f"Nội dung tải về từ {online_url} không hợp lệ (không phải dạng văn bản).")
-                self.update_status(f"Lỗi tải {target_filename}: nội dung không hợp lệ.")
-                return
-
-            save_path.write_text(normalized_content, encoding='utf-8', newline='\n')
-            algo_mgmnt_logger.info(f"Successfully downloaded and saved to {save_path} with LF newlines.")
-            QMessageBox.information(self, "Tải Thành Công", f"Đã tải và lưu thuật toán:\n{target_filename}")
-            self.update_status(f"Đã tải thành công: {target_filename}")
-            
-            self._refresh_algo_management_page() 
-            self.reload_algorithms() 
-
-        except requests.exceptions.RequestException as e:
-            algo_mgmnt_logger.error(f"Network error downloading {online_url}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Tải", f"Lỗi mạng khi tải {target_filename}:\n{e}")
-            self.update_status(f"Lỗi tải {target_filename}.")
-        except IOError as e:
-            algo_mgmnt_logger.error(f"IOError saving {save_path}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Lưu File", f"Không thể lưu file {target_filename}:\n{e}")
-            self.update_status(f"Lỗi lưu {target_filename}.")
-        except Exception as e:
-            algo_mgmnt_logger.error(f"Unexpected error downloading/saving {online_name}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Không Xác Định", f"Lỗi khi tải {target_filename}:\n{e}")
-            self.update_status(f"Lỗi không xác định khi tải {target_filename}.")
-
-    def _handle_update_online_algorithm(self, online_algo_data: dict, local_algo_path: Path, online_code_content: str | None = None):
-        online_url = online_algo_data["url"]
-        online_name = online_algo_data["name"]
-        
-        algo_mgmnt_logger.info(f"Updating local algorithm '{local_algo_path.name}' from {online_url}")
-        self.update_status(f"Đang cập nhật {local_algo_path.name}...")
-        QApplication.processEvents()
-
-        try:
-            final_code_content_to_write = online_code_content
-            if final_code_content_to_write is None:
-                import requests
-                response = requests.get(online_url, timeout=15)
-                response.raise_for_status()
-                final_code_content_to_write = response.text
-
-            if isinstance(final_code_content_to_write, str):
-                normalized_content = final_code_content_to_write.replace('\r\n', '\n').replace('\r', '\n')
-            else:
-                algo_mgmnt_logger.error(f"Nội dung tải về cho {online_url} (cập nhật) không phải là chuỗi (kiểu: {type(final_code_content_to_write)}). Cập nhật bị hủy.")
-                QMessageBox.critical(self, "Lỗi Cập Nhật", f"Nội dung tải về từ {online_url} để cập nhật không hợp lệ (không phải dạng văn bản).")
-                self.update_status(f"Lỗi cập nhật {local_algo_path.name}: nội dung không hợp lệ.")
-                return
-
-            backup_path = local_algo_path.with_suffix(local_algo_path.suffix + ".bak")
-            try:
-                if local_algo_path.exists():
-                    shutil.copy2(local_algo_path, backup_path)
-                    algo_mgmnt_logger.info(f"Backed up '{local_algo_path.name}' to '{backup_path.name}'")
-            except Exception as e_backup:
-                algo_mgmnt_logger.warning(f"Could not create backup for {local_algo_path.name}: {e_backup}")
-
-            local_algo_path.write_text(normalized_content, encoding='utf-8', newline='\n')
-            algo_mgmnt_logger.info(f"Successfully updated {local_algo_path} with LF newlines.")
-            QMessageBox.information(self, "Cập Nhật Thành Công", f"Đã cập nhật thuật toán:\n{local_algo_path.name}")
-            self.update_status(f"Đã cập nhật thành công: {local_algo_path.name}")
-
-            self._refresh_algo_management_page()
-            self.reload_algorithms()
-
-        except requests.exceptions.RequestException as e:
-            algo_mgmnt_logger.error(f"Network error updating {online_url}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Cập Nhật", f"Lỗi mạng khi cập nhật {local_algo_path.name}:\n{e}")
-            self.update_status(f"Lỗi cập nhật {local_algo_path.name}.")
-        except IOError as e:
-            algo_mgmnt_logger.error(f"IOError saving updated {local_algo_path}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Lưu File", f"Không thể ghi đè file {local_algo_path.name}:\n{e}")
-            self.update_status(f"Lỗi lưu khi cập nhật {local_algo_path.name}.")
-        except Exception as e:
-            algo_mgmnt_logger.error(f"Unexpected error updating {local_algo_path.name}: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Không Xác Định", f"Lỗi khi cập nhật {local_algo_path.name}:\n{e}")
-            self.update_status(f"Lỗi không xác định khi cập nhật {local_algo_path.name}.")         
+    
+    
 
     def _populate_settings_tab_ui(self):
         """Điền dữ liệu từ config vào các widget trên tab Cài đặt."""
@@ -7910,46 +8167,6 @@ class LotteryPredictionApp(QMainWindow):
                  self.save_config("settings.ini")
             except Exception as e:
                  main_logger.error(f"Failed to save config after applying defaults/corrections: {e}", exc_info=True)
-
-    def _apply_default_config_to_vars(self):
-         """
-         Cập nhật các biến thành viên và một số widget UI dựa trên đối tượng self.config hiện tại.
-         Thường được gọi sau khi self.config đã được đặt về giá trị mặc định.
-         """
-         main_logger.debug("Áp dụng các giá trị config mặc định vào biến và một số UI.")
-         
-         data_file = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
-         sync_url = self.config.get('DATA', 'sync_url', fallback="https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/data/xsmb-2-digits.json")
-         algo_list_url = self.config.get('DATA', 'algo_list_url', fallback="https://raw.githubusercontent.com/junlangzi/Lottery-Predictor-Algorithms/refs/heads/main/update.lpa")
-
-         width_str = self.config.get('UI', 'width', fallback="1200")
-         height_str = self.config.get('UI', 'height', fallback="800")
-         self.font_family_base = self.config.get('UI', 'font_family_base', fallback='Segoe UI')
-         self.font_size_base = self.config.getint('UI', 'font_size_base', fallback=10)
-         self.loaded_width = int(width_str)
-         self.loaded_height = int(height_str)
-
-         if hasattr(self, 'config_data_path_edit'): self.config_data_path_edit.setText(data_file)
-         if hasattr(self, 'config_sync_url_edit'): self.config_sync_url_edit.setText(sync_url)
-         if hasattr(self, 'config_algo_list_url_edit'): self.config_algo_list_url_edit.setText(algo_list_url)
-         
-         if hasattr(self, 'window_width_edit'): self.window_width_edit.setText(width_str)
-         if hasattr(self, 'window_height_edit'): self.window_height_edit.setText(height_str)
-
-         if hasattr(self, 'theme_font_family_base_combo'):
-            index = self.theme_font_family_base_combo.findText(self.font_family_base, Qt.MatchFixedString)
-            if index >=0: self.theme_font_family_base_combo.setCurrentIndex(index)
-            else: self.theme_font_family_base_combo.setCurrentIndex(0)
-         if hasattr(self, 'theme_font_size_base_spinbox'):
-            self.theme_font_size_base_spinbox.setValue(self.font_size_base)
-
-         if hasattr(self, 'sync_url_input'): self.sync_url_input.setText(sync_url)
-         if hasattr(self, 'data_file_path_label'):
-             self.data_file_path_label.setText(data_file)
-             self.data_file_path_label.setToolTip(data_file)
-
-
-         self.apply_algorithm_config_states()
 
     def set_default_config(self):
         """Thiết lập đối tượng self.config về các giá trị mặc định."""
@@ -8664,18 +8881,36 @@ class LotteryPredictionApp(QMainWindow):
 
     def sync_data(self):
         """Downloads data from the sync URL and replaces the current data file."""
-        url_to_sync = self.sync_url_input.text().strip()
-        if not url_to_sync:
-            QMessageBox.warning(self, "Thiếu URL", "Vui lòng nhập URL vào ô 'Đồng bộ' để tải dữ liệu.")
+        main_logger.info("Sync data request initiated.")
+
+        if hasattr(self, '_data_sync_server_online') and self._data_sync_server_online is False:
+            main_logger.warning("Sync aborted: Server Data Sync is offline.")
+            QMessageBox.warning(self, "Không có kết nối", "Không thể đồng bộ dữ liệu do không có kết nối mạng (Server Data Sync: Offline). Vui lòng kiểm tra kết nối và thử lại sau ít phút.")
+            self.update_status("Đồng bộ thất bại: Không có kết nối mạng.")
             return
+
+        url_to_sync = ""
+        if hasattr(self, 'sync_url_input') and self.sync_url_input:
+            url_to_sync = self.sync_url_input.text().strip()
+        
+        if not url_to_sync:
+            url_to_sync = self.config.get('DATA', 'sync_url', fallback="").strip()
+            if not url_to_sync:
+                 main_logger.warning("Sync failed: Sync URL is empty in UI and config.")
+                 QMessageBox.warning(self, "Thiếu URL", "Vui lòng nhập URL vào ô 'Đồng bộ' hoặc cấu hình trong tab Cài đặt.")
+                 return
+            else:
+                if hasattr(self, 'sync_url_input') and self.sync_url_input:
+                    self.sync_url_input.setText(url_to_sync)
 
         target_file_str = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
         target_file = Path(target_file_str)
-        backup_file = target_file.with_suffix(target_file.suffix + '.bak')
+        backup_file = target_file.with_suffix(target_file.suffix + '.bak-' + datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
         backed_up_successfully = False
 
         try: import requests
         except ImportError:
+            main_logger.critical("Requests library not found. Sync data cannot proceed.")
             QMessageBox.critical(self, "Thiếu Thư Viện", "Chức năng đồng bộ yêu cầu thư viện 'requests'.\nVui lòng cài đặt bằng lệnh:\n\npip install requests")
             return
 
@@ -8726,6 +8961,10 @@ class LotteryPredictionApp(QMainWindow):
                 self.update_status("Đồng bộ thất bại: lỗi ghi file.")
                 return
 
+            if hasattr(self, 'data_file_path_label'):
+                 self.data_file_path_label.setText(str(target_file))
+                 self.data_file_path_label.setToolTip(str(target_file))
+
             self.load_data()
             self.reload_algorithms()
 
@@ -8738,7 +8977,7 @@ class LotteryPredictionApp(QMainWindow):
 
         except requests.exceptions.RequestException as req_err:
             main_logger.error(f"Failed to download data from {url_to_sync}: {req_err}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Kết Nối", f"Không thể tải dữ liệu từ URL:\n{url_to_sync}\n\nLỗi: {req_err}")
+            QMessageBox.critical(self, "Lỗi Kết Nối", f"Không thể tải dữ liệu từ URL:\n{url_to_sync}\n\nLỗi: {type(req_err).__name__} - {req_err}")
             self.update_status(f"Đồng bộ thất bại: lỗi kết nối hoặc URL không hợp lệ.")
             if backed_up_successfully: self._restore_backup(backup_file, target_file)
         except Exception as e:
@@ -8828,8 +9067,8 @@ class LotteryPredictionApp(QMainWindow):
 
 
     def load_algorithms(self):
-        """Loads algorithms, creates their UI elements in the Main tab's scroll area."""
         main_logger.info("Scanning and loading algorithms for Main tab (PyQt5)...")
+        main_window = self
 
         if hasattr(self, 'algo_list_layout'):
             while self.algo_list_layout.count() > 0:
@@ -8837,8 +9076,10 @@ class LotteryPredictionApp(QMainWindow):
                 widget = item.widget()
                 if widget:
                     widget.deleteLater()
+            if hasattr(self, 'initial_main_algo_label') and self.initial_main_algo_label is not None:
+                self.initial_main_algo_label = None
         else:
-            main_logger.error("Algorithm list layout (algo_list_layout) not found. Cannot load algorithm UI.")
+            main_logger.error("Main tab's algorithm list layout (algo_list_layout) not found.")
             return
 
         self.algorithms.clear()
@@ -8846,36 +9087,37 @@ class LotteryPredictionApp(QMainWindow):
         count_success, count_failed = 0, 0
 
         if not self.algorithms_dir.is_dir():
-            main_logger.warning(f"Algorithms directory not found: {self.algorithms_dir}. Attempting to create.")
-            try:
-                self.create_directories()
-            except Exception as e:
-                main_logger.error(f"Failed to create algorithms directory: {e}")
+            main_logger.warning(f"Algorithm directory not found: {self.algorithms_dir}")
+            if not hasattr(self, 'initial_main_algo_label') or self.initial_main_algo_label is None:
+                self.initial_main_algo_label = QLabel(f"Lỗi: Không tìm thấy thư mục thuật toán:\n{self.algorithms_dir}")
+                self.initial_main_algo_label.setStyleSheet("color: red; padding: 10px;")
+                self.initial_main_algo_label.setAlignment(Qt.AlignCenter)
+                self.initial_main_algo_label.setWordWrap(True)
                 if hasattr(self, 'algo_list_layout'):
-                    error_label = QLabel(f"Lỗi: Không tìm thấy thư mục thuật toán:\n{self.algorithms_dir}")
-                    error_label.setStyleSheet("color: red; padding: 10px;")
-                    self.algo_list_layout.addWidget(error_label)
-                return
-            if not self.algorithms_dir.is_dir():
-                 main_logger.error("Algorithms directory still not found after creation attempt.")
-                 if hasattr(self, 'algo_list_layout'):
-                     error_label = QLabel(f"Lỗi: Không tìm thấy thư mục thuật toán:\n{self.algorithms_dir}")
-                     error_label.setStyleSheet("color: red; padding: 10px;")
-                     self.algo_list_layout.addWidget(error_label)
-                 return
+                     self.algo_list_layout.addWidget(self.initial_main_algo_label)
+            else:
+                 self.initial_main_algo_label.setText(f"Lỗi: Không tìm thấy thư mục thuật toán:\n{self.algorithms_dir}")
+                 self.initial_main_algo_label.setVisible(True)
+            return
 
         try:
             algorithm_files_to_load = [
                 f for f in self.algorithms_dir.glob('*.py')
                 if f.is_file() and f.name not in ["__init__.py", "base.py"]
             ]
-            main_logger.debug(f"Found {len(algorithm_files_to_load)} potential algorithm files.")
+            main_logger.debug(f"Main App: Found {len(algorithm_files_to_load)} potential algorithm files.")
         except Exception as e:
             main_logger.error(f"Error scanning algorithms directory: {e}", exc_info=True)
-            if hasattr(self, 'algo_list_layout'):
-                 error_label = QLabel(f"Lỗi đọc thư mục thuật toán:\n{e}")
-                 error_label.setStyleSheet("color: red; padding: 10px;")
-                 self.algo_list_layout.addWidget(error_label)
+            if not hasattr(self, 'initial_main_algo_label') or self.initial_main_algo_label is None:
+                self.initial_main_algo_label = QLabel(f"Lỗi đọc thư mục thuật toán:\n{e}")
+                self.initial_main_algo_label.setStyleSheet("color: red; padding: 10px;")
+                self.initial_main_algo_label.setAlignment(Qt.AlignCenter)
+                self.initial_main_algo_label.setWordWrap(True)
+                if hasattr(self, 'algo_list_layout'):
+                    self.algo_list_layout.addWidget(self.initial_main_algo_label)
+            else:
+                self.initial_main_algo_label.setText(f"Lỗi đọc thư mục thuật toán:\n{e}")
+                self.initial_main_algo_label.setVisible(True)
             return
 
         if not algorithm_files_to_load:
@@ -8884,55 +9126,59 @@ class LotteryPredictionApp(QMainWindow):
                 f for f in self.algorithms_dir.glob('*.py')
                 if f.is_file() and f.name not in ["__init__.py", "base.py"]
             ]
-             main_logger.info(f"Found {len(algorithm_files_to_load)} files after checking for samples.")
+             if not algorithm_files_to_load:
+                if not hasattr(self, 'initial_main_algo_label') or self.initial_main_algo_label is None:
+                    self.initial_main_algo_label = QLabel("Không tìm thấy file thuật toán (.py) nào trong thư mục 'algorithms'.")
+                    self.initial_main_algo_label.setStyleSheet("font-style: italic; color: #6c757d; padding: 10px;")
+                    self.initial_main_algo_label.setAlignment(Qt.AlignCenter)
+                    self.initial_main_algo_label.setWordWrap(True)
+                    if hasattr(self, 'algo_list_layout'):
+                        self.algo_list_layout.addWidget(self.initial_main_algo_label)
+                else:
+                    self.initial_main_algo_label.setText("Không tìm thấy file thuật toán (.py) nào trong thư mục 'algorithms'.")
+                    self.initial_main_algo_label.setVisible(True)
 
 
         results_copy_for_instances = copy.deepcopy(self.results) if self.results else []
         cache_dir_for_instances = self.calculate_dir
-
-        initial_algo_label = None
-        if not algorithm_files_to_load:
-             initial_algo_label = QLabel("Không tìm thấy file thuật toán (.py) nào trong thư mục 'algorithms'.")
-             initial_algo_label.setStyleSheet("font-style: italic; color: #6c757d; padding: 10px;")
-             if hasattr(self, 'algo_list_layout'):
-                 self.algo_list_layout.addWidget(initial_algo_label)
-
+        
+        any_card_created = False
         for f_path in algorithm_files_to_load:
-            main_logger.debug(f"Processing algorithm file: {f_path.name}")
+            main_logger.debug(f"Main App: Processing algorithm file: {f_path.name}")
             try:
                 loaded_successfully = self.load_algorithm_from_file(
                     f_path, results_copy_for_instances, cache_dir_for_instances
                 )
                 if loaded_successfully:
                     count_success += 1
+                    any_card_created = True
                 else:
                     count_failed += 1
             except Exception as e:
-                main_logger.error(f"Unexpected error loading {f_path.name}: {e}", exc_info=True)
+                main_logger.error(f"Main App: Unexpected error loading {f_path.name}: {e}", exc_info=True)
                 count_failed += 1
+        
+        if not any_card_created and algorithm_files_to_load:
+            if not hasattr(self, 'initial_main_algo_label') or self.initial_main_algo_label is None:
+                self.initial_main_algo_label = QLabel("Không thể tải giao diện cho bất kỳ thuật toán nào.\nKiểm tra log để biết chi tiết.")
+                self.initial_main_algo_label.setStyleSheet("color: red; font-style: italic; padding: 10px;")
+                self.initial_main_algo_label.setAlignment(Qt.AlignCenter)
+                self.initial_main_algo_label.setWordWrap(True)
+                if hasattr(self, 'algo_list_layout'):
+                    self.algo_list_layout.addWidget(self.initial_main_algo_label)
+            else:
+                self.initial_main_algo_label.setText("Không thể tải giao diện cho bất kỳ thuật toán nào.\nKiểm tra log để biết chi tiết.")
+                self.initial_main_algo_label.setVisible(True)
 
         status_msg = f"Đã tải {count_success} thuật toán (Main)"
         if count_failed > 0:
             status_msg += f", lỗi {count_failed} file"
         self.update_status(status_msg)
-
-        if hasattr(self, 'algo_count_label'):
-            self.algo_count_label.setText(f"🛰Số lượng thuật toán: {count_success}")
-
-        if count_failed > 0 and count_success > 0:
-            QMessageBox.warning(self, "Lỗi Tải Thuật Toán", f"Đã xảy ra lỗi khi tải {count_failed} file thuật toán.\nKiểm tra file log để biết chi tiết.")
-        elif count_success == 0 and count_failed > 0:
-            QMessageBox.critical(self, "Lỗi Tải Thuật Toán", f"Không thể tải bất kỳ thuật toán nào ({count_failed} lỗi).\nKiểm tra file log hoặc cấu trúc file thuật toán.")
-        elif count_success == 0 and algorithm_files_to_load:
-            QMessageBox.warning(self, "Không Tìm Thấy Thuật Toán", "Không tìm thấy lớp thuật toán hợp lệ nào (kế thừa từ BaseAlgorithm) trong các file .py.")
-            if hasattr(self, 'algo_list_layout') and self.algo_list_layout.count() == 0:
-                 if initial_algo_label is None:
-                      initial_algo_label = QLabel("Không tìm thấy lớp thuật toán hợp lệ nào.")
-                      initial_algo_label.setStyleSheet("font-style: italic; color: #6c757d; padding: 10px;")
-                      self.algo_list_layout.addWidget(initial_algo_label)
-                 else:
-                      initial_algo_label.setText("Không tìm thấy lớp thuật toán hợp lệ nào.")
-
+        
+        if count_failed > 0 and main_window:
+            QMessageBox.warning(main_window, "Lỗi Tải Thuật Toán (Main)",
+                                f"Đã xảy ra lỗi khi tải {count_failed} file thuật toán cho tab Main.\n"
+                                "Kiểm tra file log để biết chi tiết.")
 
         self.apply_algorithm_config_states()
 
@@ -9017,9 +9263,16 @@ class LotteryPredictionApp(QMainWindow):
         return success
 
     def create_algorithm_ui_qt(self, algo_name, algo_config, algo_filename):
-        """Creates the UI widget (card) for a single algorithm in the Main tab list."""
         try:
-            if not hasattr(self, 'algo_list_layout'): return
+            if not hasattr(self, 'algo_list_layout'):
+                main_logger.error(f"Cannot create UI for {algo_name}: algo_list_layout missing.")
+                return
+
+            if hasattr(self, 'initial_main_algo_label') and self.initial_main_algo_label is not None:
+                if self.algo_list_layout.indexOf(self.initial_main_algo_label) != -1:
+                    self.algo_list_layout.removeWidget(self.initial_main_algo_label)
+                self.initial_main_algo_label.deleteLater()
+                self.initial_main_algo_label = None
 
             algo_frame = QFrame()
             algo_frame.setObjectName("CardFrame")
@@ -10732,128 +10985,7 @@ class LotteryPredictionApp(QMainWindow):
                     pass
         return numbers
 
-    def setup_algo_management_tab(self):
-        algo_mgmnt_logger.debug("Setting up Algorithm Management tab UI (PyQt5)...")
-        tab_layout = QVBoxLayout(self.algo_management_tab_frame)
-        tab_layout.setContentsMargins(10, 40, 10, 10)
-        tab_layout.setSpacing(10)
-
-        control_frame = QFrame()
-        control_frame_layout = QHBoxLayout(control_frame)
-        control_frame_layout.setContentsMargins(0,0,0,0)
-        control_frame_layout.addStretch(3)
-        self.algo_mgmnt_refresh_button = QPushButton("♻️Tải thuật toán online")
-        self.algo_mgmnt_refresh_button.setToolTip("Tải lại danh sách thuật toán trên máy và danh sách thuật toán online.")
-        self.algo_mgmnt_refresh_button.clicked.connect(self._refresh_algo_management_page)
-        control_frame_layout.addWidget(self.algo_mgmnt_refresh_button)
-        control_frame_layout.addStretch(1)
-        tab_layout.addWidget(control_frame)
-
-        splitter = QSplitter(Qt.Horizontal)
-
-        local_algo_group = QGroupBox("🎰Thuật toán trên máy")
-        local_algo_layout = QVBoxLayout(local_algo_group)
-        local_algo_layout.setContentsMargins(5, 10, 5, 5)
-
-        self.local_algo_manage_scroll_area = QScrollArea()
-        self.local_algo_manage_scroll_area.setWidgetResizable(True)
-        self.local_algo_manage_scroll_area.setStyleSheet("QScrollArea { background-color: #FFFFFF; border: none; }")
-        
-        self.local_algo_manage_widget = QWidget()
-        self.local_algo_manage_scroll_area.setWidget(self.local_algo_manage_widget)
-        self.local_algo_manage_list_layout = QVBoxLayout(self.local_algo_manage_widget)
-        self.local_algo_manage_list_layout.setAlignment(Qt.AlignTop)
-        self.local_algo_manage_list_layout.setSpacing(8)
-        
-        self.initial_local_algo_manage_label = QLabel("🎰Đang tải thuật toán trên máy...")
-        self.initial_local_algo_manage_label.setStyleSheet("font-style: italic; color: #6c757d;")
-        self.initial_local_algo_manage_label.setAlignment(Qt.AlignCenter)
-        self.local_algo_manage_list_layout.addWidget(self.initial_local_algo_manage_label)
-
-        local_algo_layout.addWidget(self.local_algo_manage_scroll_area)
-        splitter.addWidget(local_algo_group)
-
-        online_algo_group = QGroupBox("📡Danh sách Thuật toán Online")
-        online_algo_layout = QVBoxLayout(online_algo_group)
-        online_algo_layout.setContentsMargins(5, 10, 5, 5)
-
-        self.online_algo_scroll_area = QScrollArea()
-        self.online_algo_scroll_area.setWidgetResizable(True)
-        self.online_algo_scroll_area.setStyleSheet("QScrollArea { background-color: #FFFFFF; border: none; }")
-
-        self.online_algo_widget = QWidget()
-        self.online_algo_scroll_area.setWidget(self.online_algo_widget)
-        self.online_algo_list_layout = QVBoxLayout(self.online_algo_widget)
-        self.online_algo_list_layout.setAlignment(Qt.AlignTop)
-        self.online_algo_list_layout.setSpacing(8)
-
-        self.initial_online_algo_label = QLabel("Nhấn 'Tải lại' để lấy danh sách thuật toán online...")
-        self.initial_online_algo_label.setStyleSheet("font-style: italic; color: #6c757d;")
-        self.initial_online_algo_label.setAlignment(Qt.AlignCenter)
-        self.online_algo_list_layout.addWidget(self.initial_online_algo_label)
-        
-        online_algo_layout.addWidget(self.online_algo_scroll_area)
-        splitter.addWidget(online_algo_group)
-
-        tab_layout.addWidget(splitter, 1)
-
-        QTimer.singleShot(0, lambda: splitter.setSizes([(splitter.width() * 4) // 10, (splitter.width() * 6) // 10]))
-
-        self.local_algorithms_managed_ui = {}
-        self.online_algorithms_ui = {}
-
-        self._populate_local_algorithms_management_list()
-        algo_mgmnt_logger.debug("Algorithm Management tab UI structure set up.")
-
-    def _refresh_algo_management_page(self):
-        algo_mgmnt_logger.info("Refreshing Algorithm Management page...")
-        self.update_status("Đang làm mới danh sách thuật toán quản lý...")
-        QApplication.processEvents()
-
-        self._populate_local_algorithms_management_list()
-        self._fetch_and_populate_online_algorithms_list()
-
-        self.update_status("Làm mới danh sách thuật toán quản lý hoàn tất.")
-
-    def _handle_manage_tab_edit_request(self, display_name_for_optimizer):
-        """Handles edit request from Algorithm Management tab."""
-        algo_mgmnt_logger.info(f"Edit request for '{display_name_for_optimizer}' from Algo Management Tab.")
-        if self.optimizer_app_instance:
-            optimizer_tab_index = -1
-            for i in range(self.tab_widget.count()):
-                if self.tab_widget.widget(i) == self.optimizer_tab_frame:
-                    optimizer_tab_index = i
-                    break
-            
-            if optimizer_tab_index != -1:
-                self.tab_widget.setCurrentIndex(optimizer_tab_index)
-                self.optimizer_app_instance.trigger_select_for_edit(display_name_for_optimizer)
-            else:
-                algo_mgmnt_logger.error("Optimizer tab frame (optimizer_tab_frame) not found when handling edit request.")
-                QMessageBox.critical(self, "Lỗi Giao Diện", "Không tìm thấy tab Tối ưu.")
-        else:
-            algo_mgmnt_logger.error("Optimizer instance (optimizer_app_instance) not available for edit request.")
-            QMessageBox.critical(self, "Lỗi Hệ Thống", "Trình tối ưu chưa được khởi tạo.")
-
-    def _handle_manage_tab_optimize_request(self, display_name_for_optimizer):
-        """Handles optimize request from Algorithm Management tab."""
-        algo_mgmnt_logger.info(f"Optimize request for '{display_name_for_optimizer}' from Algo Management Tab.")
-        if self.optimizer_app_instance:
-            optimizer_tab_index = -1
-            for i in range(self.tab_widget.count()):
-                if self.tab_widget.widget(i) == self.optimizer_tab_frame:
-                    optimizer_tab_index = i
-                    break
-            
-            if optimizer_tab_index != -1:
-                self.tab_widget.setCurrentIndex(optimizer_tab_index)
-                self.optimizer_app_instance.trigger_select_for_optimize(display_name_for_optimizer)
-            else:
-                algo_mgmnt_logger.error("Optimizer tab frame (optimizer_tab_frame) not found when handling optimize request.")
-                QMessageBox.critical(self, "Lỗi Giao Diện", "Không tìm thấy tab Tối ưu.")
-        else:
-            algo_mgmnt_logger.error("Optimizer instance (optimizer_app_instance) not available for optimize request.")
-            QMessageBox.critical(self, "Lỗi Hệ Thống", "Trình tối ưu chưa được khởi tạo.")
+    
 
     def setup_tools_tab(self):
         main_logger.debug("Setting up Tools tab UI (PyQt5)...")
@@ -11186,49 +11318,6 @@ class LotteryPredictionApp(QMainWindow):
         main_logger.info("Accepting close event. Application will now quit.")
         event.accept()
 
-def main():
-    """Main function: Initializes QApplication and runs the application."""
-    try:
-        if hasattr(QtCore.Qt, 'AA_EnableHighDpiScaling'):
-             QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
-             print("Enabled Qt High DPI Scaling (AA_EnableHighDpiScaling).")
-        if hasattr(QtCore.Qt, 'AA_UseHighDpiPixmaps'):
-             QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
-             print("Enabled Qt High DPI Pixmaps (AA_UseHighDpiPixmaps).")
-    except Exception as e_dpi:
-         print(f"Could not set Qt High DPI attributes: {e_dpi}")
-
-
-    app = QApplication(sys.argv)
-    app.setApplicationName("LotteryPredictorQt")
-    app.setOrganizationName("LuviDeeZ")
-
-    main_window = None
-
-    try:
-        main_logger.info("Creating LotteryPredictionApp instance...")
-        main_window = LotteryPredictionApp()
-
-        main_logger.info("Starting Qt event loop...")
-        exit_code = app.exec_()
-        main_logger.info(f"Qt event loop finished with exit code: {exit_code}")
-        sys.exit(exit_code)
-
-    except Exception as e:
-        main_logger.critical(f"Unhandled critical error in main() execution: {e}", exc_info=True)
-        traceback.print_exc()
-        QMessageBox.critical(
-            None,
-            "Lỗi Nghiêm Trọng",
-            f"Đã xảy ra lỗi khởi tạo hoặc lỗi nghiêm trọng không thể phục hồi:\n\n{e}\n\n"
-            f"Ứng dụng sẽ đóng.\nKiểm tra file log để biết chi tiết:\n'{log_file_path}'."
-        )
-        sys.exit(1)
-
-    finally:
-        main_logger.info("Application shutdown sequence (finally block).")
-        logging.shutdown()
-
 
 class UpdateCheckWorker(QObject):
     finished_signal = pyqtSignal()
@@ -11239,27 +11328,31 @@ class UpdateCheckWorker(QObject):
     def __init__(self, main_app_ref):
         super().__init__()
         self.main_app = main_app_ref
+        self.logger = logging.getLogger("UpdateCheckWorker")
 
     @pyqtSlot()
     def run_check(self):
         try:
             app = self.main_app
-            app.update_logger.info("UpdateCheckWorker: Bắt đầu kiểm tra.")
+            self.logger.info("Bắt đầu kiểm tra cập nhật ứng dụng...")
 
             current_html = app._format_version_info_for_display(
                 app.current_app_version_info, "Phiên bản đang sử dụng"
             )
-            update_file_url = app.update_file_url_edit.text().strip()
-            commit_history_url = "https://github.com/junlangzi/Lottery-Predictor/commits/main.atom"
-
+            
+            update_file_url = ""
+            if hasattr(app, 'update_file_url_edit') and app.update_file_url_edit:
+                update_file_url = app.update_file_url_edit.text().strip()
+            
             if not update_file_url:
-                self.error_signal.emit("URL file cập nhật chưa được cấu hình.")
+                self.logger.error("URL file cập nhật chưa được cấu hình.")
+                self.error_signal.emit("URL file cập nhật chưa được cấu hình trong tab Update.")
                 self.finished_signal.emit()
                 return
 
-            online_content = app._fetch_online_content(update_file_url)
+            online_content = app._fetch_online_content(update_file_url, service_type="update_check")
             if online_content is None:
-                self.error_signal.emit(f"Không thể tải nội dung từ:\n{update_file_url}")
+                self.error_signal.emit(f"Không thể tải nội dung từ:\n{update_file_url}\n(Kiểm tra kết nối mạng và URL)")
                 self.finished_signal.emit()
                 return
 
@@ -11273,18 +11366,21 @@ class UpdateCheckWorker(QObject):
             )
             self.update_info_signal.emit(current_html, online_html, update_available)
 
-            app.update_logger.info(f"UpdateCheckWorker: Đang tải lịch sử commit từ {commit_history_url}")
-            atom_feed_content = app._fetch_online_content(commit_history_url)
-            if atom_feed_content:
-                history_html_display = app._parse_github_atom_feed(atom_feed_content)
+            program_update_list_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/UPDATE.md"
+            
+            self.logger.info(f"Đang tải lịch sử cập nhật chương trình từ: {program_update_list_url}")
+            markdown_content = app._fetch_online_content(program_update_list_url, service_type="update_check")
+            
+            if markdown_content:
+                history_html_display = app._parse_markdown_update_list(markdown_content)
                 self.commit_history_signal.emit(history_html_display)
             else:
-                self.commit_history_signal.emit("<p>Không thể tải lịch sử commit.</p>")
+                self.commit_history_signal.emit("<p>Không thể tải lịch sử cập nhật chương trình (kiểm tra kết nối mạng hoặc URL).</p>")
 
-            app.update_logger.info("UpdateCheckWorker: Kiểm tra hoàn tất.")
+            self.logger.info("Kiểm tra cập nhật ứng dụng hoàn tất.")
         except Exception as e:
-            self.main_app.update_logger.error(f"Lỗi nghiêm trọng trong UpdateCheckWorker: {e}", exc_info=True)
-            self.error_signal.emit(f"Lỗi không mong muốn trong quá trình kiểm tra: {e}")
+            self.logger.error(f"Lỗi nghiêm trọng trong UpdateCheckWorker: {e}", exc_info=True)
+            self.error_signal.emit(f"Lỗi không mong muốn trong quá trình kiểm tra cập nhật: {type(e).__name__}")
         finally:
             self.finished_signal.emit()
 
@@ -11295,122 +11391,131 @@ class PerformUpdateWorker(QObject):
     def __init__(self, main_app_ref):
         super().__init__()
         self.main_app = main_app_ref
+        self.logger = logging.getLogger("PerformUpdateWorker")
 
     @pyqtSlot()
     def run_update(self):
         try:
             app = self.main_app
-            app.update_logger.info("PerformUpdateWorker: Bắt đầu quá trình cập nhật.")
+            self.logger.info("Bắt đầu quá trình thực hiện cập nhật...")
 
             online_content = app.online_app_content_cache
             if not online_content:
-                online_file_url_ui = app.update_file_url_edit.text().strip()
+                online_file_url_ui = ""
+                if hasattr(app, 'update_file_url_edit') and app.update_file_url_edit:
+                    online_file_url_ui = app.update_file_url_edit.text().strip()
+                
                 if not online_file_url_ui:
+                    self.logger.error("URL file cập nhật không hợp lệ để tải lại.")
                     self.error_signal.emit("URL file cập nhật không hợp lệ.")
                     self.finished_signal.emit(False, "Lỗi: URL file cập nhật không hợp lệ.")
                     return
-                app.update_logger.info(f"Tải lại nội dung từ: {online_file_url_ui}")
-                online_content = app._fetch_online_content(online_file_url_ui)
+                
+                self.logger.info(f"Cache nội dung cập nhật rỗng. Tải lại từ: {online_file_url_ui}")
+                online_content = app._fetch_online_content(online_file_url_ui, service_type="update_check")
                 if online_content is None:
-                    self.error_signal.emit(f"Không thể tải lại nội dung file cập nhật từ:\n{online_file_url_ui}")
+                    self.error_signal.emit(f"Không thể tải lại nội dung file cập nhật từ:\n{online_file_url_ui}\n(Kiểm tra kết nối mạng và URL)")
                     self.finished_signal.emit(False, f"Lỗi: Không thể tải lại nội dung file cập nhật.")
                     return
+                app.online_app_content_cache = online_content
 
-            target_filename_from_ui = app.update_save_filename_edit.text().strip()
+            target_filename_from_ui = ""
+            if hasattr(app, 'update_save_filename_edit') and app.update_save_filename_edit:
+                target_filename_from_ui = app.update_save_filename_edit.text().strip()
+
             if not target_filename_from_ui:
+                self.logger.error("Tên file lưu cập nhật không được để trống.")
                 self.error_signal.emit("Tên file lưu cập nhật không được để trống.")
                 self.finished_signal.emit(False, "Lỗi: Tên file lưu cập nhật không được để trống.")
                 return
-            if not target_filename_from_ui.lower().endswith((".py", ".pyw")):
-                 app.update_logger.info(f"Tên file đích '{target_filename_from_ui}' không có đuôi .py hoặc .pyw chuẩn.")
-
+            
 
             current_script_to_replace_path = None
             if getattr(sys, 'frozen', False):
                 app_dir = Path(sys.executable).parent
                 current_script_to_replace_path = app_dir / target_filename_from_ui
-                app.update_logger.warning(f"Ứng dụng đóng gói. Sẽ cố gắng cập nhật file tại: {current_script_to_replace_path}")
+                self.logger.warning(f"Ứng dụng đóng gói. Sẽ cố gắng cập nhật file tại: {current_script_to_replace_path}")
             else:
-                current_script_to_replace_path = Path(__file__).resolve().parent / target_filename_from_ui
+                running_main_py_path = Path(__file__).resolve()
+                current_script_to_replace_path = running_main_py_path.parent / target_filename_from_ui
             
-            app.update_logger.info(f"Đường dẫn file đích để cập nhật: {current_script_to_replace_path}")
+            self.logger.info(f"Đường dẫn file đích để cập nhật: {current_script_to_replace_path}")
 
-            backup_file_path = current_script_to_replace_path.with_name(current_script_to_replace_path.name + ".bank")
+            backup_file_path = current_script_to_replace_path.with_name(current_script_to_replace_path.name + ".bak-" + datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
             made_backup = False
 
             if current_script_to_replace_path.exists():
-                app.update_logger.info(f"File đích '{current_script_to_replace_path.name}' tồn tại. Sẽ tiến hành đổi tên thành '{backup_file_path.name}'.")
+                self.logger.info(f"File đích '{current_script_to_replace_path.name}' tồn tại. Sẽ tiến hành đổi tên thành '{backup_file_path.name}'.")
                 if backup_file_path.exists():
                     try:
                         backup_file_path.unlink()
-                        app.update_logger.info(f"Đã xóa file .bank cũ trước khi sao lưu: {backup_file_path.name}")
+                        self.logger.info(f"Đã xóa file .bak cũ trước khi sao lưu: {backup_file_path.name}")
                     except OSError as e_del_old_bank:
-                        app.update_logger.warning(f"Không thể xóa file .bank cũ '{backup_file_path.name}': {e_del_old_bank}. Tiếp tục...")
+                        self.logger.warning(f"Không thể xóa file .bak cũ '{backup_file_path.name}': {e_del_old_bank}. Tiếp tục...")
                 
                 try:
-                    current_script_to_replace_path.rename(backup_file_path)
-                    app.update_logger.info(f"Đã đổi tên '{current_script_to_replace_path.name}' thành '{backup_file_path.name}'")
+                    shutil.move(str(current_script_to_replace_path), str(backup_file_path))
+                    self.logger.info(f"Đã đổi tên '{current_script_to_replace_path.name}' thành '{backup_file_path.name}'")
                     made_backup = True
                 except Exception as e_rename_backup:
-                    app.update_logger.error(f"Không thể đổi tên file '{current_script_to_replace_path.name}' để tạo backup '.bank': {e_rename_backup}")
-                    self.error_signal.emit(f"Lỗi tạo file sao lưu '.bank' cho '{current_script_to_replace_path.name}':\n{e_rename_backup}")
-                    self.finished_signal.emit(False, f"Lỗi: Không thể tạo file sao lưu '.bank'.")
+                    self.logger.error(f"Không thể đổi tên file '{current_script_to_replace_path.name}' để tạo backup: {e_rename_backup}", exc_info=True)
+                    self.error_signal.emit(f"Lỗi tạo file sao lưu cho '{current_script_to_replace_path.name}':\n{e_rename_backup}")
+                    self.finished_signal.emit(False, f"Lỗi: Không thể tạo file sao lưu.")
                     return
             else:
-                app.update_logger.info(f"File đích '{current_script_to_replace_path.name}' không tồn tại. Sẽ tạo file mới.")
+                self.logger.info(f"File đích '{current_script_to_replace_path.name}' không tồn tại. Sẽ tạo file mới.")
 
             try:
                 if not isinstance(online_content, str):
-                    app.update_logger.error(f"Nội dung tải về không phải là chuỗi, mà là: {type(online_content)}")
+                    self.logger.error(f"Nội dung tải về không phải là chuỗi, mà là: {type(online_content)}")
                     self.error_signal.emit("Lỗi: Nội dung tải về không hợp lệ (không phải dạng văn bản).")
                     self.finished_signal.emit(False, "Lỗi: Nội dung tải về không hợp lệ.")
                     if made_backup and backup_file_path.exists() and not current_script_to_replace_path.exists():
-                        try: backup_file_path.rename(current_script_to_replace_path); app.update_logger.info(f"Khôi phục từ backup do nội dung tải về lỗi.")
-                        except: pass
+                        try: shutil.move(str(backup_file_path), str(current_script_to_replace_path)); self.logger.info(f"Khôi phục từ backup do nội dung tải về lỗi.")
+                        except Exception as e_restore_bad_content: self.logger.error(f"Lỗi khôi phục backup (bad content): {e_restore_bad_content}")
                     return
 
                 normalized_newlines_content = online_content.replace('\r\n', '\n').replace('\r', '\n')
                 final_content_to_write = normalized_newlines_content
 
-                current_script_to_replace_path.write_text(final_content_to_write, encoding='utf-8')
-                app.update_logger.info(f"Cập nhật thành công nội dung của {current_script_to_replace_path.name}")
+                current_script_to_replace_path.write_text(final_content_to_write, encoding='utf-8', newline='\n')
+                self.logger.info(f"Cập nhật thành công nội dung của {current_script_to_replace_path.name}")
 
                 if made_backup and backup_file_path.exists():
                     try:
                         backup_file_path.unlink()
-                        app.update_logger.info(f"Đã xóa file sao lưu '.bank': {backup_file_path.name}")
+                        self.logger.info(f"Đã xóa file sao lưu: {backup_file_path.name}")
                     except OSError as e_delete_bank:
-                        app.update_logger.warning(f"Không thể xóa file sao lưu '.bank' '{backup_file_path.name}' sau khi cập nhật thành công: {e_delete_bank}")
+                        self.logger.warning(f"Không thể xóa file sao lưu '{backup_file_path.name}' sau khi cập nhật thành công: {e_delete_bank}")
                 
                 self.finished_signal.emit(True, f"Đã cập nhật thành công file: {current_script_to_replace_path.name}\nVui lòng khởi động lại ứng dụng.")
             
             except IOError as e_io:
-                app.update_logger.error(f"Lỗi IOError khi ghi nội dung cập nhật vào {current_script_to_replace_path.name}: {e_io}")
+                self.logger.error(f"Lỗi IOError khi ghi nội dung cập nhật vào {current_script_to_replace_path.name}: {e_io}", exc_info=True)
                 if made_backup and backup_file_path.exists():
-                    app.update_logger.info(f"Lỗi ghi file mới. Đang cố gắng khôi phục từ backup '{backup_file_path.name}'...")
+                    self.logger.info(f"Lỗi ghi file mới. Đang cố gắng khôi phục từ backup '{backup_file_path.name}'...")
                     try:
                         if current_script_to_replace_path.exists():
                             current_script_to_replace_path.unlink()
-                        
-                        backup_file_path.rename(current_script_to_replace_path)
-                        app.update_logger.info(f"Đã khôi phục thành công file gốc từ '{backup_file_path.name}'.")
+                        shutil.move(str(backup_file_path), str(current_script_to_replace_path))
+                        self.logger.info(f"Đã khôi phục thành công file gốc từ '{backup_file_path.name}'.")
                     except Exception as e_restore:
-                        app.update_logger.error(f"KHÔNG THỂ KHÔI PHỤC file gốc từ backup '{backup_file_path.name}': {e_restore}. Hệ thống có thể ở trạng thái không ổn định.")
+                        self.logger.error(f"KHÔNG THỂ KHÔI PHỤC file gốc từ backup '{backup_file_path.name}': {e_restore}. Hệ thống có thể ở trạng thái không ổn định.", exc_info=True)
                 self.error_signal.emit(f"Lỗi khi ghi file cập nhật ({current_script_to_replace_path.name}):\n{e_io}")
                 self.finished_signal.emit(False, f"Lỗi: Không thể ghi file cập nhật.")
             except Exception as e_write:
-                app.update_logger.error(f"Lỗi không mong muốn khi ghi nội dung cập nhật vào {current_script_to_replace_path.name}: {e_write}")
+                self.logger.error(f"Lỗi không mong muốn khi ghi nội dung cập nhật vào {current_script_to_replace_path.name}: {e_write}", exc_info=True)
                 if made_backup and backup_file_path.exists():
                     try:
                         if current_script_to_replace_path.exists(): current_script_to_replace_path.unlink()
-                        backup_file_path.rename(current_script_to_replace_path)
-                        app.update_logger.info(f"Đã khôi phục từ backup do lỗi ghi không xác định.")
-                    except: pass
+                        shutil.move(str(backup_file_path), str(current_script_to_replace_path))
+                        self.logger.info(f"Đã khôi phục từ backup do lỗi ghi không xác định.")
+                    except Exception as e_restore_unknown: self.logger.error(f"Lỗi khôi phục backup (unknown write error): {e_restore_unknown}")
                 self.error_signal.emit(f"Lỗi không xác định khi ghi file cập nhật ({current_script_to_replace_path.name}):\n{e_write}")
                 self.finished_signal.emit(False, f"Lỗi: Không xác định khi ghi file cập nhật.")
         except Exception as e:
-            self.main_app.update_logger.error(f"Lỗi nghiêm trọng trong PerformUpdateWorker: {e}", exc_info=True)
-            self.error_signal.emit(f"Lỗi không mong muốn trong quá trình cập nhật: {e}")
+            self.logger.error(f"Lỗi nghiêm trọng trong PerformUpdateWorker: {e}", exc_info=True)
+            self.error_signal.emit(f"Lỗi không mong muốn trong quá trình cập nhật: {type(e).__name__}")
             self.finished_signal.emit(False, f"Lỗi: Không mong muốn trong quá trình cập nhật.")
 
 def main():
