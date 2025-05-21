@@ -1,6 +1,6 @@
 # Version: 5.2
 # Date: 21/05/2025
-# Update: <br><b>Fix 1 số bug tiềm tàng, sửa lỗi trùng lặp code</b>.<br>Sủa lại giao diện, gộp các phần trùng lặp, làm mới tab thuật toán.<br>Chuyển tab tạo thuật toán bằng Gemini vô tab Thuật toán.<br>Thêm thanh trạng thái check server data và server update online.<br>Tuỳ chỉnh lại tab Update!
+# Update: <br><b>Fix 1 số bug tiềm tàng, sửa lỗi trùng lặp code</b>.<br>Sửa lại giao diện, gộp các phần trùng lặp, làm mới tab thuật toán.<br>Chuyển tab tạo thuật toán bằng Gemini vô tab Thuật toán.<br>Thêm thanh trạng thái check server data và server update online.<br>Tuỳ chỉnh lại tab Update!
 import os
 import sys
 import logging
