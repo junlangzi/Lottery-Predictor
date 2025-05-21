@@ -1,4 +1,4 @@
-# Version: 5.2
+# Version: 5.2.1
 # Date: 21/05/2025
 # Update: <br><b>Fix 1 số bug tiềm tàng, sửa lỗi trùng lặp code</b>.<br>Sửa lại giao diện, gộp các phần trùng lặp, làm mới tab thuật toán.<br>Chuyển tab tạo thuật toán bằng Gemini vô tab Thuật toán.<br>Thêm thanh trạng thái check server data và server update online.<br>Tuỳ chỉnh lại tab Update!
 import os
@@ -5623,6 +5623,7 @@ class LotteryPredictionApp(QMainWindow):
         self.copy_account_button_update_tab = None
         self.qr_code_label_update_tab = None
         self.info_groupbox_update = None
+        self.setMinimumSize(600, 500)
 
         self.create_directories()
         self._setup_validators()
