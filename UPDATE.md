@@ -6,7 +6,7 @@
 **Update ver 5.2**
 
 Fix 1 số bug tiềm tàng, sửa lỗi trùng lặp code
-Sủa lại giao diện, gộp các phần trùng lặp, làm mới tab thuật toán.
+Sửa lại giao diện, gộp các phần trùng lặp, làm mới tab thuật toán.
 Chuyển tab tạo thuật toán bằng Gemini vô tab Thuật toán.
 Thêm thanh trạng thái check server data và server update online.
 Tuỳ chỉnh lại tab Update!
