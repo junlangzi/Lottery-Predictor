@@ -1,6 +1,6 @@
-# Version: 5.2.1
+# Version: 5.2.2
 # Date: 21/05/2025
-# Update: <br><b>Fix 1 số bug tiềm tàng, sửa lỗi trùng lặp code</b>.<br>Sửa lại giao diện, gộp các phần trùng lặp, làm mới tab thuật toán.<br>Chuyển tab tạo thuật toán bằng Gemini vô tab Thuật toán.<br>Thêm thanh trạng thái check server data và server update online.<br>Tuỳ chỉnh lại tab Update!
+# Update: <br><b>fix lỗi tiềm tàng gây treo trong mục Tạo thuật toán bằng Gemini</b>
 import os
 import sys
 import logging
@@ -487,7 +487,7 @@ class AlgorithmGeminiBuilderTab(QWidget):
         Việc sử dụng API có thể phát sinh chi phí.
         """)
 
-    
+
     def _setup_ui(self):
         main_tab_layout = QVBoxLayout(self)
         main_tab_layout.setContentsMargins(10, 10, 10, 10)
@@ -518,14 +518,14 @@ class AlgorithmGeminiBuilderTab(QWidget):
         help_api_button.setFixedSize(QSize(30, self.api_key_edit.sizeHint().height()))
         help_api_button.setToolTip(self._get_api_key_help_text_plain())
         api_key_layout.addWidget(help_api_button)
-        
+
         main_tab_layout.addWidget(api_key_group)
 
         save_info_label = QLabel(f"<i>API Key sẽ được mã hóa và lưu tự động vào file <code>{self.API_KEY_FILE.relative_to(self.main_app.base_dir)}</code> khi bạn thay đổi.</i>")
         save_info_label.setWordWrap(True)
         save_info_label.setStyleSheet("color: #6c757d; font-size: 9pt; margin-bottom: 10px;")
         main_tab_layout.addWidget(save_info_label)
-        
+
         info_form = QFormLayout()
         info_form.setSpacing(8)
         self.file_name_edit = QLineEdit()
@@ -651,8 +651,8 @@ class AlgorithmGeminiBuilderTab(QWidget):
         logic_desc = self.logic_description_edit.toPlainText().strip()
 
         if not self.api_key:
-            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập Gemini API Key trong tab 'Cài Đặt API Key'.")
-            self.tab_widget_internal.setCurrentIndex(1)
+            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập Gemini API Key.") # SỬA: Bỏ phần "trong tab 'Cài Đặt API Key'."
+            # self.tab_widget_internal.setCurrentIndex(1) # XÓA DÒNG NÀY
             self.api_key_edit.setFocus()
             return False
         if not HAS_GEMINI:
@@ -660,17 +660,17 @@ class AlgorithmGeminiBuilderTab(QWidget):
             return False
         if not re.match(r"^[a-zA-Z0-9_]+$", file_name_base):
             QMessageBox.warning(self, "Tên file không hợp lệ", "Tên file chỉ nên chứa chữ cái, số và dấu gạch dưới (_).")
-            self.tab_widget_internal.setCurrentIndex(0)
+            # self.tab_widget_internal.setCurrentIndex(0) # XÓA DÒNG NÀY
             self.file_name_edit.setFocus()
             return False
         if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", class_name) or class_name == "BaseAlgorithm":
             QMessageBox.warning(self, "Tên lớp không hợp lệ", "Tên lớp phải là định danh Python hợp lệ và không trùng 'BaseAlgorithm'.")
-            self.tab_widget_internal.setCurrentIndex(0)
+            # self.tab_widget_internal.setCurrentIndex(0) # XÓA DÒNG NÀY
             self.class_name_edit.setFocus()
             return False
         if not logic_desc:
             QMessageBox.warning(self, "Thiếu Mô Tả Logic", "Vui lòng mô tả logic bạn muốn cho thuật toán.")
-            self.tab_widget_internal.setCurrentIndex(0)
+            # self.tab_widget_internal.setCurrentIndex(0) # XÓA DÒNG NÀY
             self.logic_description_edit.setFocus()
             return False
         return True
