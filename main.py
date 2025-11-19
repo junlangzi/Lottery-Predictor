@@ -1,6 +1,6 @@
-# Version: 5.2.2
-# Date: 21/05/2025
-# Update: <br><b>fix lỗi tiềm tàng gây treo trong mục Tạo thuật toán bằng Gemini</b>
+# Version: 5.3
+# Date: 19/11/2025
+# Update: <br><b>Fix Gemini api mới do Google update.<br>Thêm tab Kết quả xổ số để xem nhanh kết quả các ngày</b>
 import os
 import sys
 import logging
@@ -383,7 +383,7 @@ class GeminiWorker(QObject):
             genai.configure(api_key=self.api_key)
 
             self.status_update.emit("Đang tạo mô hình Gemini...")
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            model = genai.GenerativeModel('gemini-2.5-flash')
 
             self.status_update.emit("Đang gửi yêu cầu đến Gemini API...")
             response = model.generate_content(self.prompt)
@@ -651,8 +651,7 @@ class AlgorithmGeminiBuilderTab(QWidget):
         logic_desc = self.logic_description_edit.toPlainText().strip()
 
         if not self.api_key:
-            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập Gemini API Key.") # SỬA: Bỏ phần "trong tab 'Cài Đặt API Key'."
-            # self.tab_widget_internal.setCurrentIndex(1) # XÓA DÒNG NÀY
+            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập Gemini API Key.")
             self.api_key_edit.setFocus()
             return False
         if not HAS_GEMINI:
@@ -660,17 +659,14 @@ class AlgorithmGeminiBuilderTab(QWidget):
             return False
         if not re.match(r"^[a-zA-Z0-9_]+$", file_name_base):
             QMessageBox.warning(self, "Tên file không hợp lệ", "Tên file chỉ nên chứa chữ cái, số và dấu gạch dưới (_).")
-            # self.tab_widget_internal.setCurrentIndex(0) # XÓA DÒNG NÀY
             self.file_name_edit.setFocus()
             return False
         if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", class_name) or class_name == "BaseAlgorithm":
             QMessageBox.warning(self, "Tên lớp không hợp lệ", "Tên lớp phải là định danh Python hợp lệ và không trùng 'BaseAlgorithm'.")
-            # self.tab_widget_internal.setCurrentIndex(0) # XÓA DÒNG NÀY
             self.class_name_edit.setFocus()
             return False
         if not logic_desc:
             QMessageBox.warning(self, "Thiếu Mô Tả Logic", "Vui lòng mô tả logic bạn muốn cho thuật toán.")
-            # self.tab_widget_internal.setCurrentIndex(0) # XÓA DÒNG NÀY
             self.logic_description_edit.setFocus()
             return False
         return True
@@ -5524,7 +5520,7 @@ class SquareQLabel(QLabel):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v5.2)")
+        self.setWindowTitle("Lottery Predictor (v5.3)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
@@ -5556,6 +5552,12 @@ class LotteryPredictionApp(QMainWindow):
         self.algorithms = {}
         self.algorithm_instances = {}
         self.loaded_tools = {}
+
+        self.kqxs_tab_frame = None
+        self.kqxs_date_label = None
+        self.kqxs_calendar_button = None
+        self.kqxs_result_labels = {}
+        self.available_kqxs_dates = set()
 
 
         self.calculation_queue = queue.Queue()
@@ -5972,13 +5974,15 @@ class LotteryPredictionApp(QMainWindow):
         self.tab_widget.setObjectName("MainTabWidget")
 
         self.main_tab_frame = QWidget()
+        self.kqxs_tab_frame = QWidget()
         self.optimizer_tab_frame = QWidget()
         self.tools_tab_frame = QWidget()
         self.settings_tab_frame = QWidget()
         self.update_tab_frame = QWidget()
 
         self.tab_widget.addTab(self.main_tab_frame, " Main 🏠")
-        self.tab_widget.addTab(self.optimizer_tab_frame, " 🎰 Thuật toán🔧  ")
+        self.tab_widget.addTab(self.optimizer_tab_frame, " Thuật toán🔧  ")
+        self.tab_widget.addTab(self.kqxs_tab_frame, " Xem KQXS 🔍 ")
         self.tab_widget.addTab(self.tools_tab_frame, " Công Cụ 🧰")
         self.tab_widget.addTab(self.settings_tab_frame, " Cài Đặt ⚙️")
         self.tab_widget.addTab(self.update_tab_frame, " Update 🔄 ")
@@ -5987,6 +5991,7 @@ class LotteryPredictionApp(QMainWindow):
         main_layout.addWidget(self.tab_widget)
 
         self.setup_main_tab()
+        self.setup_kqxs_tab()
         self.setup_tools_tab()
         self.setup_settings_tab()
         self.setup_update_tab()
@@ -6031,6 +6036,250 @@ class LotteryPredictionApp(QMainWindow):
                     main_logger.error(f"Cannot write sample data file {sample_data_file}: {e}")
         except Exception as e:
              main_logger.error(f"Error creating directories: {e}", exc_info=True)
+
+    def update_kqxs_tab(self, target_date: datetime.date):
+        """Cập nhật tab Xem KQXS: Chỉ hiển thị 2 số cuối (Loto) và thống kê."""
+        main_logger.info(f"Updating KQXS tab for date: {target_date}")
+        if not hasattr(self, 'kqxs_date_label') or not self.kqxs_date_label:
+            return
+
+        d_names = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
+        day_of_week = d_names[target_date.weekday()]
+        self.kqxs_date_label.setText(f"<b>XSMB {day_of_week} {target_date:%d-%m-%Y}</b>")
+
+        current_entry = next((r for r in self.results if r['date'] == target_date), None)
+        result_data = current_entry['result'] if current_entry else None
+
+        if result_data is None:
+            main_logger.warning(f"No data found for {target_date}")
+            for key in self.kqxs_result_labels:
+                for label in self.kqxs_result_labels[key]: label.setText("")
+            self.stats_nhay_label.setText("Không có dữ liệu.")
+            self.stats_roi_label.setText("Wait...")
+            self.stats_top_gan_label.setText("Wait...")
+            self.stats_gan_ve_label.setText("Wait...")
+            self.stats_head_tail_label.setText("Wait...")
+            return
+        
+        prize_map = {
+            'db': ['special', 'dac_biet'], 'nhat': ['prize1', 'giai_nhat'],
+            'nhi': ['prize2_1', 'prize2_2'], 
+            'ba': ['prize3_1', 'prize3_2', 'prize3_3', 'prize3_4', 'prize3_5', 'prize3_6'],
+            'tu': ['prize4_1', 'prize4_2', 'prize4_3', 'prize4_4'],
+            'nam': ['prize5_1', 'prize5_2', 'prize5_3', 'prize5_4', 'prize5_5', 'prize5_6'],
+            'sau': ['prize6_1', 'prize6_2', 'prize6_3'],
+            'bay': ['prize7_1', 'prize7_2', 'prize7_3', 'prize7_4']
+        }
+
+        all_loto_today = []
+
+        for key, labels in self.kqxs_result_labels.items():
+            possible_keys = prize_map.get(key, [])
+            if not possible_keys: continue
+            
+            for i, label in enumerate(labels):
+                current_prize_key = possible_keys[i] if i < len(possible_keys) else ""
+                
+                if not current_prize_key or current_prize_key not in result_data:
+                    alt_key = current_prize_key.replace("prize", "giai")
+                    if alt_key in result_data: current_prize_key = alt_key
+
+                raw_val = result_data.get(current_prize_key)
+                if raw_val is not None:
+                    loto_val = self._get_loto(raw_val)
+                    
+                    label.setText(loto_val)
+                    
+                    if loto_val.isdigit():
+                        all_loto_today.append(loto_val)
+                else:
+                    label.setText("")
+
+        
+        from collections import Counter
+        loto_counts = Counter(all_loto_today)
+        multi_hit = [f"<b style='color:red'>{k}</b> ({v} nháy)" for k, v in loto_counts.items() if v >= 2]
+        if multi_hit:
+            self.stats_nhay_label.setText(", ".join(multi_hit))
+            self.stats_nhay_label.setTextFormat(Qt.RichText)
+        else:
+            self.stats_nhay_label.setText("Không có lô nào về nhiều nháy.")
+
+        heads = {i: 0 for i in range(10)}
+        tails = {i: 0 for i in range(10)}
+        for loto in all_loto_today:
+            if len(loto) == 2:
+                h, t = int(loto[0]), int(loto[1])
+                heads[h] += 1
+                tails[t] += 1
+        
+        ht_html = "<table width='100%' border='0' cellspacing='0' cellpadding='2'>"
+        ht_html += "<tr><td width='50%' valign='top'><b>Đầu (Số lần)</b></td><td width='50%' valign='top'><b>Đuôi (Số lần)</b></td></tr>"
+        for i in range(10):
+            h_val = heads[i]
+            t_val = tails[i]
+            h_str = f"<span style='color:red'><b>{h_val}</b></span>" if h_val == 0 else (f"<b>{h_val}</b>" if h_val >= 4 else f"{h_val}")
+            t_str = f"<span style='color:red'><b>{t_val}</b></span>" if t_val == 0 else (f"<b>{t_val}</b>" if t_val >= 4 else f"{t_val}")
+            ht_html += f"<tr><td>Đầu {i}: {h_str}</td><td>Đuôi {i}: {t_str}</td></tr>"
+        ht_html += "</table>"
+        self.stats_head_tail_label.setText(ht_html)
+        self.stats_head_tail_label.setTextFormat(Qt.RichText)
+
+        history_data = [r for r in self.results if r['date'] < target_date]
+        
+        yesterday_lotos = set()
+        if history_data:
+            last_data = history_data[-1]
+            raw_nums = self.extract_numbers_from_result_dict(last_data['result'])
+            yesterday_lotos = {f"{n:02d}" for n in raw_nums}
+        
+        roi_list = sorted([L for L in set(all_loto_today) if L in yesterday_lotos])
+        if roi_list:
+            self.stats_roi_label.setText(", ".join(roi_list))
+        else:
+            self.stats_roi_label.setText("Không có lô rơi từ kỳ trước.")
+
+        gan_days = {f"{i:02d}": 0 for i in range(100)}
+        
+        if history_data:
+            sorted_history = sorted(history_data, key=lambda x: x['date'], reverse=True)
+            found_numbers = set()
+            for idx, entry in enumerate(sorted_history):
+                entry_date = entry['date']
+                days_diff = (target_date - entry_date).days
+                day_lotos = self.extract_numbers_from_result_dict(entry['result'])
+                day_loto_strs = {f"{n:02d}" for n in day_lotos}
+                
+                for num_str in list(gan_days.keys()):
+                    if num_str in found_numbers: continue
+                    if num_str in day_loto_strs:
+                        gan_days[num_str] = days_diff
+                        found_numbers.add(num_str)
+            
+            max_days = (target_date - sorted_history[-1]['date']).days + 1
+            for num_str in gan_days:
+                if num_str not in found_numbers: gan_days[num_str] = max_days
+
+        today_gan_stats = []
+        for loto in set(all_loto_today):
+            days = gan_days.get(loto, 0)
+            today_gan_stats.append((loto, days))
+        
+        today_gan_stats.sort(key=lambda x: x[1], reverse=True)
+        
+        if today_gan_stats:
+            gan_ve_html = ""
+            for loto, days in today_gan_stats[:5]:
+                if days > 5:
+                    gan_ve_html += f"Số <b>{loto}</b> (gan {days} ngày)<br>"
+            if not gan_ve_html: gan_ve_html = "Không có số gan nào (tất cả đều < 5 ngày)."
+            self.stats_gan_ve_label.setText(gan_ve_html)
+            self.stats_gan_ve_label.setTextFormat(Qt.RichText)
+        else:
+            self.stats_gan_ve_label.setText("N/A")
+
+        missing_numbers = []
+        for i in range(100):
+            num_str = f"{i:02d}"
+            if num_str not in all_loto_today:
+                missing_numbers.append((num_str, gan_days.get(num_str, 0)))
+        
+        missing_numbers.sort(key=lambda x: x[1], reverse=True)
+        
+        top_gan_html = ""
+        for loto, days in missing_numbers[:3]:
+             top_gan_html += f"Số <b style='color:red; font-size:12pt'>{loto}</b>: chưa về <b>{days}</b> ngày<br>"
+        
+        self.stats_top_gan_label.setText(top_gan_html)
+        self.stats_top_gan_label.setTextFormat(Qt.RichText)
+
+    def select_previous_kqxs_day(self):
+        """Chọn và hiển thị kết quả của ngày có dữ liệu trước đó."""
+        try:
+            full_text = self.kqxs_date_label.text()
+            date_str = full_text.split(" ")[-1].replace('</b>', '')
+            
+            current_date = datetime.datetime.strptime(date_str, "%d-%m-%Y").date()
+            sorted_dates = sorted(list(self.available_kqxs_dates), reverse=True)
+            
+            found_index = -1
+            for i, date in enumerate(sorted_dates):
+                if date == current_date:
+                    found_index = i
+                    break
+
+            if found_index != -1 and found_index < len(sorted_dates) - 1:
+                prev_date = sorted_dates[found_index + 1]
+                self.update_kqxs_tab(prev_date)
+            else:
+                self.update_status("Đang ở ngày đầu tiên trong dữ liệu.")
+        except (ValueError, IndexError):
+            self.update_status("Không thể xác định ngày trước đó.")
+
+    def select_next_kqxs_day(self):
+        """Chọn và hiển thị kết quả của ngày có dữ liệu kế tiếp."""
+        try:
+            full_text = self.kqxs_date_label.text()
+            date_str = full_text.split(" ")[-1].replace('</b>', '')
+
+            current_date = datetime.datetime.strptime(date_str, "%d-%m-%Y").date()
+            sorted_dates = sorted(list(self.available_kqxs_dates))
+
+            found_index = -1
+            for i, date in enumerate(sorted_dates):
+                if date == current_date:
+                    found_index = i
+                    break
+
+            if found_index != -1 and found_index < len(sorted_dates) - 1:
+                next_date = sorted_dates[found_index + 1]
+                self.update_kqxs_tab(next_date)
+            else:
+                self.update_status("Đang ở ngày cuối cùng trong dữ liệu.")
+        except (ValueError, IndexError):
+            self.update_status("Không thể xác định ngày kế tiếp.")
+
+    def show_kqxs_calendar(self):
+        """Hiển thị lịch chỉ cho phép chọn những ngày có dữ liệu."""
+        if not self.available_kqxs_dates:
+            QMessageBox.warning(self, "Thiếu Dữ Liệu", "Không có dữ liệu ngày nào để lựa chọn.")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Chọn Ngày Xem Kết Quả")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
+        calendar = QCalendarWidget()
+        calendar.setGridVisible(True)
+
+        min_date = min(self.available_kqxs_dates)
+        max_date = max(self.available_kqxs_dates)
+        calendar.setMinimumDate(QDate(min_date.year, min_date.month, min_date.day))
+        calendar.setMaximumDate(QDate(max_date.year, max_date.month, max_date.day))
+        
+        selectable_format = QTextCharFormat()
+        selectable_format.setFontWeight(QFont.Bold)
+        selectable_format.setForeground(QColor("blue"))
+        
+        for date_obj in self.available_kqxs_dates:
+            q_date = QDate(date_obj.year, date_obj.month, date_obj.day)
+            calendar.setDateTextFormat(q_date, selectable_format)
+            
+        layout.addWidget(calendar)
+        
+        button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
+        button_box.accepted.connect(dialog.accept)
+        button_box.rejected.connect(dialog.reject)
+        layout.addWidget(button_box)
+
+        if dialog.exec_() == QDialog.Accepted:
+            selected_qdate = calendar.selectedDate()
+            selected_date_obj = selected_qdate.toPyDate()
+
+            if selected_date_obj in self.available_kqxs_dates:
+                self.update_kqxs_tab(selected_date_obj)
+            else:
+                QMessageBox.warning(self, "Ngày không hợp lệ", "Vui lòng chọn một ngày được đánh dấu (có dữ liệu).")
 
 
     def setup_gemini_creator_tab(self):
@@ -6813,6 +7062,213 @@ class LotteryPredictionApp(QMainWindow):
         bottom_splitter.setSizes(initial_splitter_sizes)
 
         main_logger.debug("Main tab UI setup complete.")
+
+    def _get_loto(self, value) -> str:
+        """Lấy 2 chữ số cuối từ một giá trị giải thưởng."""
+        if value is None:
+            return ""
+        s_val = str(value).strip()
+        if len(s_val) >= 2 and s_val[-2:].isdigit():
+            return s_val[-2:]
+        elif s_val.isdigit():
+            return f"{int(s_val):02d}"
+        return "N/A"
+
+    def setup_kqxs_tab(self):
+        """Thiết lập giao diện cho tab Xem KQXS với layout chia 2 cột: Kết quả và Thống kê."""
+        main_logger.debug("Setting up KQXS View tab with split layout...")
+        main_layout = QVBoxLayout(self.kqxs_tab_frame)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+
+        top_bar_widget = QWidget()
+        top_bar_layout = QHBoxLayout(top_bar_widget)
+        top_bar_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.kqxs_prev_button = QPushButton("◀")
+        self.kqxs_prev_button.setObjectName("SmallNavButton")
+        self.kqxs_prev_button.setToolTip("Xem kết quả ngày trước đó")
+        self.kqxs_prev_button.clicked.connect(self.select_previous_kqxs_day)
+        
+        self.kqxs_date_label = QLabel("<b>Xổ số Miền Bắc...</b>")
+        self.kqxs_date_label.setFont(self.get_qfont("title"))
+        self.kqxs_date_label.setAlignment(Qt.AlignCenter)
+
+        self.kqxs_calendar_button = QPushButton("📅")
+        self.kqxs_calendar_button.setToolTip("Mở lịch để xem kết quả của ngày khác")
+        self.kqxs_calendar_button.setObjectName("CalendarButton")
+        self.kqxs_calendar_button.clicked.connect(self.show_kqxs_calendar)
+        
+        self.kqxs_next_button = QPushButton("▶")
+        self.kqxs_next_button.setObjectName("SmallNavButton")
+        self.kqxs_next_button.setToolTip("Xem kết quả ngày kế tiếp")
+        self.kqxs_next_button.clicked.connect(self.select_next_kqxs_day)
+
+        top_bar_layout.addStretch(1)
+        top_bar_layout.addWidget(self.kqxs_prev_button)
+        top_bar_layout.addWidget(self.kqxs_date_label)
+        top_bar_layout.addWidget(self.kqxs_calendar_button)
+        top_bar_layout.addWidget(self.kqxs_next_button)
+        top_bar_layout.addStretch(1)
+        
+        main_layout.addWidget(top_bar_widget)
+
+        content_splitter = QSplitter(Qt.Horizontal)
+        content_splitter.setHandleWidth(5)
+        
+        left_container = QGroupBox("Bảng Kết Quả")
+        left_layout = QVBoxLayout(left_container)
+        left_layout.setContentsMargins(5, 10, 5, 5)
+        
+        results_container = QWidget()
+        main_results_layout = QHBoxLayout(results_container)
+        main_results_layout.setSpacing(0)
+        main_results_layout.setContentsMargins(0,0,0,0)
+
+        prize_names_widget = QWidget()
+        prize_names_layout = QVBoxLayout(prize_names_widget)
+        prize_names_layout.setContentsMargins(0,0,0,0)
+        prize_names_layout.setSpacing(0)
+        prize_names_widget.setFixedWidth(100)
+
+        numbers_widget = QWidget()
+        numbers_layout = QVBoxLayout(numbers_widget)
+        numbers_layout.setContentsMargins(0,0,0,0)
+        numbers_layout.setSpacing(0)
+
+        main_results_layout.addWidget(prize_names_widget)
+        main_results_layout.addWidget(numbers_widget, 1)
+
+        self.kqxs_result_labels = {}
+
+        def create_label(text="", is_prize_name=False):
+            label = QLabel(text)
+            label.setAlignment(Qt.AlignCenter)
+            label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            font = self.get_qfont("bold")
+            if is_prize_name:
+                font.setPointSize(self.get_font_size("small"))
+                label.setFont(font)
+                label.setStyleSheet("border: 1px solid #E0E0E0; background-color: #F0F0F0; color: #333;")
+            else:
+                font.setPointSize(self.get_font_size("title"))
+                label.setFont(font)
+                label.setStyleSheet("border: 1px solid #E0E0E0; background-color: white; color: #000;")
+            return label
+        
+        def create_centered_row(num_count):
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0,0,0,0)
+            row_layout.setSpacing(0)
+            labels = []
+            for _ in range(num_count):
+                label = create_label()
+                labels.append(label)
+                row_layout.addWidget(label, 1)
+            return row_widget, labels
+        
+        prizes = [
+            ("db", "Đặc biệt", 1), ("nhat", "Giải nhất", 1), ("nhi", "Giải nhì", 2),
+            ("ba", "Giải ba", 6), ("tu", "Giải tư", 4), ("nam", "Giải năm", 6),
+            ("sau", "Giải sáu", 3), ("bay", "Giải bảy", 4)
+        ]
+
+        prize_names_layout.addStretch(1)
+        numbers_layout.addStretch(1)
+
+        for key, name, count in prizes:
+            num_rows = 1
+            if key in ['ba', 'nam']: num_rows = 2
+            
+            prize_label_container = QWidget()
+            prize_label_layout = QHBoxLayout(prize_label_container)
+            prize_label_layout.setContentsMargins(0,0,0,0)
+            prize_label = create_label(name, is_prize_name=True)
+            prize_label_layout.addWidget(prize_label)
+            prize_names_layout.addWidget(prize_label_container, num_rows)
+            
+            self.kqxs_result_labels[key] = []
+            
+            if num_rows == 1:
+                row_widget, labels = create_centered_row(count)
+                if key == 'db':
+                    labels[0].setStyleSheet("border: 1px solid #E0E0E0; background-color: #FFFACD; color: red; font-size: 22pt; font-weight: bold;")
+                numbers_layout.addWidget(row_widget, 1)
+                self.kqxs_result_labels[key] = labels
+            else:
+                row1_widget, labels1 = create_centered_row(3)
+                row2_widget, labels2 = create_centered_row(3)
+                numbers_layout.addWidget(row1_widget, 1)
+                numbers_layout.addWidget(row2_widget, 1)
+                self.kqxs_result_labels[key] = labels1 + labels2
+        
+        prize_names_layout.addStretch(1)
+        numbers_layout.addStretch(1)
+        
+        left_layout.addWidget(results_container)
+        
+        right_container = QGroupBox("Thống Kê Trong Ngày")
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setContentsMargins(5, 10, 5, 5)
+        right_layout.setSpacing(10)
+
+        self.stats_scroll = QScrollArea()
+        self.stats_scroll.setWidgetResizable(True)
+        self.stats_scroll.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
+        
+        stats_widget = QWidget()
+        self.stats_content_layout = QVBoxLayout(stats_widget)
+        self.stats_content_layout.setAlignment(Qt.AlignTop)
+        self.stats_content_layout.setSpacing(15)
+
+        self.stats_nhay_label = QLabel("Đang tải...")
+        self.stats_nhay_label.setWordWrap(True)
+        self.stats_content_layout.addWidget(self._create_styled_stat_box("⚡ Loto về nhiều nháy", self.stats_nhay_label))
+
+        self.stats_roi_label = QLabel("Đang tải...")
+        self.stats_roi_label.setWordWrap(True)
+        self.stats_content_layout.addWidget(self._create_styled_stat_box("🍂 Loto Rơi (từ hôm qua)", self.stats_roi_label))
+
+        self.stats_top_gan_label = QLabel("Đang tải...")
+        self.stats_top_gan_label.setWordWrap(True)
+        self.stats_content_layout.addWidget(self._create_styled_stat_box("🥶 Top 3 Gan Lì (Chưa về)", self.stats_top_gan_label))
+
+        self.stats_gan_ve_label = QLabel("Đang tải...")
+        self.stats_gan_ve_label.setWordWrap(True)
+        self.stats_content_layout.addWidget(self._create_styled_stat_box("🔥 Số Hiếm (Gan đã về hôm nay)", self.stats_gan_ve_label))
+
+        self.stats_head_tail_label = QLabel("Đang tải...")
+        self.stats_head_tail_label.setWordWrap(True)
+        font_mono = QFont("Consolas", 10)
+        font_mono.setStyleHint(QFont.Monospace)
+        self.stats_head_tail_label.setFont(font_mono)
+        self.stats_content_layout.addWidget(self._create_styled_stat_box("📊 Thống kê Đầu - Đuôi", self.stats_head_tail_label))
+
+        self.stats_scroll.setWidget(stats_widget)
+        right_layout.addWidget(self.stats_scroll)
+
+        content_splitter.addWidget(left_container)
+        content_splitter.addWidget(right_container)
+        content_splitter.setStretchFactor(0, 6)
+        content_splitter.setStretchFactor(1, 4)
+
+        main_layout.addWidget(content_splitter, 1)
+
+    def _create_styled_stat_box(self, title, content_label):
+        """Helper tạo khung thống kê đẹp mắt."""
+        box = QGroupBox(title)
+        box.setStyleSheet("""
+            QGroupBox { 
+                font-weight: bold; color: #0056b3; border: 1px solid #ccc; border-radius: 5px; margin-top: 8px; 
+            }
+            QGroupBox::title { subcontrol-origin: margin; left: 10px; padding: 0 3px; }
+        """)
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(5, 10, 5, 5)
+        content_label.setStyleSheet("color: #333; font-weight: normal;")
+        layout.addWidget(content_label)
+        return box
 
     def setup_settings_tab(self):
         """Thiết lập giao diện người dùng cho tab Cài đặt."""
@@ -8727,6 +9183,11 @@ class LotteryPredictionApp(QMainWindow):
                 results_temp.sort(key=lambda x: x['date'])
                 self.results = results_temp
                 start_date, end_date = self.results[0]['date'], self.results[-1]['date']
+                
+                self.available_kqxs_dates = {r['date'] for r in self.results}
+                if hasattr(self, 'update_kqxs_tab'):
+                    self.update_kqxs_tab(end_date)
+
                 start_ui, end_ui = start_date.strftime('%d/%m/%Y'), end_date.strftime('%d/%m/%Y')
                 date_range_text = f"{start_ui} - {end_ui} ({len(self.results)} ngày)"
                 if hasattr(self, 'date_range_label'): self.date_range_label.setText(date_range_text)
