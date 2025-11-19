@@ -1,5 +1,13 @@
 # Update list
 
+### 19/11/2025
+
+**Update ver 5.3**
+
+Update lại code để fix lỗi api Gemini sau khi Google update lại Studio
+Thêm tab Kết quả xổ số để người dùng có thể xem trực quan hơn bảng kết quả
+
+<br>
 
 ### 18/05/2025
 
