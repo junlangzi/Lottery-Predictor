@@ -1,6 +1,6 @@
-# Version: 5.3
-# Date: 19/11/2025
-# Update: <br><b>Fix Gemini api mới do Google update.<br>Thêm tab Kết quả xổ số để xem nhanh kết quả các ngày</b>
+# Version: 5.3.1
+# Date: 01/12/2025
+# Update: <br><b>Tối ưu lại thuật toán và fix số lượng file data khi sync</b>
 import os
 import sys
 import logging
@@ -2272,111 +2272,15 @@ class OptimizerEmbedded(QWidget):
                 optimizer_logger.error(f"Optimizer: Error creating UI card for local algo '{display_name_key}' in Optimizer's list: {e}", exc_info=True)
 
     def sync_data(self):
-        """Downloads data from the sync URL and replaces the current data file."""
-        main_logger.info("Sync data request initiated.")
-
-        if hasattr(self, '_data_sync_server_online') and self._data_sync_server_online is False:
-            main_logger.warning("Sync aborted: Server Data Sync is offline.")
-            QMessageBox.warning(self, "Không có kết nối", "Không thể đồng bộ dữ liệu do không có kết nối mạng (Server Data Sync: Offline). Vui lòng kiểm tra kết nối và thử lại sau ít phút.")
-            self.update_status("Đồng bộ thất bại: Không có kết nối mạng.")
-            return
-
-        url_to_sync = ""
-        if hasattr(self, 'sync_url_input') and self.sync_url_input:
-            url_to_sync = self.sync_url_input.text().strip()
-        
-        if not url_to_sync:
-            url_to_sync = self.config.get('DATA', 'sync_url', fallback="").strip()
-            if not url_to_sync:
-                 main_logger.warning("Sync failed: Sync URL is empty in UI and config.")
-                 QMessageBox.warning(self, "Thiếu URL", "Vui lòng nhập URL vào ô 'Đồng bộ' hoặc cấu hình trong tab Cài đặt.")
-                 return
-            else:
-                if hasattr(self, 'sync_url_input') and self.sync_url_input:
-                    self.sync_url_input.setText(url_to_sync)
-
-        target_file_str = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
-        target_file = Path(target_file_str)
-        backup_file = target_file.with_suffix(target_file.suffix + '.bak-' + datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
-        backed_up_successfully = False
-
-        try: import requests
-        except ImportError:
-            main_logger.critical("Requests library not found. Sync data cannot proceed.")
-            QMessageBox.critical(self, "Thiếu Thư Viện", "Chức năng đồng bộ yêu cầu thư viện 'requests'.\nVui lòng cài đặt bằng lệnh:\n\npip install requests")
-            return
-
-        self.update_status(f"Đang tải dữ liệu từ URL...")
-        QApplication.processEvents()
-
-        try:
-            main_logger.info(f"Attempting to download data from: {url_to_sync}")
-            response = requests.get(url_to_sync, timeout=30, headers={'Cache-Control': 'no-cache', 'Pragma': 'no-cache'})
-            response.raise_for_status()
-            main_logger.info(f"Download successful (Status: {response.status_code}). Size: {len(response.content)} bytes.")
-
-            try:
-                 downloaded_data = response.json()
-                 is_valid_format = isinstance(downloaded_data, list) or \
-                                  (isinstance(downloaded_data, dict) and 'results' in downloaded_data and isinstance(downloaded_data.get('results'), dict))
-                 if not is_valid_format:
-                     raise ValueError("Định dạng JSON tải về không hợp lệ (không phải list hoặc dict có key 'results').")
-                 main_logger.info("Downloaded data appears to be valid JSON format.")
-            except (json.JSONDecodeError, ValueError) as json_err:
-                main_logger.error(f"Downloaded data validation failed: {json_err}")
-                QMessageBox.critical(self, "Lỗi Dữ Liệu Tải Về", f"Dữ liệu tải về từ URL không phải là file JSON hợp lệ hoặc có cấu trúc không đúng:\n{json_err}")
-                self.update_status("Đồng bộ thất bại: dữ liệu tải về không hợp lệ.")
-                return
-
-            if target_file.exists():
-                try:
-                    shutil.copy2(target_file, backup_file)
-                    backed_up_successfully = True
-                    main_logger.info(f"Backed up existing data file to: {backup_file.name}")
-                except Exception as backup_err:
-                    main_logger.error(f"Failed to backup data file: {backup_err}", exc_info=True)
-                    reply = QMessageBox.warning(self, "Lỗi Sao Lưu", f"Không thể tạo file sao lưu cho:\n{target_file.name}\n\nLỗi: {backup_err}\n\nTiếp tục đồng bộ mà không sao lưu?",
-                                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-                    if reply == QMessageBox.No:
-                        self.update_status("Đồng bộ đã hủy do lỗi sao lưu.")
-                        return
-
-            try:
-                with open(target_file, 'wb') as f:
-                    f.write(response.content)
-                main_logger.info(f"Successfully wrote downloaded data to: {target_file.name}")
-            except IOError as save_err:
-                main_logger.error(f"Failed to write downloaded data to {target_file.name}: {save_err}", exc_info=True)
-                QMessageBox.critical(self, "Lỗi Lưu File", f"Không thể ghi dữ liệu tải về vào file:\n{target_file.name}\n\nLỗi: {save_err}")
-                if backed_up_successfully:
-                    self._restore_backup(backup_file, target_file)
-                self.update_status("Đồng bộ thất bại: lỗi ghi file.")
-                return
-
-            if hasattr(self, 'data_file_path_label'):
-                 self.data_file_path_label.setText(str(target_file))
-                 self.data_file_path_label.setToolTip(str(target_file))
-
-            self.load_data()
-            self.reload_algorithms()
-
-            if self.optimizer_app_instance:
-                 self.optimizer_app_instance.data_file_path_label.setText(str(target_file))
-                 self.optimizer_app_instance.load_data()
-
-            self.update_status("Đồng bộ dữ liệu thành công.")
-            QMessageBox.information(self, "Hoàn Tất", f"Đã đồng bộ và cập nhật dữ liệu thành công từ:\n{url_to_sync}")
-
-        except requests.exceptions.RequestException as req_err:
-            main_logger.error(f"Failed to download data from {url_to_sync}: {req_err}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Kết Nối", f"Không thể tải dữ liệu từ URL:\n{url_to_sync}\n\nLỗi: {type(req_err).__name__} - {req_err}")
-            self.update_status(f"Đồng bộ thất bại: lỗi kết nối hoặc URL không hợp lệ.")
-            if backed_up_successfully: self._restore_backup(backup_file, target_file)
-        except Exception as e:
-            main_logger.error(f"Unexpected error during data sync: {e}", exc_info=True)
-            QMessageBox.critical(self, "Lỗi Đồng Bộ", f"Đã xảy ra lỗi không mong muốn trong quá trình đồng bộ:\n{e}")
-            self.update_status(f"Đồng bộ thất bại: lỗi không xác định.")
-            if backed_up_successfully: self._restore_backup(backup_file, target_file)
+        """
+        Thay vì viết lại logic, hàm này sẽ gọi trực tiếp tính năng đồng bộ 
+        từ Main App (LotteryPredictionApp) để tận dụng cơ chế dọn dẹp file cũ.
+        """
+        if hasattr(self, 'main_app') and self.main_app:
+            # Gọi hàm sync_data của class cha (nơi đã có _cleanup_old_backups)
+            self.main_app.sync_data()
+        else:
+            QMessageBox.warning(self, "Lỗi Liên Kết", "Không tìm thấy kết nối đến ứng dụng chính (Main App).")
 
     def _fetch_and_populate_optimizer_online_algorithms_list(self):
         optimizer_logger.info("Optimizer: (Safe) Fetching and populating its online algorithms list...")
@@ -5520,7 +5424,7 @@ class SquareQLabel(QLabel):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v5.3)")
+        self.setWindowTitle("Lottery Predictor (v5.3.1)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
@@ -9340,6 +9244,54 @@ class LotteryPredictionApp(QMainWindow):
                 self.config_data_path_edit.setText(filename)
         except Exception as e:
              QMessageBox.critical(self, "Lỗi", f"Lỗi duyệt file:\n{e}")
+    def _cleanup_old_backups(self, target_file: Path, keep_limit: int = 3):
+        """
+        Tìm và xóa các file backup cũ, chỉ giữ lại 'keep_limit' file mới nhất.
+        Dựa trên tên file để sắp xếp (vì tên chứa ngày giờ: .bak-YYYYMMDDHHMMSS).
+        """
+        try:
+            # Lấy thư mục chứa file data
+            parent_dir = target_file.parent.resolve()
+            
+            # Tên file gốc (ví dụ: xsmb-2-digits.json)
+            base_name = target_file.name
+            
+            # Tìm tất cả các file có tiền tố là tên file gốc + ".bak-"
+            # Ví dụ: xsmb-2-digits.json.bak-2025...
+            backup_files = []
+            if parent_dir.exists():
+                for f in parent_dir.iterdir():
+                    if f.is_file() and f.name.startswith(f"{base_name}.bak-"):
+                        backup_files.append(f)
+
+            # Sắp xếp danh sách file theo TÊN (giảm dần -> mới nhất lên đầu)
+            # Vì định dạng timestamp YYYYMMDDHHMMSS nên sort tên là chuẩn nhất
+            backup_files.sort(key=lambda x: x.name, reverse=True)
+
+            main_logger.info(f"Tìm thấy {len(backup_files)} file backup.")
+
+            # Nếu số lượng file ít hơn hoặc bằng giới hạn thì không cần xóa
+            if len(backup_files) <= keep_limit:
+                return
+
+            # Các file nằm ngoài giới hạn giữ lại sẽ bị xóa
+            files_to_delete = backup_files[keep_limit:]
+            
+            deleted_count = 0
+            for f in files_to_delete:
+                try:
+                    f.unlink() # Lệnh xóa file
+                    deleted_count += 1
+                    main_logger.info(f"Cleaned up old backup: {f.name}")
+                except OSError as e:
+                    main_logger.warning(f"Failed to delete old backup {f.name}: {e}")
+            
+            if deleted_count > 0:
+                main_logger.info(f"Đã xóa {deleted_count} file backup cũ, giữ lại {keep_limit} file mới nhất.")
+                # Cập nhật status bar nếu có thể (nhưng không bắt buộc để tránh lỗi thread)
+
+        except Exception as e:
+            main_logger.error(f"Error during backup cleanup: {e}", exc_info=True)
 
     def sync_data(self):
         """Downloads data from the sync URL and replaces the current data file."""
@@ -9367,7 +9319,11 @@ class LotteryPredictionApp(QMainWindow):
 
         target_file_str = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
         target_file = Path(target_file_str)
-        backup_file = target_file.with_suffix(target_file.suffix + '.bak-' + datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+        
+        # Tạo tên file backup với timestamp hiện tại
+        timestamp_str = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
+        backup_file = target_file.with_suffix(target_file.suffix + f'.bak-{timestamp_str}')
+        
         backed_up_successfully = False
 
         try: import requests
@@ -9398,11 +9354,17 @@ class LotteryPredictionApp(QMainWindow):
                 self.update_status("Đồng bộ thất bại: dữ liệu tải về không hợp lệ.")
                 return
 
+            # --- BẮT ĐẦU: BACKUP VÀ DỌN DẸP ---
             if target_file.exists():
                 try:
                     shutil.copy2(target_file, backup_file)
                     backed_up_successfully = True
                     main_logger.info(f"Backed up existing data file to: {backup_file.name}")
+                    
+                    # === GỌI HÀM DỌN DẸP NGAY TẠI ĐÂY ===
+                    # Chỉ giữ lại 3 file backup gần nhất
+                    self._cleanup_old_backups(target_file, keep_limit=3)
+
                 except Exception as backup_err:
                     main_logger.error(f"Failed to backup data file: {backup_err}", exc_info=True)
                     reply = QMessageBox.warning(self, "Lỗi Sao Lưu", f"Không thể tạo file sao lưu cho:\n{target_file.name}\n\nLỗi: {backup_err}\n\nTiếp tục đồng bộ mà không sao lưu?",
@@ -9410,6 +9372,7 @@ class LotteryPredictionApp(QMainWindow):
                     if reply == QMessageBox.No:
                         self.update_status("Đồng bộ đã hủy do lỗi sao lưu.")
                         return
+            # --- KẾT THÚC: BACKUP VÀ DỌN DẸP ---
 
             try:
                 with open(target_file, 'wb') as f:
@@ -9435,7 +9398,7 @@ class LotteryPredictionApp(QMainWindow):
                  self.optimizer_app_instance.load_data()
 
             self.update_status("Đồng bộ dữ liệu thành công.")
-            QMessageBox.information(self, "Hoàn Tất", f"Đã đồng bộ và cập nhật dữ liệu thành công từ:\n{url_to_sync}")
+            QMessageBox.information(self, "Hoàn Tất", f"Đã đồng bộ và cập nhật dữ liệu thành công từ:\n{url_to_sync}\n\n(Đã tự động xóa các bản sao lưu cũ)")
 
         except requests.exceptions.RequestException as req_err:
             main_logger.error(f"Failed to download data from {url_to_sync}: {req_err}", exc_info=True)
