@@ -1,5 +1,12 @@
 # Update list
 
+
+### 01/12/2025
+
+**Update ver 5.3.1**
+
+Tối ưu lại thuật toán và fix số lượng file data khi sync
+
 ### 19/11/2025
 
 **Update ver 5.3**
