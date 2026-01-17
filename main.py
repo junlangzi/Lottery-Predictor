@@ -1,6 +1,6 @@
-# Version: 5.3.1
-# Date: 01/12/2025
-# Update: <br><b>Tối ưu lại thuật toán và fix số lượng file data khi sync</b>
+# Version: 5.4
+# Date: 17/01/2026
+# Update: <br><b>Thêm mục chơi thử để người dùng trải nghiệm cảm giác chơi và xem ngay lập tức kết quả trúng thưởng.<br>Thêm phần đánh giá thuật toán ( tại tab đánh giá thuật toán trong tab thuật toán) - Đánh giá chi tiết kết quả thuật toán qua các kỳ quay để người dùng kiểm tra số liệu thuật toán </b>
 import os
 import sys
 import logging
@@ -961,6 +961,483 @@ class AlgorithmGeminiBuilderTab(QWidget):
             self.status_label.setText("Trạng thái: Lỗi không xác định khi lưu")
             self.status_label.setStyleSheet("color: #dc3545;")
 
+class EvaluationWorker(QObject):
+    """Worker chạy nền để đánh giá hiệu suất thuật toán."""
+    progress_signal = pyqtSignal(int, int)  # current, total
+    finished_signal = pyqtSignal(dict)
+    error_signal = pyqtSignal(str)
+    
+    def __init__(self, algo_instances, results_data, num_periods):
+        super().__init__()
+        self.algo_instances = algo_instances
+        self.results_data = results_data
+        self.num_periods = num_periods # Nhận số kỳ từ UI
+        self._is_running = True
+
+    def stop(self):
+        self._is_running = False
+
+    def run(self):
+        try:
+            if not self.results_data or len(self.results_data) < 30:
+                self.error_signal.emit("Dữ liệu lịch sử không đủ để đánh giá (cần ít nhất 30 ngày).")
+                return
+
+            sorted_data = sorted(self.results_data, key=lambda x: x['date'])
+            # Lấy ngày áp chót làm mốc (giả lập)
+            current_end_date = sorted_data[-1]['date']
+            
+            periods = []
+            
+            # --- THAY ĐỔI Ở ĐÂY: Chạy theo số kỳ người dùng chọn ---
+            for i in range(self.num_periods):
+                period_entries = []
+                temp_data = [x for x in sorted_data if x['date'] <= current_end_date]
+                if len(temp_data) < 30: break 
+                
+                chunk = temp_data[-30:]
+                if not chunk: break
+                
+                periods.append({
+                    'index': i + 1,
+                    'start_date': chunk[0]['date'],
+                    'end_date': chunk[-1]['date'],
+                    'entries': chunk
+                })
+                
+                current_idx = sorted_data.index(chunk[0])
+                if current_idx > 0:
+                    current_end_date = sorted_data[current_idx - 1]['date']
+                else:
+                    break
+            # -------------------------------------------------------
+
+            total_days_to_calc = sum(len(p['entries']) for p in periods)
+            current_calc_count = 0
+            
+            stats_per_period = {}
+            rank_frequency = {i: 0 for i in range(100)}
+            
+            history_cache = {}
+            for i, r in enumerate(sorted_data):
+                history_cache[r['date']] = sorted_data[:i]
+
+            for period in periods:
+                if not self._is_running: break
+                
+                p_idx = period['index']
+                stats_per_period[p_idx] = {'top1': 0, 'top2': 0, 'top3': 0, 'total': 0, 
+                                           'range': f"{period['start_date']:%d/%m} - {period['end_date']:%d/%m}"}
+                
+                for entry in period['entries']:
+                    if not self._is_running: break
+                    
+                    try:
+                        idx_in_full = sorted_data.index(entry)
+                        if idx_in_full == 0: continue
+                        
+                        prev_entry = sorted_data[idx_in_full - 1]
+                        predict_date_input = prev_entry['date']
+                        actual_result_dict = entry['result']
+                        
+                        hist = history_cache.get(predict_date_input, [])
+                        
+                        combined_scores = {}
+                        for algo in self.algo_instances:
+                            try:
+                                preds = algo.predict(entry['date'], hist)
+                                if preds:
+                                    for num, score in preds.items():
+                                        combined_scores[num] = combined_scores.get(num, 0) + float(score)
+                            except Exception: pass
+                        
+                        if not combined_scores: continue
+
+                        sorted_preds = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
+                        ranked_nums = [int(k) for k, v in sorted_preds if k.isdigit()]
+                        
+                        actual_lotos = set()
+                        for k, v in actual_result_dict.items():
+                            if k not in ['date', 'id', 'source']:
+                                vals = v if isinstance(v, list) else [v]
+                                for val in vals:
+                                    s = str(val)
+                                    if len(s) >= 2 and s[-2:].isdigit(): actual_lotos.add(int(s[-2:]))
+                        
+                        stats_per_period[p_idx]['total'] += 1
+                        
+                        hit_indices = []
+                        for rank_idx, num in enumerate(ranked_nums[:100]):
+                            if num in actual_lotos:
+                                hit_indices.append(rank_idx)
+                                rank_frequency[rank_idx] = rank_frequency.get(rank_idx, 0) + 1
+                        
+                        if any(idx == 0 for idx in hit_indices): stats_per_period[p_idx]['top1'] += 1
+                        if any(idx <= 1 for idx in hit_indices): stats_per_period[p_idx]['top2'] += 1
+                        if any(idx <= 2 for idx in hit_indices): stats_per_period[p_idx]['top3'] += 1
+
+                    except Exception: continue
+                    
+                    current_calc_count += 1
+                    self.progress_signal.emit(current_calc_count, total_days_to_calc)
+
+            self.finished_signal.emit({
+                'periods': stats_per_period,
+                'rank_freq': rank_frequency,
+                'total_samples': current_calc_count
+            })
+
+        except Exception as e:
+            self.error_signal.emit(f"Lỗi luồng đánh giá: {e}")
+
+class AlgorithmEvaluationTab(QWidget):
+    def __init__(self, parent_optimizer, main_app):
+        super().__init__(parent_optimizer)
+        self.opt_parent = parent_optimizer
+        self.main_app = main_app
+        self.worker = None
+        self.thread = None
+        
+        self.setup_ui()
+        
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.setContentsMargins(10, 10, 10, 10)
+
+        # 1. Khu vực chọn thuật toán
+        top_group = QGroupBox("Chọn Thuật Toán Kết Hợp Đánh Giá")
+        top_layout = QVBoxLayout(top_group)
+        
+        self.algo_list_widget = QListWidget()
+        self.algo_list_widget.setFixedHeight(120)
+        self.algo_list_widget.setSelectionMode(QListWidget.MultiSelection)
+        self.algo_list_widget.setStyleSheet("background-color: white;")
+        top_layout.addWidget(self.algo_list_widget)
+        
+        btn_layout = QHBoxLayout()
+        self.refresh_btn = QPushButton("🔄 Tải lại DS")
+        self.refresh_btn.clicked.connect(self.refresh_algo_list)
+        self.select_all_btn = QPushButton("Chọn tất cả")
+        self.select_all_btn.clicked.connect(self.select_all_algos)
+        
+        btn_layout.addWidget(QLabel("Số kỳ đánh giá (30 ngày/kỳ):"))
+        self.period_spinbox = QSpinBox()
+        self.period_spinbox.setRange(12, 120)
+        self.period_spinbox.setValue(12)
+        self.period_spinbox.setFixedWidth(60)
+        btn_layout.addWidget(self.period_spinbox)
+
+        self.run_btn = QPushButton("🚀 BẮT ĐẦU ĐÁNH GIÁ")
+        self.run_btn.setObjectName("AccentButton")
+        self.run_btn.clicked.connect(self.start_evaluation)
+        
+        btn_layout.addWidget(self.refresh_btn)
+        btn_layout.addWidget(self.select_all_btn)
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.run_btn)
+        top_layout.addLayout(btn_layout)
+        
+        layout.addWidget(top_group)
+
+        # 2. Khu vực hiển thị kết quả
+        res_group = QGroupBox("Kết Quả Đánh Giá")
+        res_layout = QVBoxLayout(res_group)
+        
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_widget = QWidget()
+        self.scroll_layout = QVBoxLayout(self.scroll_widget)
+        self.scroll_layout.setSpacing(15)
+        
+        # --- Bảng 1: Độ chính xác ---
+        self.scroll_layout.addWidget(QLabel("<b>1. Độ chính xác Top 1-2-3 qua các giai đoạn:</b>"))
+        self.accuracy_table = QtWidgets.QTableWidget()
+        self.accuracy_table.setColumnCount(5)
+        self.accuracy_table.setHorizontalHeaderLabels(["Giai đoạn", "Khoảng thời gian", "Top 1 (%)", "Top 2 (%)", "Top 3 (%)"])
+        
+        self.accuracy_table.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        self.accuracy_table.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Fixed)
+        self.accuracy_table.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.accuracy_table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.accuracy_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.accuracy_table.setMinimumHeight(100)
+        self.scroll_layout.addWidget(self.accuracy_table)
+        
+        # --- Bảng 2 & Kết luận ---
+        self.scroll_layout.addWidget(QLabel("<b>2. Bản đồ nhiệt Tần suất xuất hiện (Vị trí 0-99) & Kết luận:</b>"))
+        
+        heatmap_container = QWidget()
+        heatmap_layout = QHBoxLayout(heatmap_container)
+        heatmap_layout.setContentsMargins(0, 0, 0, 0)
+        heatmap_layout.setSpacing(10) # Giảm khoảng cách
+
+        # Left: Rank Grid
+        grid_frame = QWidget()
+        grid_layout = QVBoxLayout(grid_frame)
+        grid_layout.setContentsMargins(0,0,0,0)
+        grid_layout.addWidget(QLabel("<i>(Đậm: Hay về | Xanh nhạt: Ít về | Trắng: Trung bình)</i>"))
+        
+        self.rank_grid = QtWidgets.QTableWidget()
+        self.rank_grid.setRowCount(10)
+        self.rank_grid.setColumnCount(10)
+        
+        # --- SỬA HEADER THEO YÊU CẦU ---
+        # Hàng: R0 -> R9, Cột: C0 -> C9
+        self.rank_grid.setVerticalHeaderLabels([f"R{i}" for i in range(10)])
+        self.rank_grid.setHorizontalHeaderLabels([f"C{i}" for i in range(10)])
+        
+        # Cấu hình không thanh cuộn, ép kích thước
+        self.rank_grid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.rank_grid.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.rank_grid.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        self.rank_grid.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
+        
+        # In đậm header
+        font_header = QFont()
+        font_header.setBold(True)
+        self.rank_grid.horizontalHeader().setFont(font_header)
+        self.rank_grid.verticalHeader().setFont(font_header)
+
+        # Tính toán kích thước bảng: 10 cột * 45px + Header dọc (~40px)
+        # Tổng rộng khoảng 500-550px là đẹp
+        self.rank_grid.setMinimumSize(500, 480) 
+        self.rank_grid.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        
+        grid_layout.addWidget(self.rank_grid)
+        
+        # Right: Summary Label (Thu nhỏ lại)
+        self.summary_container = QWidget()
+        summary_layout = QVBoxLayout(self.summary_container)
+        summary_layout.setContentsMargins(0, 20, 0, 0) # Căn lề trên để ngang bằng với bảng
+        
+        self.summary_label = QLabel("Vui lòng chọn thuật toán và số kỳ đánh giá, sau đó nhấn 'Bắt Đầu'...")
+        self.summary_label.setWordWrap(True)
+        self.summary_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+        # Chữ nhỏ lại, padding gọn hơn
+        self.summary_label.setStyleSheet("""
+            QLabel {
+                font-size: 10pt; 
+                padding: 10px; 
+                background-color: #FAFAFA; 
+                border: 1px solid #CCCCCC;
+                border-radius: 5px;
+                color: #333;
+            }
+        """)
+        
+        summary_layout.addWidget(self.summary_label)
+        summary_layout.addStretch()
+
+        # --- CHIA TỶ LỆ LAYOUT ---
+        # Bảng chiếm 7 phần, Kết luận chiếm 3 phần
+        heatmap_layout.addWidget(grid_frame, 7)
+        heatmap_layout.addWidget(self.summary_container, 3) 
+
+        self.scroll_layout.addWidget(heatmap_container)
+        self.scroll_layout.addSpacing(20)
+        
+        self.scroll_area.setWidget(self.scroll_widget)
+        res_layout.addWidget(self.scroll_area)
+        layout.addWidget(res_group)
+
+        # 3. Thanh Loading
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setAlignment(Qt.AlignCenter)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: #f8f9fa;
+                height: 25px;
+                color: black;
+                font-weight: bold;
+                font-size: 11pt;
+            }
+            QProgressBar::chunk {
+                background-color: #28a745; 
+            }
+        """)
+        self.progress_bar.setValue(0)
+        layout.addWidget(self.progress_bar)
+
+    def showEvent(self, event):
+        self.refresh_algo_list()
+        super().showEvent(event)
+
+    def refresh_algo_list(self):
+        self.algo_list_widget.clear()
+        if self.opt_parent and hasattr(self.opt_parent, 'loaded_algorithms'):
+            for name in self.opt_parent.loaded_algorithms.keys():
+                item = QListWidgetItem(name)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Unchecked)
+                self.algo_list_widget.addItem(item)
+
+    # --- SỬA LỖI Ở ĐÂY ---
+    def select_all_algos(self):
+        # Dùng đúng tên biến self.algo_list_widget
+        for i in range(self.algo_list_widget.count()): 
+            self.algo_list_widget.item(i).setCheckState(Qt.Checked)
+
+    def start_evaluation(self):
+        selected_instances = []
+        for i in range(self.algo_list_widget.count()):
+            item = self.algo_list_widget.item(i)
+            if item.checkState() == Qt.Checked:
+                algo_name = item.text()
+                if algo_name in self.opt_parent.loaded_algorithms:
+                    selected_instances.append(self.opt_parent.loaded_algorithms[algo_name]['instance'])
+        
+        if not selected_instances:
+            QMessageBox.warning(self, "Chưa chọn thuật toán", "Vui lòng chọn ít nhất 1 thuật toán để đánh giá.")
+            return
+
+        num_periods = self.period_spinbox.value()
+
+        self.run_btn.setEnabled(False)
+        self.progress_bar.setValue(0)
+        # Font size nhỏ lại chút
+        self.summary_label.setText(f"<b>Đang tính toán dữ liệu {num_periods} kỳ... vui lòng đợi.</b>")
+        self.summary_label.setStyleSheet("color: #007BFF; font-size: 11pt; padding: 15px; border: 1px solid #ccc; background: #fff;")
+        
+        self.thread = QThread()
+        self.worker = EvaluationWorker(selected_instances, self.opt_parent.results_data, num_periods)
+        self.worker.moveToThread(self.thread)
+        
+        self.worker.progress_signal.connect(self.update_progress)
+        self.worker.error_signal.connect(self.on_error)
+        self.worker.finished_signal.connect(self.on_finished)
+        
+        self.thread.started.connect(self.worker.run)
+        self.thread.finished.connect(self.thread.deleteLater)
+        
+        self.thread.start()
+
+    def update_progress(self, current, total):
+        pct = int((current / total) * 100) if total > 0 else 0
+        self.progress_bar.setValue(pct)
+        self.progress_bar.setFormat(f"Đang xử lý: {pct}% ({current}/{total} kỳ quay)")
+
+    def on_error(self, msg):
+        QMessageBox.critical(self, "Lỗi", msg)
+        self.run_btn.setEnabled(True)
+        self.thread.quit()
+
+    def on_finished(self, results):
+        self.run_btn.setEnabled(True)
+        self.thread.quit()
+        self.display_results(results)
+
+    def display_results(self, data):
+        # 1. Fill Accuracy Table
+        periods = data['periods']
+        self.accuracy_table.setRowCount(len(periods))
+        sorted_p_ids = sorted(periods.keys())
+        
+        for row, p_id in enumerate(sorted_p_ids):
+            stats = periods[p_id]
+            total = stats['total'] if stats['total'] > 0 else 1
+            
+            p1 = (stats['top1'] / total) * 100
+            p2 = (stats['top2'] / total) * 100
+            p3 = (stats['top3'] / total) * 100
+            
+            self.accuracy_table.setItem(row, 0, QtWidgets.QTableWidgetItem(f"Mốc {p_id}"))
+            self.accuracy_table.setItem(row, 1, QtWidgets.QTableWidgetItem(stats['range']))
+            self.accuracy_table.setItem(row, 2, QtWidgets.QTableWidgetItem(f"{p1:.1f}%"))
+            self.accuracy_table.setItem(row, 3, QtWidgets.QTableWidgetItem(f"{p2:.1f}%"))
+            
+            item_p3 = QtWidgets.QTableWidgetItem(f"{p3:.1f}%")
+            if p3 > 50:
+                item_p3.setFont(QFont("Segoe UI", 9, QFont.Bold))
+                item_p3.setForeground(QColor("green"))
+            self.accuracy_table.setItem(row, 4, item_p3)
+
+        # Fix height cho accuracy table
+        header_height = self.accuracy_table.horizontalHeader().height()
+        rows_height = sum([self.accuracy_table.rowHeight(i) for i in range(self.accuracy_table.rowCount())])
+        total_height = header_height + rows_height + 5
+        self.accuracy_table.setFixedHeight(total_height)
+
+
+        # 2. Fill Rank Grid
+        rank_freq = data['rank_freq']
+        all_counts = [rank_freq.get(i, 0) for i in range(100)]
+        
+        sorted_counts = sorted(all_counts, reverse=True)
+        max_val = sorted_counts[0]
+        min_val = sorted_counts[-1]
+        top3_val = sorted_counts[2] if len(sorted_counts) > 2 else max_val
+        top10_val = sorted_counts[9] if len(sorted_counts) > 9 else max_val
+
+        for r in range(10):
+            for c in range(10):
+                rank_idx = r * 10 + c
+                count = rank_freq.get(rank_idx, 0)
+                
+                item = QtWidgets.QTableWidgetItem(str(count))
+                item.setTextAlignment(Qt.AlignCenter)
+                item.setFont(QFont("Segoe UI", 10, QFont.Bold))
+                
+                bg_color = QColor("white")
+                text_color = QColor("black")
+                
+                if count == max_val: 
+                    bg_color = QColor("#D32F2F") 
+                    text_color = QColor("white")
+                elif count >= top3_val:
+                    bg_color = QColor("#F57C00") 
+                    text_color = QColor("white")
+                elif count >= top10_val:
+                    bg_color = QColor("#FFD54F")
+                    text_color = QColor("black")
+                elif count == min_val:
+                    bg_color = QColor("#B3E5FC")
+                    text_color = QColor("black")
+
+                item.setBackground(QBrush(bg_color))
+                item.setForeground(QBrush(text_color))
+                self.rank_grid.setItem(r, c, item)
+
+        # 3. Summary (Cập nhật style nhỏ gọn)
+        sorted_ranks = sorted(rank_freq.items(), key=lambda x: x[1], reverse=True)
+        top_5_ranks = sorted_ranks[:5]
+        
+        # Reset Style cho gọn hơn
+        self.summary_label.setStyleSheet("""
+            QLabel {
+                font-size: 10pt; 
+                padding: 10px; 
+                background-color: #FFFFFF; 
+                border: 2px solid #007BFF;
+                border-radius: 8px;
+                color: #212529;
+            }
+        """)
+
+        summary_html = """
+        <h3 style='color: #0056b3; margin-top:0; margin-bottom:5px;'>KẾT LUẬN</h3>
+        <hr style='margin: 5px 0;'>
+        """
+        summary_html += f"<p style='margin: 3px 0;'>🔹 Đã check: <b style='color: #28a745;'>{data['total_samples']}</b> ngày</p>"
+        summary_html += "<p style='margin: 3px 0;'>🔹 <b>Top 5 Rank cao nhất:</b></p>"
+        summary_html += "<ul style='margin-top:0; padding-left: 15px; margin-bottom: 0;'>"
+        
+        colors = ["#D32F2F", "#E64A19", "#F57C00", "#FBC02D", "#388E3C"] 
+        
+        for idx, (rank, count) in enumerate(top_5_ranks):
+            pct = (count / data['total_samples'] * 100) if data['total_samples'] > 0 else 0
+            color = colors[idx] if idx < len(colors) else "black"
+            
+            summary_html += f"<li style='margin-bottom: 2px;'>"
+            summary_html += f"<b>#{idx+1}:</b> Vị trí <b style='color:{color}; font-size: 11pt;'>{rank}</b> "
+            summary_html += f"({pct:.1f}%)</li>"
+            
+        summary_html += "</ul>"
+        
+        self.summary_label.setText(summary_html)
 
 class OptimizerEmbedded(QWidget):
     log_signal = pyqtSignal(str, str, str)
@@ -1052,7 +1529,9 @@ class OptimizerEmbedded(QWidget):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
+        # ... (Phần Top GroupBox giữ nguyên) ...
         top_groupbox = QGroupBox("Thông Tin Dữ Liệu (Optimizer)")
+        # ... (Giữ nguyên code tạo top_groupbox) ...
         top_layout = QGridLayout(top_groupbox) 
         top_layout.setContentsMargins(10, 15, 10, 10) 
         top_layout.setSpacing(10)
@@ -1078,10 +1557,11 @@ class OptimizerEmbedded(QWidget):
         top_layout.setColumnStretch(6, 1)
         main_layout.addWidget(top_groupbox, 0)
 
-
+        # --- SETUP TABS ---
         self.tab_widget = QTabWidget()
 
         self.tab_select = QWidget()
+        self.tab_evaluation_frame = QWidget() # 1. Tạo widget chứa tab Đánh giá
         self.tab_gemini_builder_frame = QWidget()
         self.tab_edit = QWidget()
         self.tab_optimize = QWidget()
@@ -1089,12 +1569,24 @@ class OptimizerEmbedded(QWidget):
         main_layout.addWidget(self.tab_widget, 1)
 
         self.tab_widget.addTab(self.tab_select, " Thuật Toán 🎰")
+        self.tab_widget.addTab(self.tab_evaluation_frame, " Đánh Giá 📊") # 2. Thêm vào TabWidget
         self.tab_widget.addTab(self.tab_gemini_builder_frame, "  Tạo thuật toán 🧠 ")
         self.tab_widget.addTab(self.tab_edit, " Chỉnh Sửa ✍️")
         self.tab_widget.addTab(self.tab_optimize, " Tối Ưu Hóa 🚀")
 
+        # 3. Khởi tạo class AlgorithmEvaluationTab bên trong tab frame
+        try:
+            self.eval_tab_instance = AlgorithmEvaluationTab(self, self.main_app)
+            eval_layout = QVBoxLayout(self.tab_evaluation_frame)
+            eval_layout.setContentsMargins(0,0,0,0)
+            eval_layout.addWidget(self.eval_tab_instance)
+        except Exception as e:
+            optimizer_logger.error(f"Failed to init Evaluation Tab: {e}")
+
+        # ... (Phần khởi tạo Gemini và các tab khác giữ nguyên) ...
         if HAS_GEMINI:
             if self.gemini_builder_tab_instance_opt is None:
+                # ... (Giữ nguyên)
                 try:
                     self.gemini_builder_tab_instance_opt = AlgorithmGeminiBuilderTab(self.tab_gemini_builder_frame, self.main_app)
                     layout_gemini = QVBoxLayout(self.tab_gemini_builder_frame)
@@ -1103,30 +1595,11 @@ class OptimizerEmbedded(QWidget):
                     optimizer_logger.info("Optimizer's Gemini Algorithm Builder sub-tab initialized successfully inside setup_ui.")
                     self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_gemini_builder_frame), True)
                 except Exception as e:
-                    optimizer_logger.error(f"Failed to initialize AlgorithmGeminiBuilderTab within Optimizer's setup_ui: {e}", exc_info=True)
-                    layout_gemini_err = QVBoxLayout(self.tab_gemini_builder_frame)
-                    error_label_gemini = QLabel(f"Lỗi khởi tạo tab tạo thuật toán (con):\n{e}")
-                    error_label_gemini.setStyleSheet("color: red;")
-                    layout_gemini_err.addWidget(error_label_gemini)
-                    self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_gemini_builder_frame), False)
-                    self.tab_widget.setTabText(self.tab_widget.indexOf(self.tab_gemini_builder_frame),
-                                              self.tab_widget.tabText(self.tab_widget.indexOf(self.tab_gemini_builder_frame)) + " (Lỗi)")
+                    # ...
+                    pass
         else:
-            layout_gemini_err = QVBoxLayout(self.tab_gemini_builder_frame)
-            error_label_gemini = QLabel(
-                "Tính năng tạo thuật toán bằng Gemini yêu cầu thư viện 'google-generativeai'.\n"
-                "Vui lòng cài đặt bằng lệnh: <code>pip install google-generativeai</code><br>"
-                "Sau đó khởi động lại ứng dụng."
-            )
-            error_label_gemini.setTextFormat(Qt.RichText)
-            error_label_gemini.setAlignment(Qt.AlignCenter)
-            error_label_gemini.setWordWrap(True)
-            error_label_gemini.setStyleSheet("padding: 20px; color: #dc3545; font-weight: bold;")
-            layout_gemini_err.addWidget(error_label_gemini)
-            optimizer_logger.warning("Gemini library not found. Optimizer's Gemini builder sub-tab shows error message.")
-            self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_gemini_builder_frame), False)
-            self.tab_widget.setTabText(self.tab_widget.indexOf(self.tab_gemini_builder_frame),
-                                      self.tab_widget.tabText(self.tab_widget.indexOf(self.tab_gemini_builder_frame)) + " (Lỗi Lib)")
+            # ...
+            pass
 
         self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_edit), False)
         self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_optimize), False)
@@ -5420,11 +5893,637 @@ class SquareQLabel(QLabel):
     def sizeHint(self) -> QSize:
         return QSize(100, 100)
 
+# ==========================================
+# CLASS CHO TÍNH NĂNG CHƠI THỬ (SIMULATION)
+# ==========================================
+
+class SimulationWorker(QObject):
+    """Worker thread để chạy giả lập chơi thử."""
+    # Signal gửi về (giá trị hiện tại, tổng số giá trị) để thanh loading hiển thị đúng 100%
+    progress_signal = pyqtSignal(int, int) 
+    day_result_signal = pyqtSignal(dict)   
+    finished_signal = pyqtSignal(dict)     
+    error_signal = pyqtSignal(str)
+    log_signal = pyqtSignal(str)
+
+    def __init__(self, algo_instances, history_data, result_map, config, bet_strategies):
+        super().__init__()
+        self.algo_instances = algo_instances 
+        self.history_data = history_data
+        self.result_map = result_map
+        self.config = config
+        self.bet_strategies = bet_strategies
+        self._is_running = True
+
+    def stop(self):
+        self._is_running = False
+
+    def run(self):
+        start_date = self.config['start_date']
+        
+        # --- 1. Lọc ngày chạy ---
+        dates_to_run = []
+        # Chỉ lấy những ngày có trong DB và >= start_date
+        available_dates = sorted([d for d in self.result_map.keys() if d >= start_date])
+        
+        if self.config.get('mode') == 'range':
+            end_date = self.config['end_date']
+            current_d = start_date
+            while current_d <= end_date:
+                # Kiểm tra: Phải có kết quả của ngày KẾ TIẾP (để so sánh thắng thua)
+                next_day = current_d + datetime.timedelta(days=1)
+                if next_day in self.result_map:
+                    dates_to_run.append(current_d)
+                current_d += datetime.timedelta(days=1)
+                
+        elif self.config.get('mode') == 'count':
+            limit = self.config['num_draws']
+            count = 0
+            for d in available_dates:
+                if count >= limit: break
+                next_day = d + datetime.timedelta(days=1)
+                if next_day in self.result_map:
+                    dates_to_run.append(d)
+                    count += 1
+
+        total_days = len(dates_to_run)
+        if total_days == 0:
+            self.error_signal.emit("Không tìm thấy kỳ quay phù hợp (Cần có dữ liệu ngày kế tiếp để đối chiếu).")
+            return
+
+        summary = {
+            'total_days': total_days,
+            'initial_balance': self.config['initial_capital'],
+            'final_balance': 0,
+            'wins': 0,
+            'losses': 0,
+            'history': []
+        }
+        
+        current_balance = self.config['initial_capital']
+        sorted_history = sorted(self.history_data, key=lambda x: x['date'])
+        
+        stop_completely = False 
+
+        # --- 2. Vòng lặp chính ---
+        for idx, predict_date in enumerate(dates_to_run):
+            if not self._is_running or stop_completely: break
+            
+            # Check vốn đầu ngày
+            if current_balance < 1000: 
+                self.log_signal.emit(f"<div style='color:red; font-weight:bold; border:1px solid red; padding:5px; margin:5px;'>⛔ Dừng chơi từ ngày {predict_date.strftime('%d/%m/%Y')}: ĐÃ HẾT VỐN!</div>")
+                break
+
+            # Lấy data lịch sử & Chạy thuật toán
+            current_history = [x for x in sorted_history if x['date'] <= predict_date]
+            next_day = predict_date + datetime.timedelta(days=1)
+            
+            combined_scores = {} 
+            valid_algo_run = False
+            
+            for algo in self.algo_instances:
+                try:
+                    preds = algo.predict(next_day, current_history)
+                    if preds:
+                        valid_algo_run = True
+                        for num, score in preds.items():
+                            combined_scores[num] = combined_scores.get(num, 0) + score
+                except Exception: pass
+            
+            if not valid_algo_run or not combined_scores:
+                self.log_signal.emit(f"Ngày {predict_date}: Thuật toán không trả về kết quả.")
+                # Cập nhật tiến độ dù lỗi để thanh loading chạy tiếp
+                self.progress_signal.emit(idx + 1, total_days)
+                continue
+
+            # Xếp hạng số
+            sorted_preds = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
+            ranked_numbers = [num for num, score in sorted_preds]
+
+            # Kết quả thực tế
+            actual_result = self.result_map[next_day]
+            actual_lotos = self._get_lotos_from_result(actual_result) 
+            actual_special = self._get_special_loto(actual_result)
+            from collections import Counter
+            loto_counts = Counter(actual_lotos)
+
+            # --- BẮT ĐẦU ĐẶT CƯỢC ---
+            day_total_cost = 0; day_total_win = 0; day_details = []
+            
+            for strategy in self.bet_strategies:
+                if stop_completely: break
+                
+                positions = strategy['positions'] 
+                bet_type = strategy['type']
+                points = strategy['points']
+                unit_cost = points * strategy['cost_per_point']
+                unit_win_base = points * strategy['win_per_point']
+                
+                target_numbers = []
+                valid_indices = True
+                for pos in positions:
+                    idx_val = pos - 1
+                    if 0 <= idx_val < len(ranked_numbers):
+                        target_numbers.append(ranked_numbers[idx_val])
+                    else: valid_indices = False
+                
+                if not valid_indices or not target_numbers: continue
+
+                # --- MUA ---
+                if bet_type in ['Đề', 'Lô']:
+                    for num in target_numbers:
+                        if current_balance >= unit_cost:
+                            current_balance -= unit_cost
+                            day_total_cost += unit_cost
+                            
+                            is_win = False; win_val = 0; nhay_str = ""
+                            if bet_type == 'Đề':
+                                if num == actual_special: is_win = True; win_val = unit_win_base
+                            else: # Lô
+                                hits = loto_counts.get(num, 0)
+                                if hits > 0: is_win = True; win_val = unit_win_base * hits
+                                if hits > 1: nhay_str = f" ({hits} nháy)"
+                            
+                            current_balance += win_val
+                            day_total_win += win_val
+                            
+                            w_str = f"+{win_val:,.0f}" if is_win else "0"
+                            c_style = "color:green; font-weight:bold" if is_win else "color:#555"
+                            stt = "🎯 TRÚNG" if is_win else "Trượt"
+                            day_details.append(f"<span style='{c_style}'>[{bet_type}] {num}: {stt}{nhay_str} (Chi {unit_cost:,.0f}, Thu {w_str})</span>")
+                        else:
+                            # HẾT TIỀN -> DỪNG NGAY
+                            day_details.append(f"<span style='color:red; font-weight:bold'>⛔ Dừng tại số {num}: Không đủ {unit_cost:,.0f}đ (Số dư: {current_balance:,.0f}đ)</span>")
+                            stop_completely = True
+                            break 
+                    if stop_completely: break
+
+                elif bet_type.startswith('Xiên'):
+                    if current_balance >= unit_cost:
+                        current_balance -= unit_cost
+                        day_total_cost += unit_cost
+                        
+                        present_numbers = [n for n in target_numbers if n in loto_counts]
+                        is_win = (len(present_numbers) == len(target_numbers))
+                        
+                        win_val = 0; detail_win_str = ""
+                        if is_win:
+                            multiplier = 1; hits_detail = []
+                            for n in target_numbers: 
+                                cnt = loto_counts[n]; multiplier *= cnt
+                                hits_detail.append(f"{n}({cnt})")
+                            win_val = unit_win_base * multiplier
+                            detail_win_str = ", ".join(hits_detail)
+                        
+                        current_balance += win_val
+                        day_total_win += win_val
+                        
+                        nums_str = "-".join(target_numbers)
+                        w_str = f"+{win_val:,.0f}" if is_win else "0"
+                        c_style = "color:green; font-weight:bold" if is_win else "color:#555"
+                        stt = f"🎯 TRÚNG [{detail_win_str}]" if is_win else "Trượt"
+                        day_details.append(f"<span style='{c_style}'>[{bet_type}] Bộ {nums_str}: {stt} (Chi {unit_cost:,.0f}, Thu {w_str})</span>")
+                    else:
+                        nums_str = "-".join(target_numbers)
+                        day_details.append(f"<span style='color:red; font-weight:bold'>⛔ Dừng tại Bộ {nums_str}: Không đủ {unit_cost:,.0f}đ (Số dư: {current_balance:,.0f}đ)</span>")
+                        stop_completely = True
+                        break
+
+            profit = day_total_win - day_total_cost
+            if profit > 0: summary['wins'] += 1
+            elif profit < 0: summary['losses'] += 1
+            
+            day_info = {
+                'date': predict_date.strftime('%d/%m/%Y'),
+                'next_day': next_day.strftime('%d/%m/%Y'),
+                'numbers': day_details,
+                'cost': day_total_cost,
+                'win': day_total_win,
+                'balance': current_balance
+            }
+            self.day_result_signal.emit(day_info)
+            # Gửi tín hiệu tiến độ: (vị trí hiện tại, tổng số ngày)
+            self.progress_signal.emit(idx + 1, total_days)
+
+        summary['final_balance'] = current_balance
+        self.finished_signal.emit(summary)
+
+    def _get_lotos_from_result(self, result_dict):
+        lotos = []
+        ignore_keys = {'date', '_id', 'source', 'day_of_week', 'sign', 'created_at', 'updated_at', 'province_name', 'province_id'}
+        for k, v in result_dict.items():
+            if k in ignore_keys: continue
+            vals = v if isinstance(v, list) else [v]
+            for val in vals:
+                s = str(val).strip()
+                if len(s) >= 2 and s[-2:].isdigit(): lotos.append(s[-2:])
+        return lotos
+
+    def _get_special_loto(self, result_dict):
+        val = result_dict.get('special', result_dict.get('dac_biet'))
+        if val:
+            s = str(val).strip()
+            if len(s) >= 2 and s[-2:].isdigit(): return s[-2:]
+        return None
+
+class TrialPlayTab(QWidget):
+    def __init__(self, main_app):
+        super().__init__()
+        self.main_app = main_app
+        self.simulation_thread = None
+        self.simulation_worker = None
+        
+        self.default_prices = {
+            'Đề': {'cost': 1, 'win': 70}, 
+            'Lô': {'cost': 22, 'win': 80},
+            'Xiên 2': {'cost': 22, 'win': 220},
+            'Xiên 3': {'cost': 22, 'win': 880},
+            'Xiên 4': {'cost': 22, 'win': 8800},
+        }
+        
+        self.init_ui()
+
+    def showEvent(self, event):
+        """Auto reload thuật toán khi mở tab"""
+        self.refresh_algos()
+        super().showEvent(event)
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        
+        # --- 1. Top Panel ---
+        top_group = QGroupBox("Cấu Hình Chạy Thử")
+        top_layout = QGridLayout(top_group)
+        
+        # Vốn
+        top_layout.addWidget(QLabel("Vốn ban đầu:"), 0, 0)
+        self.capital_spin = QSpinBox()
+        self.capital_spin.setRange(100, 1000000000)
+        self.capital_spin.setValue(10000)
+        self.capital_spin.setSuffix(" .000 đ")
+        top_layout.addWidget(self.capital_spin, 0, 1)
+        
+        btn_caps = QHBoxLayout()
+        for v, l in [(5000, "5Tr"), (10000, "10Tr"), (50000, "50Tr")]:
+            b = QPushButton(l)
+            b.clicked.connect(lambda _, val=v: self.capital_spin.setValue(val))
+            btn_caps.addWidget(b)
+        top_layout.addLayout(btn_caps, 0, 2)
+
+        # Chế độ ngày
+        self.radio_range = QRadioButton("Theo khoảng ngày")
+        self.radio_count = QRadioButton("Theo số kỳ quay (gần nhất)")
+        self.radio_count.setChecked(True)
+        
+        self.radio_range.toggled.connect(self.update_date_mode)
+        self.radio_count.toggled.connect(self.update_date_mode)
+
+        r_layout = QHBoxLayout()
+        r_layout.addWidget(self.radio_range)
+        r_layout.addWidget(self.radio_count)
+        top_layout.addLayout(r_layout, 1, 0, 1, 3)
+        
+        # Stack widget
+        self.date_stack = QtWidgets.QStackedWidget()
+        
+        # Page 0: Range
+        p_range = QWidget()
+        l_range = QHBoxLayout(p_range)
+        l_range.setContentsMargins(0,0,0,0)
+        self.d_from = QLineEdit(); b_from = QPushButton("📅")
+        self.d_to = QLineEdit(); b_to = QPushButton("📅")
+        b_from.clicked.connect(lambda: self.main_app.show_calendar_dialog_qt(self.d_from))
+        b_to.clicked.connect(lambda: self.main_app.show_calendar_dialog_qt(self.d_to))
+        l_range.addWidget(QLabel("Từ:")); l_range.addWidget(self.d_from); l_range.addWidget(b_from)
+        l_range.addWidget(QLabel("Đến:")); l_range.addWidget(self.d_to); l_range.addWidget(b_to)
+        
+        # Page 1: Count
+        p_count = QWidget()
+        l_count = QHBoxLayout(p_count)
+        l_count.setContentsMargins(0,0,0,0)
+        self.d_start_cnt = QLineEdit(); b_start_cnt = QPushButton("📅")
+        b_start_cnt.clicked.connect(lambda: self.main_app.show_calendar_dialog_qt(self.d_start_cnt))
+        self.sp_draws = QSpinBox()
+        self.sp_draws.setRange(1, 1000000)
+        self.sp_draws.setValue(10)
+        self.sp_draws.setSuffix(" kỳ")
+        l_count.addWidget(QLabel("Bắt đầu từ:")); l_count.addWidget(self.d_start_cnt); l_count.addWidget(b_start_cnt)
+        l_count.addWidget(QLabel("Số kỳ chạy:")); l_count.addWidget(self.sp_draws)
+        
+        self.date_stack.addWidget(p_range)
+        self.date_stack.addWidget(p_count)
+        self.update_date_mode() 
+        top_layout.addWidget(self.date_stack, 2, 0, 1, 3)
+
+        # --- 2. Chọn Thuật Toán ---
+        algo_group = QGroupBox("Chọn Thuật Toán")
+        algo_layout = QVBoxLayout(algo_group)
+        self.algo_list = QListWidget()
+        self.algo_list.setToolTip("Chọn thuật toán để sử dụng dự đoán")
+        algo_layout.addWidget(self.algo_list)
+        
+        lbl_hint = QLabel("<i>(Tự động cập nhật từ thư mục algorithms)</i>")
+        lbl_hint.setStyleSheet("color: gray; font-size: 10px;")
+        lbl_hint.setAlignment(Qt.AlignCenter)
+        algo_layout.addWidget(lbl_hint)
+        
+        split_layout = QHBoxLayout()
+        split_layout.addWidget(top_group, 60)
+        split_layout.addWidget(algo_group, 40)
+        layout.addLayout(split_layout)
+        
+        # --- 3. Chiến Thuật & Giá ---
+        strat_group = QGroupBox("Cấu Hình Cách Chơi")
+        strat_layout = QVBoxLayout(strat_group)
+        
+        self.strat_table = QtWidgets.QTableWidget(0, 4)
+        self.strat_table.setHorizontalHeaderLabels(["Loại Hình", "Vị Trí (Rank)", "Điểm Cược", "Thao tác"])
+        self.strat_table.horizontalHeader().setSectionResizeMode(1, QtWidgets.QHeaderView.Stretch)
+        strat_layout.addWidget(self.strat_table)
+        
+        note = QLabel("<i>* Vd: '1, 2' chọn Top 1 và Top 2. Xiên cần đủ số lượng vị trí khác nhau.</i>")
+        note.setStyleSheet("color: gray; font-size: 11px;")
+        strat_layout.addWidget(note)
+
+        s_btns = QHBoxLayout()
+        btn_add = QPushButton("➕ Thêm Cược")
+        btn_add.clicked.connect(self.add_strategy_row)
+        btn_price = QPushButton("⚙️ Cài Đặt Tỉ Lệ Thưởng")
+        btn_price.clicked.connect(self.toggle_price)
+        s_btns.addWidget(btn_add); s_btns.addWidget(btn_price); s_btns.addStretch()
+        strat_layout.addLayout(s_btns)
+        
+        self.price_frame = QFrame()
+        self.price_frame.setVisible(False)
+        self.price_frame.setFrameShape(QFrame.StyledPanel)
+        pf_layout = QGridLayout(self.price_frame)
+        
+        self.price_inputs = {}
+        row = 0
+        for k in ['Đề', 'Lô', 'Xiên 2', 'Xiên 3', 'Xiên 4']:
+            pf_layout.addWidget(QLabel(k), row, 0)
+            c = QDoubleSpinBox(); c.setRange(0,9999); c.setValue(self.default_prices[k]['cost']); c.setPrefix("Mua: ")
+            w = QDoubleSpinBox(); w.setRange(0,99999); w.setValue(self.default_prices[k]['win']); w.setPrefix("Ăn: ")
+            pf_layout.addWidget(c, row, 1); pf_layout.addWidget(w, row, 2)
+            self.price_inputs[k] = {'cost': c, 'win': w}
+            row+=1
+            
+        price_action_layout = QHBoxLayout()
+        btn_save_price = QPushButton("💾 Lưu Cấu Hình")
+        btn_save_price.clicked.connect(self.save_price_config)
+        btn_save_price.setStyleSheet("font-weight: bold; color: green;")
+        btn_reset_price = QPushButton("↩️ Reset Mặc Định")
+        btn_reset_price.clicked.connect(self.reset_price_config)
+        price_action_layout.addWidget(btn_save_price)
+        price_action_layout.addWidget(btn_reset_price)
+        pf_layout.addLayout(price_action_layout, row, 0, 1, 3)
+        strat_layout.addWidget(self.price_frame)
+        layout.addWidget(strat_group)
+        
+        # --- 4. Controls & Progress Bar ---
+        ctrl = QHBoxLayout()
+        self.btn_run = QPushButton("▶️ CHẠY MÔ PHỎNG")
+        self.btn_run.setObjectName("AccentButton")
+        self.btn_run.setMinimumHeight(40)
+        self.btn_run.clicked.connect(self.start_simulation)
+        self.btn_stop = QPushButton("⏹️ DỪNG")
+        self.btn_stop.setMinimumHeight(40)
+        self.btn_stop.setEnabled(False)
+        self.btn_stop.clicked.connect(self.stop_simulation)
+        ctrl.addWidget(self.btn_run); ctrl.addWidget(self.btn_stop)
+        layout.addLayout(ctrl)
+        
+        # LABEL TIẾN ĐỘ
+        self.lbl_progress_text = QLabel("Sẵn sàng (0/0)")
+        self.lbl_progress_text.setAlignment(Qt.AlignCenter)
+        self.lbl_progress_text.setStyleSheet("font-weight: bold; color: #333; margin-bottom: 2px;")
+        layout.addWidget(self.lbl_progress_text)
+
+        # PROGRESS BAR
+        self.p_bar = QProgressBar()
+        self.p_bar.setTextVisible(False)
+        self.p_bar.setStyleSheet("""
+            QProgressBar {
+                border: 1px solid #ced4da;
+                border-radius: 4px;
+                background-color: #f8f9fa;
+                height: 15px;
+            }
+            QProgressBar::chunk {
+                background-color: #28a745; 
+            }
+        """)
+        self.p_bar.setValue(0)
+        layout.addWidget(self.p_bar)
+        
+        self.log_view = QTextBrowser()
+        layout.addWidget(self.log_view)
+        
+        self.lbl_sum = QLabel("")
+        self.lbl_sum.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.lbl_sum)
+
+    def update_date_mode(self):
+        if self.radio_range.isChecked():
+            self.date_stack.setCurrentIndex(0)
+        elif self.radio_count.isChecked():
+            self.date_stack.setCurrentIndex(1)
+
+    def toggle_price(self):
+        self.price_frame.setVisible(not self.price_frame.isVisible())
+
+    def save_price_config(self):
+        self.price_frame.setVisible(False)
+        QMessageBox.information(self, "Đã Lưu", "Đã cập nhật tỉ lệ thưởng cho lần chạy tiếp theo!")
+
+    def reset_price_config(self):
+        confirm = QMessageBox.question(self, "Xác nhận", "Bạn có chắc muốn reset về tỉ lệ mặc định?", QMessageBox.Yes | QMessageBox.No)
+        if confirm == QMessageBox.Yes:
+            for k, v in self.default_prices.items():
+                if k in self.price_inputs:
+                    self.price_inputs[k]['cost'].setValue(v['cost'])
+                    self.price_inputs[k]['win'].setValue(v['win'])
+
+    def add_strategy_row(self):
+        r = self.strat_table.rowCount()
+        self.strat_table.insertRow(r)
+        cb = QComboBox(); cb.addItems(['Đề', 'Lô', 'Xiên 2', 'Xiên 3', 'Xiên 4'])
+        self.strat_table.setCellWidget(r, 0, cb)
+        le = QLineEdit(); le.setPlaceholderText("Vd: 1, 2")
+        self.strat_table.setCellWidget(r, 1, le)
+        sb = QSpinBox(); sb.setRange(1, 10000); sb.setValue(10)
+        self.strat_table.setCellWidget(r, 2, sb)
+        bn = QPushButton("Xóa"); bn.setStyleSheet("color: red")
+        bn.clicked.connect(lambda: self.strat_table.removeRow(self.strat_table.currentRow()))
+        self.strat_table.setCellWidget(r, 3, bn)
+
+    def refresh_algos(self):
+        """Cập nhật thuật toán thông minh, lọc file rác."""
+        checked_items = set()
+        for i in range(self.algo_list.count()):
+            item = self.algo_list.item(i)
+            if item.checkState() == Qt.Checked: checked_items.add(item.text())
+
+        self.algo_list.clear()
+        found_algos = set()
+        
+        # Cách 1: Lấy từ main_app
+        if hasattr(self.main_app, 'algorithms') and self.main_app.algorithms:
+            for name in self.main_app.algorithms.keys():
+                found_algos.add(name)
+        # Cách 2: Quét file (Fallback)
+        else:
+            try:
+                algo_dir = os.path.join(os.getcwd(), 'algorithms')
+                if os.path.exists(algo_dir):
+                    for f in os.listdir(algo_dir):
+                        full_path = os.path.join(algo_dir, f)
+                        if not os.path.isfile(full_path): continue
+                        if not f.endswith('.py'): continue
+                        if f == '__init__.py': continue
+                        if f.startswith('template') or f.startswith('example') or f.startswith('test_'): continue
+                        name = f[:-3] 
+                        found_algos.add(name)
+            except Exception: pass
+
+        for name in sorted(list(found_algos)):
+            item = QListWidgetItem(name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            if name in checked_items: item.setCheckState(Qt.Checked)
+            else: item.setCheckState(Qt.Unchecked)
+            self.algo_list.addItem(item)
+            
+        if self.algo_list.count() == 0: self.algo_list.addItem("Không tìm thấy thuật toán nào!")
+
+    def start_simulation(self):
+        # 1. Validate Algos
+        selected_algos = []
+        for i in range(self.algo_list.count()):
+            it = self.algo_list.item(i)
+            if it.checkState() == Qt.Checked: selected_algos.append(it.text())
+        
+        if not selected_algos:
+            QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng chọn ít nhất 1 thuật toán.")
+            return
+
+        algo_instances = []
+        for name in selected_algos:
+            inst = self.main_app.algorithm_instances.get(name)
+            if inst: algo_instances.append(inst)
+        
+        if not algo_instances and len(selected_algos) > 0:
+             QMessageBox.warning(self, "Lưu ý", "Các thuật toán chưa được khởi tạo đầy đủ. Vui lòng qua tab 'Thuật toán' để kiểm tra.")
+             return
+
+        if not algo_instances:
+            QMessageBox.warning(self, "Lỗi", "Không thể tải instance thuật toán.")
+            return
+
+        # 2. Config & Strategy
+        try:
+            config = {'initial_capital': self.capital_spin.value() * 1000}
+            
+            if self.radio_range.isChecked():
+                config['mode'] = 'range'
+                s = self.d_from.text(); e = self.d_to.text()
+                if not s or not e: raise ValueError("Chưa chọn ngày.")
+                config['start_date'] = datetime.datetime.strptime(s, '%d/%m/%Y').date()
+                config['end_date'] = datetime.datetime.strptime(e, '%d/%m/%Y').date()
+                if config['start_date'] > config['end_date']: raise ValueError("Ngày bắt đầu > Ngày kết thúc.")
+            else:
+                config['mode'] = 'count'
+                s = self.d_start_cnt.text()
+                if not s: raise ValueError("Chưa chọn ngày bắt đầu.")
+                config['start_date'] = datetime.datetime.strptime(s, '%d/%m/%Y').date()
+                config['num_draws'] = self.sp_draws.value()
+
+            strategies = []
+            rows = self.strat_table.rowCount()
+            if rows == 0: raise ValueError("Chưa thêm cách chơi.")
+            
+            for r in range(rows):
+                w_type = self.strat_table.cellWidget(r, 0); w_pos = self.strat_table.cellWidget(r, 1); w_pts = self.strat_table.cellWidget(r, 2)
+                if not (w_type and w_pos and w_pts): continue
+                
+                b_type = w_type.currentText(); pos_str = w_pos.text(); points = w_pts.value()
+                try: positions = [int(x.strip()) for x in pos_str.split(',') if x.strip().isdigit()]
+                except: raise ValueError(f"Dòng {r+1}: Vị trí nhập sai định dạng.")
+                if not positions: raise ValueError(f"Dòng {r+1}: Chưa nhập vị trí.")
+                
+                # === [NEW] CHECK TRÙNG LẶP GLOBAL (CHO CẢ LÔ, ĐỀ, XIÊN) ===
+                if len(positions) != len(set(positions)):
+                    raise ValueError(f"Dòng {r+1}: Các vị trí chọn phải KHÁC NHAU (không được nhập trùng).")
+                # ==========================================================
+
+                if b_type.startswith('Xiên'):
+                    req = int(b_type.split(' ')[1])
+                    if len(positions) != req: raise ValueError(f"Dòng {r+1}: {b_type} yêu cầu chọn đúng {req} vị trí.")
+                
+                strategies.append({
+                    'type': b_type, 'positions': positions, 'points': points,
+                    'cost_per_point': self.price_inputs[b_type]['cost'].value() * 1000,
+                    'win_per_point': self.price_inputs[b_type]['win'].value() * 1000
+                })
+
+        except ValueError as e: QMessageBox.warning(self, "Lỗi nhập liệu", str(e)); return
+        except Exception as e: QMessageBox.warning(self, "Lỗi", str(e)); return
+
+        # 3. Start Run
+        self.log_view.clear()
+        self.log_view.append(f"<b>Khởi chạy giả lập với {len(algo_instances)} thuật toán...</b>")
+        self.p_bar.setValue(0); 
+        self.lbl_progress_text.setText("Đang khởi tạo...")
+        self.lbl_sum.setText("Đang chạy...")
+        
+        self.simulation_thread = QThread()
+        history = self.main_app.results
+        res_map = {i['date']: i['result'] for i in history}
+        
+        self.simulation_worker = SimulationWorker(algo_instances, history, res_map, config, strategies)
+        self.simulation_worker.moveToThread(self.simulation_thread)
+        self.simulation_worker.progress_signal.connect(self.update_progress_bar)
+        self.simulation_worker.day_result_signal.connect(self.display_day_result)
+        self.simulation_worker.log_signal.connect(self.log_view.append)
+        self.simulation_worker.error_signal.connect(lambda s: QMessageBox.warning(self, "Lỗi", s))
+        self.simulation_worker.finished_signal.connect(self.on_finished)
+        self.simulation_thread.started.connect(self.simulation_worker.run)
+        self.simulation_thread.finished.connect(self.simulation_thread.deleteLater)
+        self.btn_run.setEnabled(False); self.btn_stop.setEnabled(True)
+        self.simulation_thread.start()
+
+    def stop_simulation(self):
+        if self.simulation_worker: self.simulation_worker.stop()
+
+    def update_progress_bar(self, current, total):
+        self.p_bar.setMaximum(total)
+        self.p_bar.setValue(current)
+        pct = int((current/total)*100) if total > 0 else 0
+        self.lbl_progress_text.setText(f"Tiến độ: {current}/{total} ({pct}%)")
+
+    def display_day_result(self, info):
+        p = info['win'] - info['cost']
+        c = "green" if p > 0 else "red" if p < 0 else "black"
+        html = f"<div style='border-bottom:1px dashed #ccc; padding:4px;'><b>{info['date']}</b>: <span style='color:{c}'>{'+' if p>0 else ''}{p:,.0f}</span> (Số dư: {info['balance']:,.0f})<br>"
+        for det in info['numbers']: html += f"&nbsp;&nbsp;{det}<br>"
+        html += "</div>"
+        self.log_view.append(html); self.log_view.moveCursor(QtGui.QTextCursor.End)
+
+    def on_finished(self, sm):
+        self.btn_run.setEnabled(True); self.btn_stop.setEnabled(False)
+        self.simulation_thread.quit()
+        profit = sm['final_balance'] - sm['initial_balance']
+        pct = (profit / sm['initial_balance'] * 100) if sm['initial_balance'] > 0 else 0
+        stt = "THẮNG LỚN" if pct > 20 else "CÓ LÃI" if pct > 0 else "THUA LỖ"
+        color = "green" if profit > 0 else "red"
+        msg = f"KẾT QUẢ: {stt} ({pct:.2f}%) | Lãi/Lỗ: {profit:,.0f} đ"
+        self.lbl_sum.setText(msg); self.lbl_sum.setStyleSheet(f"font-size:16px; font-weight:bold; color:{color}; border:2px solid {color}; padding:8px; border-radius:4px;")
+        self.log_view.append(f"<br><center><b>{msg}</b></center>")
+        self.lbl_progress_text.setText(f"Hoàn thành ({sm['total_days']}/{sm['total_days']})")
 
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v5.3.1)")
+        self.setWindowTitle("Lottery Predictor (v5.4)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
@@ -5622,6 +6721,18 @@ class LotteryPredictionApp(QMainWindow):
             self.signalling_log_handler = None
         else:
             main_logger.info("SignallingLogHandler là None hoặc đã được dọn dẹp trong cleanup_on_quit.")
+
+    def on_tab_changed(self, index):
+        # Nếu chuyển sang tab Chơi Thử (bạn cần kiểm tra đúng index hoặc object)
+        if self.tab_widget.widget(index) == self.trial_play_tab:
+            self.trial_play_tab.refresh_algos()
+            # Tự động set ngày mặc định nếu chưa có
+            if not self.trial_play_tab.date_from.text() and len(self.results) > 10:
+                # Mặc định lấy 30 ngày gần nhất
+                end_d = self.results[-2]['date'] # Ngày áp chót (vì cần ngày cuối để so sánh)
+                start_d = end_d - datetime.timedelta(days=30)
+                self.trial_play_tab.date_to.setText(end_d.strftime('%d/%m/%Y'))
+                self.trial_play_tab.date_from.setText(start_d.strftime('%d/%m/%Y'))
 
 
     def _apply_performance_settings(self):
@@ -5879,6 +6990,7 @@ class LotteryPredictionApp(QMainWindow):
 
         self.main_tab_frame = QWidget()
         self.kqxs_tab_frame = QWidget()
+        self.trial_play_tab = TrialPlayTab(self)
         self.optimizer_tab_frame = QWidget()
         self.tools_tab_frame = QWidget()
         self.settings_tab_frame = QWidget()
@@ -5886,6 +6998,7 @@ class LotteryPredictionApp(QMainWindow):
 
         self.tab_widget.addTab(self.main_tab_frame, " Main 🏠")
         self.tab_widget.addTab(self.optimizer_tab_frame, " Thuật toán🔧  ")
+        self.tab_widget.addTab(self.trial_play_tab, " Chơi Thử 🎰")
         self.tab_widget.addTab(self.kqxs_tab_frame, " Xem KQXS 🔍 ")
         self.tab_widget.addTab(self.tools_tab_frame, " Công Cụ 🧰")
         self.tab_widget.addTab(self.settings_tab_frame, " Cài Đặt ⚙️")
