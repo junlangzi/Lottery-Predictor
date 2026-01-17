@@ -1,6 +1,19 @@
 # Update list
 
 
+### 17/01/2026
+
+**Update ver 5.4**
+
+Thêm mục chơi thử để người dùng trải nghiệm cảm giác chơi và xem ngay lập tức kết quả trúng thưởng
+Thêm phần đánh giá thuật toán ( tại tab đánh giá thuật toán trong tab thuật toán) - Đánh giá chi tiết kết quả thuật toán qua các kỳ quay để người dùng kiểm tra số liệu thuật toán 
+
+### 01/12/2025
+
+**Update ver 5.3.1**
+
+Tối ưu lại thuật toán và fix số lượng file data khi sync
+
 ### 01/12/2025
 
 **Update ver 5.3.1**
