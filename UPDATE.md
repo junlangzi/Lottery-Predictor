@@ -1,6 +1,13 @@
 # Update list
 
 
+### 19/01/2026
+
+**Update ver 5.5**
+
+Phần dự đoán và tính toán hiệu suất có thêm phần sắp xếp số điểm tuỳ chỉnh 
+Tại phần đánh giá thuật toán, sau khi chạy đánh giá xong cho phép xuất ra thành file txt để chương trình có thể đọc
+
 ### 17/01/2026
 
 **Update ver 5.4**
