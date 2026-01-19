@@ -1,6 +1,6 @@
-# Version: 5.4
-# Date: 17/01/2026
-# Update: <br><b>Thêm mục chơi thử để người dùng trải nghiệm cảm giác chơi và xem ngay lập tức kết quả trúng thưởng.<br>Thêm phần đánh giá thuật toán ( tại tab đánh giá thuật toán trong tab thuật toán) - Đánh giá chi tiết kết quả thuật toán qua các kỳ quay để người dùng kiểm tra số liệu thuật toán </b>
+# Version: 5.5
+# Date: 19/01/2026
+# Update: <b>Phần dự đoán và tính toán hiệu suất có thêm phần sắp xếp số điểm tuỳ chỉnh (có xuất file tại Thuật toán > Đánh giá)<br></b>
 import os
 import sys
 import logging
@@ -971,7 +971,7 @@ class EvaluationWorker(QObject):
         super().__init__()
         self.algo_instances = algo_instances
         self.results_data = results_data
-        self.num_periods = num_periods # Nhận số kỳ từ UI
+        self.num_periods = num_periods
         self._is_running = True
 
     def stop(self):
@@ -984,12 +984,10 @@ class EvaluationWorker(QObject):
                 return
 
             sorted_data = sorted(self.results_data, key=lambda x: x['date'])
-            # Lấy ngày áp chót làm mốc (giả lập)
             current_end_date = sorted_data[-1]['date']
             
             periods = []
             
-            # --- THAY ĐỔI Ở ĐÂY: Chạy theo số kỳ người dùng chọn ---
             for i in range(self.num_periods):
                 period_entries = []
                 temp_data = [x for x in sorted_data if x['date'] <= current_end_date]
@@ -1010,7 +1008,6 @@ class EvaluationWorker(QObject):
                     current_end_date = sorted_data[current_idx - 1]['date']
                 else:
                     break
-            # -------------------------------------------------------
 
             total_days_to_calc = sum(len(p['entries']) for p in periods)
             current_calc_count = 0
@@ -1097,6 +1094,7 @@ class AlgorithmEvaluationTab(QWidget):
         self.main_app = main_app
         self.worker = None
         self.thread = None
+        self.last_evaluation_results = None
         
         self.setup_ui()
         
@@ -1105,7 +1103,6 @@ class AlgorithmEvaluationTab(QWidget):
         layout.setSpacing(10)
         layout.setContentsMargins(10, 10, 10, 10)
 
-        # 1. Khu vực chọn thuật toán
         top_group = QGroupBox("Chọn Thuật Toán Kết Hợp Đánh Giá")
         top_layout = QVBoxLayout(top_group)
         
@@ -1140,7 +1137,6 @@ class AlgorithmEvaluationTab(QWidget):
         
         layout.addWidget(top_group)
 
-        # 2. Khu vực hiển thị kết quả
         res_group = QGroupBox("Kết Quả Đánh Giá")
         res_layout = QVBoxLayout(res_group)
         
@@ -1150,7 +1146,6 @@ class AlgorithmEvaluationTab(QWidget):
         self.scroll_layout = QVBoxLayout(self.scroll_widget)
         self.scroll_layout.setSpacing(15)
         
-        # --- Bảng 1: Độ chính xác ---
         self.scroll_layout.addWidget(QLabel("<b>1. Độ chính xác Top 1-2-3 qua các giai đoạn:</b>"))
         self.accuracy_table = QtWidgets.QTableWidget()
         self.accuracy_table.setColumnCount(5)
@@ -1164,15 +1159,13 @@ class AlgorithmEvaluationTab(QWidget):
         self.accuracy_table.setMinimumHeight(100)
         self.scroll_layout.addWidget(self.accuracy_table)
         
-        # --- Bảng 2 & Kết luận ---
         self.scroll_layout.addWidget(QLabel("<b>2. Bản đồ nhiệt Tần suất xuất hiện (Vị trí 0-99) & Kết luận:</b>"))
         
         heatmap_container = QWidget()
         heatmap_layout = QHBoxLayout(heatmap_container)
         heatmap_layout.setContentsMargins(0, 0, 0, 0)
-        heatmap_layout.setSpacing(10) # Giảm khoảng cách
+        heatmap_layout.setSpacing(10)
 
-        # Left: Rank Grid
         grid_frame = QWidget()
         grid_layout = QVBoxLayout(grid_frame)
         grid_layout.setContentsMargins(0,0,0,0)
@@ -1182,39 +1175,31 @@ class AlgorithmEvaluationTab(QWidget):
         self.rank_grid.setRowCount(10)
         self.rank_grid.setColumnCount(10)
         
-        # --- SỬA HEADER THEO YÊU CẦU ---
-        # Hàng: R0 -> R9, Cột: C0 -> C9
         self.rank_grid.setVerticalHeaderLabels([f"R{i}" for i in range(10)])
         self.rank_grid.setHorizontalHeaderLabels([f"C{i}" for i in range(10)])
         
-        # Cấu hình không thanh cuộn, ép kích thước
         self.rank_grid.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.rank_grid.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.rank_grid.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         self.rank_grid.verticalHeader().setSectionResizeMode(QtWidgets.QHeaderView.Stretch)
         
-        # In đậm header
         font_header = QFont()
         font_header.setBold(True)
         self.rank_grid.horizontalHeader().setFont(font_header)
         self.rank_grid.verticalHeader().setFont(font_header)
 
-        # Tính toán kích thước bảng: 10 cột * 45px + Header dọc (~40px)
-        # Tổng rộng khoảng 500-550px là đẹp
         self.rank_grid.setMinimumSize(500, 480) 
         self.rank_grid.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         
         grid_layout.addWidget(self.rank_grid)
         
-        # Right: Summary Label (Thu nhỏ lại)
         self.summary_container = QWidget()
         summary_layout = QVBoxLayout(self.summary_container)
-        summary_layout.setContentsMargins(0, 20, 0, 0) # Căn lề trên để ngang bằng với bảng
+        summary_layout.setContentsMargins(0, 20, 0, 0)
         
         self.summary_label = QLabel("Vui lòng chọn thuật toán và số kỳ đánh giá, sau đó nhấn 'Bắt Đầu'...")
         self.summary_label.setWordWrap(True)
         self.summary_label.setAlignment(Qt.AlignTop | Qt.AlignLeft)
-        # Chữ nhỏ lại, padding gọn hơn
         self.summary_label.setStyleSheet("""
             QLabel {
                 font-size: 10pt; 
@@ -1227,10 +1212,17 @@ class AlgorithmEvaluationTab(QWidget):
         """)
         
         summary_layout.addWidget(self.summary_label)
+
+        summary_layout.addSpacing(10)
+        self.export_btn = QPushButton("💾 Xuất File Sắp Xếp (.txt)")
+        self.export_btn.setToolTip("Xuất danh sách các ô (00-99) đã được sắp xếp theo thứ tự xuất hiện nhiều nhất.")
+        self.export_btn.setStyleSheet("padding: 8px; font-weight: bold;")
+        self.export_btn.setEnabled(False)
+        self.export_btn.clicked.connect(self.export_rank_data)
+        summary_layout.addWidget(self.export_btn)
+        
         summary_layout.addStretch()
 
-        # --- CHIA TỶ LỆ LAYOUT ---
-        # Bảng chiếm 7 phần, Kết luận chiếm 3 phần
         heatmap_layout.addWidget(grid_frame, 7)
         heatmap_layout.addWidget(self.summary_container, 3) 
 
@@ -1241,7 +1233,6 @@ class AlgorithmEvaluationTab(QWidget):
         res_layout.addWidget(self.scroll_area)
         layout.addWidget(res_group)
 
-        # 3. Thanh Loading
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(True)
         self.progress_bar.setAlignment(Qt.AlignCenter)
@@ -1275,9 +1266,7 @@ class AlgorithmEvaluationTab(QWidget):
                 item.setCheckState(Qt.Unchecked)
                 self.algo_list_widget.addItem(item)
 
-    # --- SỬA LỖI Ở ĐÂY ---
     def select_all_algos(self):
-        # Dùng đúng tên biến self.algo_list_widget
         for i in range(self.algo_list_widget.count()): 
             self.algo_list_widget.item(i).setCheckState(Qt.Checked)
 
@@ -1297,8 +1286,8 @@ class AlgorithmEvaluationTab(QWidget):
         num_periods = self.period_spinbox.value()
 
         self.run_btn.setEnabled(False)
+        self.export_btn.setEnabled(False)
         self.progress_bar.setValue(0)
-        # Font size nhỏ lại chút
         self.summary_label.setText(f"<b>Đang tính toán dữ liệu {num_periods} kỳ... vui lòng đợi.</b>")
         self.summary_label.setStyleSheet("color: #007BFF; font-size: 11pt; padding: 15px; border: 1px solid #ccc; background: #fff;")
         
@@ -1328,10 +1317,55 @@ class AlgorithmEvaluationTab(QWidget):
     def on_finished(self, results):
         self.run_btn.setEnabled(True)
         self.thread.quit()
+        self.last_evaluation_results = results
         self.display_results(results)
+        self.export_btn.setEnabled(True)
+
+    def export_rank_data(self):
+        """Hàm xuất dữ liệu xếp hạng ra file txt."""
+        if not self.last_evaluation_results:
+            QMessageBox.warning(self, "Chưa có dữ liệu", "Vui lòng chạy đánh giá trước khi xuất file.")
+            return
+
+        try:
+            rank_freq = self.last_evaluation_results.get('rank_freq', {})
+            
+            all_ranks = []
+            for i in range(100):
+                count = rank_freq.get(i, 0)
+                all_ranks.append((i, count))
+            
+            sorted_ranks = sorted(all_ranks, key=lambda x: x[1], reverse=True)
+            
+            result_strings = [f"{item[0]:02d}" for item in sorted_ranks]
+            file_content = "-".join(result_strings)
+            
+            now = datetime.datetime.now()
+            default_filename = f"arrange_{now.strftime('%H%M_%d_%m_%Y')}.txt"
+            
+            default_dir = self.main_app.algorithms_dir
+            if not default_dir.exists():
+                default_dir = Path.cwd()
+
+            save_path_str, _ = QFileDialog.getSaveFileName(
+                self,
+                "Lưu File Sắp Xếp",
+                str(default_dir / default_filename),
+                "Text Files (*.txt);;All Files (*.*)"
+            )
+
+            if save_path_str:
+                save_path = Path(save_path_str)
+                save_path.write_text(file_content, encoding='utf-8')
+                
+                preview = file_content[:50] + "..." if len(file_content) > 50 else file_content
+                QMessageBox.information(self, "Xuất File Thành Công", 
+                                        f"Đã lưu file tại:\n{save_path.name}\n\nNội dung (preview):\n{preview}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Lỗi Xuất File", f"Đã xảy ra lỗi khi xuất file:\n{e}")
 
     def display_results(self, data):
-        # 1. Fill Accuracy Table
         periods = data['periods']
         self.accuracy_table.setRowCount(len(periods))
         sorted_p_ids = sorted(periods.keys())
@@ -1355,14 +1389,11 @@ class AlgorithmEvaluationTab(QWidget):
                 item_p3.setForeground(QColor("green"))
             self.accuracy_table.setItem(row, 4, item_p3)
 
-        # Fix height cho accuracy table
         header_height = self.accuracy_table.horizontalHeader().height()
         rows_height = sum([self.accuracy_table.rowHeight(i) for i in range(self.accuracy_table.rowCount())])
         total_height = header_height + rows_height + 5
         self.accuracy_table.setFixedHeight(total_height)
 
-
-        # 2. Fill Rank Grid
         rank_freq = data['rank_freq']
         all_counts = [rank_freq.get(i, 0) for i in range(100)]
         
@@ -1401,11 +1432,9 @@ class AlgorithmEvaluationTab(QWidget):
                 item.setForeground(QBrush(text_color))
                 self.rank_grid.setItem(r, c, item)
 
-        # 3. Summary (Cập nhật style nhỏ gọn)
         sorted_ranks = sorted(rank_freq.items(), key=lambda x: x[1], reverse=True)
         top_5_ranks = sorted_ranks[:5]
         
-        # Reset Style cho gọn hơn
         self.summary_label.setStyleSheet("""
             QLabel {
                 font-size: 10pt; 
@@ -1422,7 +1451,7 @@ class AlgorithmEvaluationTab(QWidget):
         <hr style='margin: 5px 0;'>
         """
         summary_html += f"<p style='margin: 3px 0;'>🔹 Đã check: <b style='color: #28a745;'>{data['total_samples']}</b> ngày</p>"
-        summary_html += "<p style='margin: 3px 0;'>🔹 <b>Top 5 Rank cao nhất:</b></p>"
+        summary_html += "<p style='margin: 3px 0;'>🔹 <b>Top 5 Vị trí (Rank) cao nhất:</b></p>"
         summary_html += "<ul style='margin-top:0; padding-left: 15px; margin-bottom: 0;'>"
         
         colors = ["#D32F2F", "#E64A19", "#F57C00", "#FBC02D", "#388E3C"] 
@@ -1432,7 +1461,7 @@ class AlgorithmEvaluationTab(QWidget):
             color = colors[idx] if idx < len(colors) else "black"
             
             summary_html += f"<li style='margin-bottom: 2px;'>"
-            summary_html += f"<b>#{idx+1}:</b> Vị trí <b style='color:{color}; font-size: 11pt;'>{rank}</b> "
+            summary_html += f"<b>#{idx+1}:</b> Vị trí <b style='color:{color}; font-size: 11pt;'>{rank:02d}</b> "
             summary_html += f"({pct:.1f}%)</li>"
             
         summary_html += "</ul>"
@@ -1529,9 +1558,7 @@ class OptimizerEmbedded(QWidget):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
-        # ... (Phần Top GroupBox giữ nguyên) ...
         top_groupbox = QGroupBox("Thông Tin Dữ Liệu (Optimizer)")
-        # ... (Giữ nguyên code tạo top_groupbox) ...
         top_layout = QGridLayout(top_groupbox) 
         top_layout.setContentsMargins(10, 15, 10, 10) 
         top_layout.setSpacing(10)
@@ -1557,11 +1584,10 @@ class OptimizerEmbedded(QWidget):
         top_layout.setColumnStretch(6, 1)
         main_layout.addWidget(top_groupbox, 0)
 
-        # --- SETUP TABS ---
         self.tab_widget = QTabWidget()
 
         self.tab_select = QWidget()
-        self.tab_evaluation_frame = QWidget() # 1. Tạo widget chứa tab Đánh giá
+        self.tab_evaluation_frame = QWidget()
         self.tab_gemini_builder_frame = QWidget()
         self.tab_edit = QWidget()
         self.tab_optimize = QWidget()
@@ -1569,12 +1595,11 @@ class OptimizerEmbedded(QWidget):
         main_layout.addWidget(self.tab_widget, 1)
 
         self.tab_widget.addTab(self.tab_select, " Thuật Toán 🎰")
-        self.tab_widget.addTab(self.tab_evaluation_frame, " Đánh Giá 📊") # 2. Thêm vào TabWidget
+        self.tab_widget.addTab(self.tab_evaluation_frame, " Đánh Giá 📊")
         self.tab_widget.addTab(self.tab_gemini_builder_frame, "  Tạo thuật toán 🧠 ")
         self.tab_widget.addTab(self.tab_edit, " Chỉnh Sửa ✍️")
         self.tab_widget.addTab(self.tab_optimize, " Tối Ưu Hóa 🚀")
 
-        # 3. Khởi tạo class AlgorithmEvaluationTab bên trong tab frame
         try:
             self.eval_tab_instance = AlgorithmEvaluationTab(self, self.main_app)
             eval_layout = QVBoxLayout(self.tab_evaluation_frame)
@@ -1583,10 +1608,8 @@ class OptimizerEmbedded(QWidget):
         except Exception as e:
             optimizer_logger.error(f"Failed to init Evaluation Tab: {e}")
 
-        # ... (Phần khởi tạo Gemini và các tab khác giữ nguyên) ...
         if HAS_GEMINI:
             if self.gemini_builder_tab_instance_opt is None:
-                # ... (Giữ nguyên)
                 try:
                     self.gemini_builder_tab_instance_opt = AlgorithmGeminiBuilderTab(self.tab_gemini_builder_frame, self.main_app)
                     layout_gemini = QVBoxLayout(self.tab_gemini_builder_frame)
@@ -1595,10 +1618,8 @@ class OptimizerEmbedded(QWidget):
                     optimizer_logger.info("Optimizer's Gemini Algorithm Builder sub-tab initialized successfully inside setup_ui.")
                     self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_gemini_builder_frame), True)
                 except Exception as e:
-                    # ...
                     pass
         else:
-            # ...
             pass
 
         self.tab_widget.setTabEnabled(self.tab_widget.indexOf(self.tab_edit), False)
@@ -2750,7 +2771,6 @@ class OptimizerEmbedded(QWidget):
         từ Main App (LotteryPredictionApp) để tận dụng cơ chế dọn dẹp file cũ.
         """
         if hasattr(self, 'main_app') and self.main_app:
-            # Gọi hàm sync_data của class cha (nơi đã có _cleanup_old_backups)
             self.main_app.sync_data()
         else:
             QMessageBox.warning(self, "Lỗi Liên Kết", "Không tìm thấy kết nối đến ứng dụng chính (Main App).")
@@ -5893,13 +5913,9 @@ class SquareQLabel(QLabel):
     def sizeHint(self) -> QSize:
         return QSize(100, 100)
 
-# ==========================================
-# CLASS CHO TÍNH NĂNG CHƠI THỬ (SIMULATION)
-# ==========================================
 
 class SimulationWorker(QObject):
     """Worker thread để chạy giả lập chơi thử."""
-    # Signal gửi về (giá trị hiện tại, tổng số giá trị) để thanh loading hiển thị đúng 100%
     progress_signal = pyqtSignal(int, int) 
     day_result_signal = pyqtSignal(dict)   
     finished_signal = pyqtSignal(dict)     
@@ -5921,16 +5937,13 @@ class SimulationWorker(QObject):
     def run(self):
         start_date = self.config['start_date']
         
-        # --- 1. Lọc ngày chạy ---
         dates_to_run = []
-        # Chỉ lấy những ngày có trong DB và >= start_date
         available_dates = sorted([d for d in self.result_map.keys() if d >= start_date])
         
         if self.config.get('mode') == 'range':
             end_date = self.config['end_date']
             current_d = start_date
             while current_d <= end_date:
-                # Kiểm tra: Phải có kết quả của ngày KẾ TIẾP (để so sánh thắng thua)
                 next_day = current_d + datetime.timedelta(days=1)
                 if next_day in self.result_map:
                     dates_to_run.append(current_d)
@@ -5965,16 +5978,13 @@ class SimulationWorker(QObject):
         
         stop_completely = False 
 
-        # --- 2. Vòng lặp chính ---
         for idx, predict_date in enumerate(dates_to_run):
             if not self._is_running or stop_completely: break
             
-            # Check vốn đầu ngày
             if current_balance < 1000: 
                 self.log_signal.emit(f"<div style='color:red; font-weight:bold; border:1px solid red; padding:5px; margin:5px;'>⛔ Dừng chơi từ ngày {predict_date.strftime('%d/%m/%Y')}: ĐÃ HẾT VỐN!</div>")
                 break
 
-            # Lấy data lịch sử & Chạy thuật toán
             current_history = [x for x in sorted_history if x['date'] <= predict_date]
             next_day = predict_date + datetime.timedelta(days=1)
             
@@ -5992,22 +6002,18 @@ class SimulationWorker(QObject):
             
             if not valid_algo_run or not combined_scores:
                 self.log_signal.emit(f"Ngày {predict_date}: Thuật toán không trả về kết quả.")
-                # Cập nhật tiến độ dù lỗi để thanh loading chạy tiếp
                 self.progress_signal.emit(idx + 1, total_days)
                 continue
 
-            # Xếp hạng số
             sorted_preds = sorted(combined_scores.items(), key=lambda item: item[1], reverse=True)
             ranked_numbers = [num for num, score in sorted_preds]
 
-            # Kết quả thực tế
             actual_result = self.result_map[next_day]
             actual_lotos = self._get_lotos_from_result(actual_result) 
             actual_special = self._get_special_loto(actual_result)
             from collections import Counter
             loto_counts = Counter(actual_lotos)
 
-            # --- BẮT ĐẦU ĐẶT CƯỢC ---
             day_total_cost = 0; day_total_win = 0; day_details = []
             
             for strategy in self.bet_strategies:
@@ -6029,7 +6035,6 @@ class SimulationWorker(QObject):
                 
                 if not valid_indices or not target_numbers: continue
 
-                # --- MUA ---
                 if bet_type in ['Đề', 'Lô']:
                     for num in target_numbers:
                         if current_balance >= unit_cost:
@@ -6039,7 +6044,7 @@ class SimulationWorker(QObject):
                             is_win = False; win_val = 0; nhay_str = ""
                             if bet_type == 'Đề':
                                 if num == actual_special: is_win = True; win_val = unit_win_base
-                            else: # Lô
+                            else:
                                 hits = loto_counts.get(num, 0)
                                 if hits > 0: is_win = True; win_val = unit_win_base * hits
                                 if hits > 1: nhay_str = f" ({hits} nháy)"
@@ -6052,7 +6057,6 @@ class SimulationWorker(QObject):
                             stt = "🎯 TRÚNG" if is_win else "Trượt"
                             day_details.append(f"<span style='{c_style}'>[{bet_type}] {num}: {stt}{nhay_str} (Chi {unit_cost:,.0f}, Thu {w_str})</span>")
                         else:
-                            # HẾT TIỀN -> DỪNG NGAY
                             day_details.append(f"<span style='color:red; font-weight:bold'>⛔ Dừng tại số {num}: Không đủ {unit_cost:,.0f}đ (Số dư: {current_balance:,.0f}đ)</span>")
                             stop_completely = True
                             break 
@@ -6102,7 +6106,6 @@ class SimulationWorker(QObject):
                 'balance': current_balance
             }
             self.day_result_signal.emit(day_info)
-            # Gửi tín hiệu tiến độ: (vị trí hiện tại, tổng số ngày)
             self.progress_signal.emit(idx + 1, total_days)
 
         summary['final_balance'] = current_balance
@@ -6151,16 +6154,14 @@ class TrialPlayTab(QWidget):
     def init_ui(self):
         layout = QVBoxLayout(self)
         
-        # --- 1. Top Panel ---
         top_group = QGroupBox("Cấu Hình Chạy Thử")
         top_layout = QGridLayout(top_group)
         
-        # Vốn
         top_layout.addWidget(QLabel("Vốn ban đầu:"), 0, 0)
         self.capital_spin = QSpinBox()
         self.capital_spin.setRange(100, 1000000000)
         self.capital_spin.setValue(10000)
-        self.capital_spin.setSuffix(" .000 đ")
+        self.capital_spin.setSuffix(".000 đ")
         top_layout.addWidget(self.capital_spin, 0, 1)
         
         btn_caps = QHBoxLayout()
@@ -6170,7 +6171,6 @@ class TrialPlayTab(QWidget):
             btn_caps.addWidget(b)
         top_layout.addLayout(btn_caps, 0, 2)
 
-        # Chế độ ngày
         self.radio_range = QRadioButton("Theo khoảng ngày")
         self.radio_count = QRadioButton("Theo số kỳ quay (gần nhất)")
         self.radio_count.setChecked(True)
@@ -6183,10 +6183,8 @@ class TrialPlayTab(QWidget):
         r_layout.addWidget(self.radio_count)
         top_layout.addLayout(r_layout, 1, 0, 1, 3)
         
-        # Stack widget
         self.date_stack = QtWidgets.QStackedWidget()
         
-        # Page 0: Range
         p_range = QWidget()
         l_range = QHBoxLayout(p_range)
         l_range.setContentsMargins(0,0,0,0)
@@ -6197,7 +6195,6 @@ class TrialPlayTab(QWidget):
         l_range.addWidget(QLabel("Từ:")); l_range.addWidget(self.d_from); l_range.addWidget(b_from)
         l_range.addWidget(QLabel("Đến:")); l_range.addWidget(self.d_to); l_range.addWidget(b_to)
         
-        # Page 1: Count
         p_count = QWidget()
         l_count = QHBoxLayout(p_count)
         l_count.setContentsMargins(0,0,0,0)
@@ -6215,7 +6212,6 @@ class TrialPlayTab(QWidget):
         self.update_date_mode() 
         top_layout.addWidget(self.date_stack, 2, 0, 1, 3)
 
-        # --- 2. Chọn Thuật Toán ---
         algo_group = QGroupBox("Chọn Thuật Toán")
         algo_layout = QVBoxLayout(algo_group)
         self.algo_list = QListWidget()
@@ -6232,7 +6228,6 @@ class TrialPlayTab(QWidget):
         split_layout.addWidget(algo_group, 40)
         layout.addLayout(split_layout)
         
-        # --- 3. Chiến Thuật & Giá ---
         strat_group = QGroupBox("Cấu Hình Cách Chơi")
         strat_layout = QVBoxLayout(strat_group)
         
@@ -6280,7 +6275,6 @@ class TrialPlayTab(QWidget):
         strat_layout.addWidget(self.price_frame)
         layout.addWidget(strat_group)
         
-        # --- 4. Controls & Progress Bar ---
         ctrl = QHBoxLayout()
         self.btn_run = QPushButton("▶️ CHẠY MÔ PHỎNG")
         self.btn_run.setObjectName("AccentButton")
@@ -6293,13 +6287,11 @@ class TrialPlayTab(QWidget):
         ctrl.addWidget(self.btn_run); ctrl.addWidget(self.btn_stop)
         layout.addLayout(ctrl)
         
-        # LABEL TIẾN ĐỘ
         self.lbl_progress_text = QLabel("Sẵn sàng (0/0)")
         self.lbl_progress_text.setAlignment(Qt.AlignCenter)
         self.lbl_progress_text.setStyleSheet("font-weight: bold; color: #333; margin-bottom: 2px;")
         layout.addWidget(self.lbl_progress_text)
 
-        # PROGRESS BAR
         self.p_bar = QProgressBar()
         self.p_bar.setTextVisible(False)
         self.p_bar.setStyleSheet("""
@@ -6367,11 +6359,9 @@ class TrialPlayTab(QWidget):
         self.algo_list.clear()
         found_algos = set()
         
-        # Cách 1: Lấy từ main_app
         if hasattr(self.main_app, 'algorithms') and self.main_app.algorithms:
             for name in self.main_app.algorithms.keys():
                 found_algos.add(name)
-        # Cách 2: Quét file (Fallback)
         else:
             try:
                 algo_dir = os.path.join(os.getcwd(), 'algorithms')
@@ -6396,7 +6386,6 @@ class TrialPlayTab(QWidget):
         if self.algo_list.count() == 0: self.algo_list.addItem("Không tìm thấy thuật toán nào!")
 
     def start_simulation(self):
-        # 1. Validate Algos
         selected_algos = []
         for i in range(self.algo_list.count()):
             it = self.algo_list.item(i)
@@ -6419,7 +6408,6 @@ class TrialPlayTab(QWidget):
             QMessageBox.warning(self, "Lỗi", "Không thể tải instance thuật toán.")
             return
 
-        # 2. Config & Strategy
         try:
             config = {'initial_capital': self.capital_spin.value() * 1000}
             
@@ -6450,10 +6438,8 @@ class TrialPlayTab(QWidget):
                 except: raise ValueError(f"Dòng {r+1}: Vị trí nhập sai định dạng.")
                 if not positions: raise ValueError(f"Dòng {r+1}: Chưa nhập vị trí.")
                 
-                # === [NEW] CHECK TRÙNG LẶP GLOBAL (CHO CẢ LÔ, ĐỀ, XIÊN) ===
                 if len(positions) != len(set(positions)):
                     raise ValueError(f"Dòng {r+1}: Các vị trí chọn phải KHÁC NHAU (không được nhập trùng).")
-                # ==========================================================
 
                 if b_type.startswith('Xiên'):
                     req = int(b_type.split(' ')[1])
@@ -6468,7 +6454,6 @@ class TrialPlayTab(QWidget):
         except ValueError as e: QMessageBox.warning(self, "Lỗi nhập liệu", str(e)); return
         except Exception as e: QMessageBox.warning(self, "Lỗi", str(e)); return
 
-        # 3. Start Run
         self.log_view.clear()
         self.log_view.append(f"<b>Khởi chạy giả lập với {len(algo_instances)} thuật toán...</b>")
         self.p_bar.setValue(0); 
@@ -6523,7 +6508,7 @@ class TrialPlayTab(QWidget):
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v5.4)")
+        self.setWindowTitle("Lottery Predictor (v5.5)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
@@ -6723,13 +6708,10 @@ class LotteryPredictionApp(QMainWindow):
             main_logger.info("SignallingLogHandler là None hoặc đã được dọn dẹp trong cleanup_on_quit.")
 
     def on_tab_changed(self, index):
-        # Nếu chuyển sang tab Chơi Thử (bạn cần kiểm tra đúng index hoặc object)
         if self.tab_widget.widget(index) == self.trial_play_tab:
             self.trial_play_tab.refresh_algos()
-            # Tự động set ngày mặc định nếu chưa có
             if not self.trial_play_tab.date_from.text() and len(self.results) > 10:
-                # Mặc định lấy 30 ngày gần nhất
-                end_d = self.results[-2]['date'] # Ngày áp chót (vì cần ngày cuối để so sánh)
+                end_d = self.results[-2]['date']
                 start_d = end_d - datetime.timedelta(days=30)
                 self.trial_play_tab.date_to.setText(end_d.strftime('%d/%m/%Y'))
                 self.trial_play_tab.date_from.setText(start_d.strftime('%d/%m/%Y'))
@@ -6995,6 +6977,8 @@ class LotteryPredictionApp(QMainWindow):
         self.tools_tab_frame = QWidget()
         self.settings_tab_frame = QWidget()
         self.update_tab_frame = QWidget()
+        
+        self.help_tab_frame = QWidget()
 
         self.tab_widget.addTab(self.main_tab_frame, " Main 🏠")
         self.tab_widget.addTab(self.optimizer_tab_frame, " Thuật toán🔧  ")
@@ -7002,6 +6986,9 @@ class LotteryPredictionApp(QMainWindow):
         self.tab_widget.addTab(self.kqxs_tab_frame, " Xem KQXS 🔍 ")
         self.tab_widget.addTab(self.tools_tab_frame, " Công Cụ 🧰")
         self.tab_widget.addTab(self.settings_tab_frame, " Cài Đặt ⚙️")
+        
+        self.tab_widget.addTab(self.help_tab_frame, " Hướng Dẫn 📒") 
+        
         self.tab_widget.addTab(self.update_tab_frame, " Update 🔄 ")
 
         
@@ -7011,6 +6998,7 @@ class LotteryPredictionApp(QMainWindow):
         self.setup_kqxs_tab()
         self.setup_tools_tab()
         self.setup_settings_tab()
+        self.setup_help_tab()
         self.setup_update_tab()
 
         try:
@@ -7855,7 +7843,6 @@ class LotteryPredictionApp(QMainWindow):
         return base_size
 
     def setup_main_tab(self):
-
         main_logger.debug("Setting up Main tab UI (PyQt5)...")
         main_tab_layout = QVBoxLayout(self.main_tab_frame)
         main_tab_layout.setContentsMargins(15, 15, 15, 15)
@@ -7904,7 +7891,7 @@ class LotteryPredictionApp(QMainWindow):
         info_layout.setColumnStretch(2, 0)
         top_h_layout.addWidget(info_groupbox, 5)
 
-        control_groupbox = QGroupBox("Chọn Ngày để dự Đoán")
+        control_groupbox = QGroupBox("Chọn Ngày & Cài Đặt Dự Đoán")
         control_layout = QVBoxLayout(control_groupbox)
         control_layout.setSpacing(8)
         control_layout.setContentsMargins(10, 15, 10, 10)
@@ -7917,7 +7904,7 @@ class LotteryPredictionApp(QMainWindow):
         self.selected_date_edit = QLineEdit()
         self.selected_date_edit.setReadOnly(True)
         self.selected_date_edit.setAlignment(Qt.AlignCenter)
-        self.selected_date_edit.setMinimumWidth(125)
+        self.selected_date_edit.setFixedWidth(120)
         self.selected_date_edit.setToolTip("Ngày thực hiện dự đoán.")
         date_control_h_layout.addWidget(self.selected_date_edit)
 
@@ -7937,21 +7924,57 @@ class LotteryPredictionApp(QMainWindow):
         next_day_button.setToolTip("Chọn ngày kế tiếp trong dữ liệu.")
         next_day_button.clicked.connect(self.select_next_day)
         date_control_h_layout.addWidget(next_day_button)
-        date_control_h_layout.addStretch(1)
-
+        
         self.predict_button = QPushButton("Dự Đoán")
         self.predict_button.setObjectName("AccentButton")
-        self.predict_button.setMinimumWidth(90)
-        self.predict_button.setToolTip("Chạy dự đoán cho ngày đã chọn bằng các thuật toán được kích hoạt.")
+        self.predict_button.setMinimumWidth(80)
+        self.predict_button.setToolTip("Chạy dự đoán cho ngày đã chọn.")
         self.predict_button.clicked.connect(self.start_prediction_process)
         date_control_h_layout.addWidget(self.predict_button)
+        date_control_h_layout.addStretch(1)
+        
         control_layout.addWidget(date_control_frame)
 
+        sort_settings_frame = QWidget()
+        sort_layout = QHBoxLayout(sort_settings_frame)
+        sort_layout.setContentsMargins(0,0,0,0)
+        sort_layout.setSpacing(5)
+        sort_layout.setAlignment(Qt.AlignLeft) 
+        
+        lbl_sort = QLabel("Sắp xếp:")
+        lbl_sort.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        sort_layout.addWidget(lbl_sort)
+
+        self.pred_sort_combo = QComboBox()
+        self.pred_sort_combo.addItems(["Cao ➔ Thấp", "Thấp ➔ Cao", "Custom"])
+        self.pred_sort_combo.setToolTip("Chọn cách sắp xếp kết quả dự đoán.")
+        self.pred_sort_combo.setFixedWidth(160)
+        sort_layout.addWidget(self.pred_sort_combo)
+        
+        self.pred_file_btn = QPushButton("📂 Tìm")
+        self.pred_file_btn.setFixedWidth(60)
+        self.pred_file_btn.setEnabled(False)
+        self.pred_file_btn.setToolTip("Chọn file txt chứa thứ tự sắp xếp (ví dụ: 90-80-03...)")
+        self.pred_file_btn.clicked.connect(self.load_predict_sort_file)
+        sort_layout.addWidget(self.pred_file_btn)
+        
+        self.pred_file_label = QLabel("")
+        self.pred_file_label.setStyleSheet("color: gray; font-style: italic; font-size: 9pt;")
+        sort_layout.addWidget(self.pred_file_label)
+        
+        sort_layout.addStretch(1) 
+        
+        self.pred_sort_combo.currentIndexChanged.connect(
+            lambda idx: self.pred_file_btn.setEnabled(idx == 2)
+        )
+        
+        control_layout.addWidget(sort_settings_frame)
+        
         self.predict_progress_frame = QWidget()
         predict_progress_v_layout = QVBoxLayout(self.predict_progress_frame)
         predict_progress_v_layout.setContentsMargins(5, 2, 5, 5)
         predict_progress_v_layout.setSpacing(2)
-        self.predict_status_label = QLabel("Tiến trình dự đoán: Chưa chạy")
+        self.predict_status_label = QLabel("Tiến trình: Chưa chạy")
         self.predict_status_label.setObjectName("ProgressIdle")
         predict_progress_v_layout.addWidget(self.predict_status_label)
         self.predict_progressbar = QProgressBar()
@@ -7962,6 +7985,7 @@ class LotteryPredictionApp(QMainWindow):
         predict_progress_v_layout.addWidget(self.predict_progressbar)
         control_layout.addWidget(self.predict_progress_frame)
         self.predict_progress_frame.setVisible(False)
+        
         control_layout.addStretch(1)
         top_h_layout.addWidget(control_groupbox, 4)
 
@@ -8004,6 +8028,7 @@ class LotteryPredictionApp(QMainWindow):
         right_layout = QVBoxLayout(right_groupbox)
         right_layout.setContentsMargins(5, 15, 5, 5)
         right_layout.setSpacing(8)
+        
         date_range_frame = QWidget()
         date_range_layout = QHBoxLayout(date_range_frame)
         date_range_layout.setContentsMargins(0,0,0,0)
@@ -8012,38 +8037,65 @@ class LotteryPredictionApp(QMainWindow):
         self.perf_start_date_edit = QLineEdit()
         self.perf_start_date_edit.setReadOnly(True)
         self.perf_start_date_edit.setAlignment(Qt.AlignCenter)
-        self.perf_start_date_edit.setMinimumWidth(110)
-        self.perf_start_date_edit.setToolTip("Ngày bắt đầu khoảng tính hiệu suất.")
+        self.perf_start_date_edit.setMinimumWidth(90)
         date_range_layout.addWidget(self.perf_start_date_edit)
 
         self.perf_start_date_button = QPushButton("📅")
         self.perf_start_date_button.setObjectName("CalendarButton")
-        self.perf_start_date_button.setToolTip("Chọn ngày bắt đầu.")
         self.perf_start_date_button.clicked.connect(lambda: self.show_calendar_dialog_qt(self.perf_start_date_edit))
         date_range_layout.addWidget(self.perf_start_date_button)
 
-        date_range_layout.addSpacing(10)
+        date_range_layout.addSpacing(5)
         date_range_layout.addWidget(QLabel("Đến:"))
         self.perf_end_date_edit = QLineEdit()
         self.perf_end_date_edit.setReadOnly(True)
         self.perf_end_date_edit.setAlignment(Qt.AlignCenter)
-        self.perf_end_date_edit.setMinimumWidth(110)
-        self.perf_end_date_edit.setToolTip("Ngày kết thúc khoảng tính hiệu suất.")
+        self.perf_end_date_edit.setMinimumWidth(90)
         date_range_layout.addWidget(self.perf_end_date_edit)
 
         self.perf_end_date_button = QPushButton("📅")
         self.perf_end_date_button.setObjectName("CalendarButton")
-        self.perf_end_date_button.setToolTip("Chọn ngày kết thúc.")
         self.perf_end_date_button.clicked.connect(lambda: self.show_calendar_dialog_qt(self.perf_end_date_edit))
         date_range_layout.addWidget(self.perf_end_date_button)
 
-        date_range_layout.addStretch(1)
         self.perf_calc_button = QPushButton("Tính Toán")
         self.perf_calc_button.setObjectName("AccentButton")
-        self.perf_calc_button.setToolTip("Tính toán hiệu suất kết hợp của các thuật toán được kích hoạt trong khoảng ngày đã chọn.")
         self.perf_calc_button.clicked.connect(self.calculate_combined_performance)
         date_range_layout.addWidget(self.perf_calc_button)
         right_layout.addWidget(date_range_frame)
+
+        perf_sort_frame = QWidget()
+        perf_sort_layout = QHBoxLayout(perf_sort_frame)
+        perf_sort_layout.setContentsMargins(0,0,0,0)
+        perf_sort_layout.setSpacing(5)
+        perf_sort_layout.setAlignment(Qt.AlignLeft)
+        
+        lbl_sort_perf = QLabel("Sắp xếp:")
+        lbl_sort_perf.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        perf_sort_layout.addWidget(lbl_sort_perf)
+
+        self.perf_sort_combo = QComboBox()
+        self.perf_sort_combo.addItems(["Cao ➔ Thấp", "Thấp ➔ Cao", "Custom"])
+        self.perf_sort_combo.setFixedWidth(160)
+        perf_sort_layout.addWidget(self.perf_sort_combo)
+        
+        self.perf_file_btn = QPushButton("📂 Tìm")
+        self.perf_file_btn.setFixedWidth(60)
+        self.perf_file_btn.setEnabled(False)
+        self.perf_file_btn.clicked.connect(self.load_perf_sort_file)
+        perf_sort_layout.addWidget(self.perf_file_btn)
+        
+        self.perf_file_label = QLabel("")
+        self.perf_file_label.setStyleSheet("color: gray; font-style: italic; font-size: 9pt;")
+        perf_sort_layout.addWidget(self.perf_file_label)
+        
+        perf_sort_layout.addStretch(1)
+
+        self.perf_sort_combo.currentIndexChanged.connect(
+            lambda idx: self.perf_file_btn.setEnabled(idx == 2)
+        )
+        right_layout.addWidget(perf_sort_frame)
+
         self.perf_progress_frame = QWidget()
         perf_progress_layout = QVBoxLayout(self.perf_progress_frame)
         perf_progress_layout.setContentsMargins(5, 0, 5, 5)
@@ -8077,6 +8129,9 @@ class LotteryPredictionApp(QMainWindow):
 
         initial_splitter_sizes = [self.width() // 2, self.width() // 2] if self.width() > 100 else [450, 350]
         bottom_splitter.setSizes(initial_splitter_sizes)
+
+        self.predict_custom_sort_data = []
+        self.perf_custom_sort_data = []
 
         main_logger.debug("Main tab UI setup complete.")
 
@@ -8496,6 +8551,85 @@ class LotteryPredictionApp(QMainWindow):
 
         self._populate_settings_tab_ui() 
         main_logger.debug("Hoàn tất thiết lập giao diện tab Cài đặt.")
+
+    def setup_help_tab(self):
+        """Thiết lập giao diện tab Hướng dẫn sử dụng."""
+        main_logger.debug("Setting up Help tab UI...")
+        layout = QVBoxLayout(self.help_tab_frame)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        toolbar_layout = QHBoxLayout()
+        reload_btn = QPushButton("🔄 Tải lại Hướng dẫn")
+        reload_btn.setFixedWidth(150)
+        reload_btn.clicked.connect(self.load_guide_content)
+        toolbar_layout.addWidget(reload_btn)
+        toolbar_layout.addStretch()
+        layout.addLayout(toolbar_layout)
+
+        self.help_browser = QTextBrowser()
+        self.help_browser.setOpenExternalLinks(True)
+        font = self.get_qfont("base")
+        font.setPointSize(font.pointSize() + 1)
+        self.help_browser.setFont(font)
+        
+        layout.addWidget(self.help_browser)
+
+        self.load_guide_content()
+
+    def load_guide_content(self):
+        """
+        Đọc file HTML và hiển thị lên tab. 
+        Nếu file chưa có trên máy, tự động tải về từ Github.
+        """
+        guide_path = self.base_dir / "guide.html"
+        guide_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/guide.html"
+
+        if not guide_path.exists():
+            self.update_status("Đang tải hướng dẫn sử dụng từ Server...")
+            QApplication.processEvents()
+            
+            try:
+                import requests
+                main_logger.info(f"Guide file not found. Downloading from: {guide_url}")
+                
+                response = requests.get(guide_url, timeout=15)
+                response.raise_for_status()
+                
+                guide_path.write_text(response.text, encoding='utf-8')
+                
+                main_logger.info("Downloaded and saved guide.html successfully.")
+                self.update_status("Đã tải hướng dẫn thành công.")
+                
+            except ImportError:
+                self.help_browser.setHtml("<h3 style='color:red'>Thiếu thư viện 'requests' để tải hướng dẫn.</h3>")
+                return
+            except Exception as e:
+                main_logger.error(f"Failed to download guide: {e}")
+                error_html = f"""
+                <div style='padding: 20px;'>
+                    <h2 style='color: #dc3545;'>Không thể tải hướng dẫn</h2>
+                    <p>File <b>guide.html</b> không có sẵn trên máy và quá trình tải về gặp lỗi.</p>
+                    <p><b>Chi tiết lỗi:</b> {e}</p>
+                    <p>Vui lòng kiểm tra kết nối mạng hoặc thử lại sau.</p>
+                </div>
+                """
+                self.help_browser.setHtml(error_html)
+                self.update_status("Lỗi tải hướng dẫn.")
+                return
+
+        try:
+            with open(guide_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+                
+            self.help_browser.setSearchPaths([str(self.base_dir)])
+            
+            self.help_browser.setHtml(html_content)
+            main_logger.info("Loaded guide content to UI.")
+            
+        except Exception as e:
+            self.help_browser.setHtml(f"<h3 style='color:red'>Lỗi đọc file hướng dẫn từ đĩa: {e}</h3>")
+            main_logger.error(f"Error reading guide file: {e}")
 
     
     def setup_update_tab(self):
@@ -10363,37 +10497,29 @@ class LotteryPredictionApp(QMainWindow):
         Dựa trên tên file để sắp xếp (vì tên chứa ngày giờ: .bak-YYYYMMDDHHMMSS).
         """
         try:
-            # Lấy thư mục chứa file data
             parent_dir = target_file.parent.resolve()
             
-            # Tên file gốc (ví dụ: xsmb-2-digits.json)
             base_name = target_file.name
             
-            # Tìm tất cả các file có tiền tố là tên file gốc + ".bak-"
-            # Ví dụ: xsmb-2-digits.json.bak-2025...
             backup_files = []
             if parent_dir.exists():
                 for f in parent_dir.iterdir():
                     if f.is_file() and f.name.startswith(f"{base_name}.bak-"):
                         backup_files.append(f)
 
-            # Sắp xếp danh sách file theo TÊN (giảm dần -> mới nhất lên đầu)
-            # Vì định dạng timestamp YYYYMMDDHHMMSS nên sort tên là chuẩn nhất
             backup_files.sort(key=lambda x: x.name, reverse=True)
 
             main_logger.info(f"Tìm thấy {len(backup_files)} file backup.")
 
-            # Nếu số lượng file ít hơn hoặc bằng giới hạn thì không cần xóa
             if len(backup_files) <= keep_limit:
                 return
 
-            # Các file nằm ngoài giới hạn giữ lại sẽ bị xóa
             files_to_delete = backup_files[keep_limit:]
             
             deleted_count = 0
             for f in files_to_delete:
                 try:
-                    f.unlink() # Lệnh xóa file
+                    f.unlink()
                     deleted_count += 1
                     main_logger.info(f"Cleaned up old backup: {f.name}")
                 except OSError as e:
@@ -10401,7 +10527,6 @@ class LotteryPredictionApp(QMainWindow):
             
             if deleted_count > 0:
                 main_logger.info(f"Đã xóa {deleted_count} file backup cũ, giữ lại {keep_limit} file mới nhất.")
-                # Cập nhật status bar nếu có thể (nhưng không bắt buộc để tránh lỗi thread)
 
         except Exception as e:
             main_logger.error(f"Error during backup cleanup: {e}", exc_info=True)
@@ -10433,7 +10558,6 @@ class LotteryPredictionApp(QMainWindow):
         target_file_str = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
         target_file = Path(target_file_str)
         
-        # Tạo tên file backup với timestamp hiện tại
         timestamp_str = datetime.datetime.now().strftime('%Y%m%d%H%M%S')
         backup_file = target_file.with_suffix(target_file.suffix + f'.bak-{timestamp_str}')
         
@@ -10467,15 +10591,12 @@ class LotteryPredictionApp(QMainWindow):
                 self.update_status("Đồng bộ thất bại: dữ liệu tải về không hợp lệ.")
                 return
 
-            # --- BẮT ĐẦU: BACKUP VÀ DỌN DẸP ---
             if target_file.exists():
                 try:
                     shutil.copy2(target_file, backup_file)
                     backed_up_successfully = True
                     main_logger.info(f"Backed up existing data file to: {backup_file.name}")
                     
-                    # === GỌI HÀM DỌN DẸP NGAY TẠI ĐÂY ===
-                    # Chỉ giữ lại 3 file backup gần nhất
                     self._cleanup_old_backups(target_file, keep_limit=3)
 
                 except Exception as backup_err:
@@ -10485,7 +10606,6 @@ class LotteryPredictionApp(QMainWindow):
                     if reply == QMessageBox.No:
                         self.update_status("Đồng bộ đã hủy do lỗi sao lưu.")
                         return
-            # --- KẾT THÚC: BACKUP VÀ DỌN DẸP ---
 
             try:
                 with open(target_file, 'wb') as f:
@@ -11278,6 +11398,75 @@ class LotteryPredictionApp(QMainWindow):
         except Exception as e:
              main_logger.error(f"Error selecting next day: {e}")
 
+    def load_predict_sort_file(self):
+        self._load_custom_sort_file(is_prediction=True)
+
+    def load_perf_sort_file(self):
+        self._load_custom_sort_file(is_prediction=False)
+
+    def _load_custom_sort_file(self, is_prediction=True):
+        """Hàm chung để tải và parse file sắp xếp."""
+        target_label = self.pred_file_label if is_prediction else self.perf_file_label
+        
+        initial_dir = str(self.algorithms_dir)
+        filename, _ = QFileDialog.getOpenFileName(
+            self, "Chọn File Sắp Xếp", initial_dir, "Text Files (*.txt);;All Files (*.*)"
+        )
+        
+        if filename:
+            try:
+                path = Path(filename)
+                content = path.read_text(encoding='utf-8').strip()
+                
+                raw_items = re.split(r'[\-\s,]+', content)
+                valid_numbers = []
+                for item in raw_items:
+                    if item.isdigit():
+                        num = int(item)
+                        if 0 <= num <= 99:
+                            valid_numbers.append(num)
+                
+                seen = set()
+                unique_numbers = []
+                for n in valid_numbers:
+                    if n not in seen:
+                        unique_numbers.append(n)
+                        seen.add(n)
+
+                if not unique_numbers:
+                    QMessageBox.warning(self, "Lỗi File", "File không chứa số hợp lệ (00-99).")
+                    return
+
+                if is_prediction:
+                    self.predict_custom_sort_data = unique_numbers
+                else:
+                    self.perf_custom_sort_data = unique_numbers
+                
+                target_label.setText(path.name)
+                target_label.setToolTip(f"Đã tải {len(unique_numbers)} số.\nThứ tự: {unique_numbers[:10]}...")
+                QMessageBox.information(self, "Thành Công", f"Đã tải {len(unique_numbers)} số từ file để sắp xếp.")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Lỗi Đọc File", f"Không thể đọc file:\n{e}")
+
+    def _apply_sorting_logic(self, score_list, sort_mode_idx, custom_order=None):
+        """
+        Sắp xếp danh sách (số, điểm) dựa trên chế độ.
+        score_list: list of (number, score) tuples.
+        sort_mode_idx: 0 (Cao->Thấp), 1 (Thấp->Cao), 2 (Theo File).
+        custom_order: list of int (chỉ dùng khi mode == 2).
+        Trả về: list đã sắp xếp.
+        """
+        if sort_mode_idx == 0:
+            return sorted(score_list, key=lambda x: x[1], reverse=True)
+        elif sort_mode_idx == 1:
+            return sorted(score_list, key=lambda x: x[1], reverse=False)
+        elif sort_mode_idx == 2 and custom_order:
+            order_map = {num: i for i, num in enumerate(custom_order)}
+            return sorted(score_list, key=lambda x: order_map.get(x[0], 9999))
+        else:
+            return sorted(score_list, key=lambda x: x[1], reverse=True)
+
 
     def start_prediction_process(self):
         """Initiates the prediction process for the selected date."""
@@ -11520,7 +11709,10 @@ class LotteryPredictionApp(QMainWindow):
                     if i not in present_nums:
                         final_scores_list.append((i, missing_score))
 
-                final_scores_list.sort(key=lambda item: item[1], reverse=True)
+                sort_mode = self.pred_sort_combo.currentIndex()
+                final_scores_list = self._apply_sorting_logic(
+                    final_scores_list, sort_mode, self.predict_custom_sort_data
+                )
                 final_scores_list = final_scores_list[:100]
 
             except Exception as prep_err:
@@ -12089,10 +12281,24 @@ class LotteryPredictionApp(QMainWindow):
             QMessageBox.critical(self, "Lỗi UI", f"Không thể hiển thị thanh tiến trình hiệu suất:\n{ui_err}")
             return
 
+        try:
+            perf_sort_mode = self.perf_sort_combo.currentIndex()
+            perf_custom_data = self.perf_custom_sort_data if perf_sort_mode == 2 else []
+            
+            if perf_sort_mode == 2 and not perf_custom_data:
+                QMessageBox.warning(self, "Thiếu File Sắp Xếp", "Bạn chọn sắp xếp theo file nhưng chưa tải file nào. Vui lòng chọn file .txt hoặc đổi chế độ.")
+                self.performance_calc_running = False
+                self.perf_calc_button.setEnabled(True)
+                return
+        except Exception as e:
+            main_logger.error(f"Error getting sort settings: {e}")
+            perf_sort_mode = 0
+            perf_custom_data = []
+
         main_logger.info("Starting performance calculation worker thread...")
         perf_thread = threading.Thread(
             target=self._performance_worker,
-            args=( active_inst, res_map, hist_cache, valid_predict_dates, start_s, end_s, total_days_to_test ),
+            args=( active_inst, res_map, hist_cache, valid_predict_dates, start_s, end_s, total_days_to_test, perf_sort_mode, perf_custom_data ),
             name="PerfCalcWorker",
             daemon=True
         )
@@ -12105,7 +12311,8 @@ class LotteryPredictionApp(QMainWindow):
 
 
     def _performance_worker(self, active_instances_main, results_map_main, history_cache_main,
-                           predict_dates_list_main, start_date_str_main, end_date_str_main, total_days_main):
+                           predict_dates_list_main, start_date_str_main, end_date_str_main, total_days_main,
+                           sort_mode, custom_sort_data):
         """Worker thread for calculating combined performance (Tab Main)."""
         perf_logger_main = logging.getLogger("MainTabPerfWorker")
         perf_logger_main.info(f"MainTab PerfWorker started for {len(predict_dates_list_main)} days. Active Algos: {list(active_instances_main.keys())}")
@@ -12166,7 +12373,13 @@ class LotteryPredictionApp(QMainWindow):
                         errors_in_worker_main += 1
                         continue
                     
-                    sorted_preds_main = sorted(valid_preds_day_main, key=lambda x: x[1], reverse=True)
+                    try:
+                        sorted_preds_main = self._apply_sorting_logic(
+                            valid_preds_day_main, sort_mode, custom_sort_data
+                        )
+                    except Exception as sort_err:
+                        perf_logger_main.error(f"Error sorting in worker: {sort_err}. Using default sort.")
+                        sorted_preds_main = sorted(valid_preds_day_main, key=lambda x: x[1], reverse=True)
 
                     actual_set_main = self.extract_numbers_from_result_dict(actual_res_main)
                     if not actual_set_main:
@@ -12228,7 +12441,6 @@ class LotteryPredictionApp(QMainWindow):
                 try: self.perf_queue.put({'type': 'error', 'payload': f"Lỗi nghiêm trọng worker (MainTab): {worker_err_main_critical}"})
                 except Exception as q_put_err_main_crit: perf_logger_main.error(f"Error putting critical error to MainTab queue: {q_put_err_main_crit}")
             else: perf_logger_main.warning("MainTab perf_queue not found, cannot send critical error.")
-
 
     def _check_perf_queue(self):
         """Checks the performance queue and updates the UI (Identical logic, targets PyQt widgets)."""
