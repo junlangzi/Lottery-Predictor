@@ -1,1 +1,1 @@
-[1][guide.txt][Thông tin chung]
+[1][https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/guide/guide.txt][Thông tin chung]
