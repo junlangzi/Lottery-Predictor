@@ -1,6 +1,6 @@
-# Version: 5.5
-# Date: 19/01/2026
-# Update: <b>Phần dự đoán và tính toán hiệu suất có thêm phần sắp xếp số điểm tuỳ chỉnh (có xuất file tại Thuật toán > Đánh giá)<br></b>
+# Version: 5.6
+# Date: 26/01/2026
+# Update: <b>Tối ưu lại phần tạo thuật toán bằng AI Gemini <br>Thêm phần phân tích chuyên sâu số và cặp số ( Sẽ còn update tiếp trong bảng cập nhật tới)<br> Thêm mục tin tức (update) <br> Tuỳ chỉnh lại phần hướng dẫn ( sẽ update thêm vào thời gian tới)</b>
 import os
 import sys
 import logging
@@ -361,54 +361,93 @@ class PythonSyntaxHighlighter(QSyntaxHighlighter):
                 start, end = match.span()
                 self.setFormat(start, end - start, format_obj)
 
-
-class GeminiWorker(QObject):
-    result_ready = pyqtSignal(str)
+class GeminiModelFetcherWorker(QObject):
+    """Worker chuyên để lấy danh sách các model khả dụng từ API Key."""
+    models_received = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
-    status_update = pyqtSignal(str)
 
-    def __init__(self, api_key, prompt):
+    def __init__(self, api_key):
         super().__init__()
         self.api_key = api_key
-        self.prompt = prompt
-        self._is_running = True
 
     def run(self):
         if not HAS_GEMINI:
-            self.error_occurred.emit("Thư viện 'google-generativeai' chưa được cài đặt.")
+            self.error_occurred.emit("Thư viện google-generativeai chưa được cài đặt.")
             return
 
         try:
-            self.status_update.emit("Đang cấu hình Gemini...")
             genai.configure(api_key=self.api_key)
+            
+            available_models = []
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    model_name = m.name.replace("models/", "")
+                    available_models.append(model_name)
+            
+            if not available_models:
+                available_models = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+                
+            self.models_received.emit(available_models)
 
-            self.status_update.emit("Đang tạo mô hình Gemini...")
-            model = genai.GenerativeModel('gemini-2.5-flash')
-
-            self.status_update.emit("Đang gửi yêu cầu đến Gemini API...")
-            response = model.generate_content(self.prompt)
-
-            self.status_update.emit("Đã nhận phản hồi từ Gemini.")
-            generated_text = response.text
-            self.result_ready.emit(generated_text)
-
-        except ValueError as ve:
-             if "API_KEY" in str(ve) or "api key not valid" in str(ve).lower():
-                  self.error_occurred.emit(f"Lỗi API Key: {ve}. Vui lòng kiểm tra lại.")
-             else:
-                  self.error_occurred.emit(f"Lỗi giá trị khi gọi Gemini: {ve}")
         except Exception as e:
-            logging.error(f"Lỗi khi gọi Gemini API: {e}", exc_info=True)
-            error_message = f"Lỗi giao tiếp với Gemini API: {type(e).__name__}. Chi tiết: {e}"
-            if "api key not valid" in str(e).lower():
-                 error_message = "Lỗi: API key không hợp lệ. Vui lòng kiểm tra lại."
-            elif "permission denied" in str(e).lower() or "quota" in str(e).lower():
-                 error_message = "Lỗi: Có thể API key hết hạn, hết quota hoặc không có quyền truy cập mô hình."
-            elif "Deadline Exceeded" in str(e):
-                 error_message = "Lỗi: Yêu cầu tới Gemini bị quá thời gian. Vui lòng thử lại."
-            elif "resource exhausted" in str(e).lower():
-                 error_message = "Lỗi: Tài nguyên hoặc quota đã hết. Vui lòng kiểm tra tài khoản Google AI/Cloud."
-            self.error_occurred.emit(error_message)
+            self.error_occurred.emit(f"Lỗi lấy danh sách model: {str(e)}")
+
+
+class GeminiWorker(QtCore.QThread):
+    finished = QtCore.pyqtSignal(str)
+    error = QtCore.pyqtSignal(str)
+
+    def __init__(self, api_key, model_name, full_prompt):
+        super().__init__()
+        self.api_key = api_key
+        self.model_name = model_name
+        self.full_prompt = full_prompt
+
+    def run(self):
+        try:
+            if not self.api_key:
+                raise ValueError("API Key is missing.")
+            
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel(self.model_name)
+            
+            response = model.generate_content(self.full_prompt)
+            
+            if response.text:
+                code = response.text.strip()
+                if "```python" in code:
+                    code = code.split("```python")[1].split("```")[0]
+                elif "```" in code:
+                    code = code.split("```")[1].split("```")[0]
+                
+                self.finished.emit(code.strip())
+            else:
+                self.error.emit("AI không trả về nội dung.")
+        except Exception as e:
+            self.error.emit(str(e))
+
+class FetchModelsWorker(QtCore.QThread):
+    finished = QtCore.pyqtSignal(list)
+    error = QtCore.pyqtSignal(str)
+
+    def __init__(self, api_key):
+        super().__init__()
+        self.api_key = api_key
+
+    def run(self):
+        try:
+            genai.configure(api_key=self.api_key)
+            
+            models = []
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    models.append(m.name)
+            
+            models.sort(reverse=True)
+            
+            self.finished.emit(models)
+        except Exception as e:
+            self.error.emit(str(e))
 
 class AlgorithmGeminiBuilderTab(QWidget):
     def __init__(self, parent_widget: QWidget, main_app_instance):
@@ -427,22 +466,48 @@ class AlgorithmGeminiBuilderTab(QWidget):
 
         self.logger = logging.getLogger("GeminiAlgoBuilderTab")
 
+        self.PRIORITY_MODELS = [
+            "models/gemini-2.5-flash",
+            "models/gemini-2.0-flash", 
+            "models/gemini-1.5-flash",
+            "models/gemini-1.5-pro",
+            "models/gemini-pro"
+        ]
+
         self._load_api_key()
         self._setup_ui()
 
     def _load_api_key(self):
+        """Tải API Key và Model đã lưu từ file."""
+        self.api_key = ""
+        self.last_saved_model = ""
+        
+        api_file = Path("config/gemini.api")
+        if api_file.exists():
+            try:
+                content = api_file.read_text(encoding="utf-8").strip()
+                if content:
+                    if "|" in content:
+                        self.api_key = content.split("|")[0]
+                        self.last_saved_model = content.split("|")[1]
+                    else:
+                        try:
+                            self.api_key = base64.b64decode(content.encode("utf-8")).decode("utf-8")
+                        except:
+                            self.api_key = content
+            except Exception: pass
+
+    def _save_api_key(self, api_key):
+        """Lưu API Key kèm theo Model đang chọn vào file theo định dạng KEY|MODEL."""
         try:
-            self.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            if self.API_KEY_FILE.is_file():
-                encoded_key = self.API_KEY_FILE.read_bytes()
-                self.api_key = base64.b64decode(encoded_key).decode('utf-8')
-                self.logger.info(f"Loaded API key from {self.API_KEY_FILE}")
-            else:
-                self.api_key = ""
-                self.logger.info(f"API key file not found: {self.API_KEY_FILE}. Key is empty.")
-        except (IOError, base64.binascii.Error, UnicodeDecodeError) as e:
-            self.logger.error(f"Failed to load or decode API key from {self.API_KEY_FILE}: {e}")
-            self.api_key = ""
+            current_model = self.model_combo.currentText()
+            if api_key:
+                content = f"{api_key}|{current_model}"
+                self.API_KEY_FILE.write_text(content, encoding="utf-8")
+                self.api_key = api_key
+                # self.logger.info(f"Đã lưu API Key và model: {current_model}")
+        except Exception as e:
+            self.logger.error(f"Lỗi khi lưu API key và model: {e}")
 
     def _save_api_key_if_changed(self):
         """Saves the API key only if it has changed."""
@@ -488,118 +553,226 @@ class AlgorithmGeminiBuilderTab(QWidget):
         """)
 
 
+    def _load_model_preference(self):
+        """Tải tên model và danh sách model đã lưu từ file config."""
+        if hasattr(self.main_app, 'config') and self.main_app.config.has_section('GEMINI'):
+            cached_models_str = self.main_app.config.get('GEMINI', 'cached_models', fallback="")
+            if cached_models_str:
+                cached_list = [m.strip() for m in cached_models_str.split(',') if m.strip()]
+                if cached_list:
+                    self.model_combo.clear()
+                    self.model_combo.addItems(cached_list)
+            
+            saved_model = self.main_app.config.get('GEMINI', 'model_name', fallback="")
+            if saved_model:
+                self.model_combo.setCurrentText(saved_model)
+        else:
+            self.model_combo.setCurrentText("gemini-1.5-flash")
+
+    def _save_model_preference(self):
+        """Lưu tên model hiện tại vào config."""
+        current_model = self.model_combo.currentText().strip()
+        if hasattr(self.main_app, 'config'):
+            if not self.main_app.config.has_section('GEMINI'):
+                self.main_app.config.add_section('GEMINI')
+            
+            self.main_app.config.set('GEMINI', 'model_name', current_model)
+            if hasattr(self.main_app, 'save_config'):
+                self.main_app.save_config("settings.ini")
+
+    def _fetch_available_models(self):
+        """Bắt đầu quét model bằng luồng riêng (Thread)."""
+        api_key = self.api_key_edit.text().strip()
+        if not api_key:
+            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập API Key trước khi quét.")
+            self.api_key_edit.setFocus()
+            return
+
+        self.btn_fetch_models.setEnabled(False)
+        self.btn_fetch_models.setText("...")
+        self.status_label.setText("⏳ Đang kết nối tới Google để lấy danh sách model...")
+        self.status_label.setStyleSheet("color: orange;")
+
+        self.fetch_worker = FetchModelsWorker(api_key)
+        self.fetch_worker.finished.connect(self._on_models_fetched)
+        self.fetch_worker.error.connect(self._on_models_fetch_error)
+        
+        self.fetch_worker.start()
+
+    def _on_models_fetched(self, models):
+        self.btn_fetch_models.setEnabled(True)
+        self.btn_fetch_models.setText("🔄")
+        self.model_combo.clear()
+        
+        if not models:
+            self.model_combo.addItem("Không tìm thấy model nào")
+            return
+
+        model_names = [m.name if hasattr(m, 'name') else str(m) for m in models]
+        model_names.sort() 
+        self.model_combo.addItems(model_names)
+
+        target_index = -1
+        
+        if hasattr(self, 'last_saved_model') and self.last_saved_model:
+            target_index = self.model_combo.findText(self.last_saved_model)
+
+        if target_index == -1:
+            for i in range(self.model_combo.count()):
+                name = self.model_combo.itemText(i).lower()
+                if "2.5-flash" in name and not any(x in name for x in ["preview", "pro", "tts", "lite"]):
+                    target_index = i
+                    break
+
+        if target_index == -1:
+            for i in range(self.model_combo.count()):
+                if "2.5-flash" in self.model_combo.itemText(i).lower():
+                    target_index = i
+                    break
+
+        if target_index != -1:
+            self.model_combo.setCurrentIndex(target_index)
+        else:
+            self.model_combo.setCurrentIndex(0)
+            
+        self.status_label.setText(f"✅ Đã chọn: {self.model_combo.currentText()}")
+        self._save_current_settings()
+
+    def _on_models_fetch_error(self, error_msg):
+        """Được gọi khi Worker gặp lỗi."""
+        self.btn_fetch_models.setEnabled(True)
+        self.btn_fetch_models.setText("🔄 Quét")
+        self.status_label.setText("❌ Lỗi quét model.")
+        self.status_label.setStyleSheet("color: red;")
+        
+        QMessageBox.critical(self, "Lỗi Kết Nối", f"Không thể lấy danh sách model:\n\n{error_msg}\n\nKiểm tra lại Internet hoặc API Key.")
+
+
     def _setup_ui(self):
-        main_tab_layout = QVBoxLayout(self)
-        main_tab_layout.setContentsMargins(10, 10, 10, 10)
-        main_tab_layout.setSpacing(10)
+        """Thiết lập giao diện tối ưu không gian (Single Row Config & Actions)."""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
+        config_group = QGroupBox("Cấu hình Kết nối")
+        top_row_layout = QHBoxLayout(config_group)
+        top_row_layout.setContentsMargins(10, 15, 10, 10)
+        top_row_layout.setSpacing(8)
 
-
-        api_key_group = QWidget()
-        api_key_layout = QHBoxLayout(api_key_group)
-        api_key_layout.setContentsMargins(0, 0, 0, 5)
-        api_key_layout.setSpacing(8)
-
-        api_key_layout.addWidget(QLabel("🔑Gemini API Key:"))
-        self.api_key_edit = QLineEdit(self.api_key)
+        top_row_layout.addWidget(QLabel("API Key:"))
+        self.api_key_edit = QLineEdit()
         self.api_key_edit.setEchoMode(QLineEdit.Password)
-        self.api_key_edit.setPlaceholderText("Nhập API Key của Google AI Studio / Vertex AI")
-        self.api_key_edit.editingFinished.connect(self._save_api_key_if_changed)
-        api_key_layout.addWidget(self.api_key_edit, 1)
+        self.api_key_edit.setPlaceholderText("Dán API Key vào đây...")
+        self.api_key_edit.setMinimumWidth(200)
+        self.api_key_edit.editingFinished.connect(self._save_current_settings) 
+        top_row_layout.addWidget(self.api_key_edit, 2)
 
-        show_api_button = QPushButton("👁‍🗨")
-        show_api_button.setFixedSize(QSize(30, self.api_key_edit.sizeHint().height()))
-        show_api_button.setCheckable(True)
-        show_api_button.setToolTip("Hiện/Ẩn API Key")
-        show_api_button.toggled.connect(self._toggle_api_key_visibility)
-        api_key_layout.addWidget(show_api_button)
+        self.btn_toggle_api = QPushButton("👁")
+        self.btn_toggle_api.setCheckable(True)
+        self.btn_toggle_api.setFixedWidth(30)
+        self.btn_toggle_api.toggled.connect(self._toggle_api_key_visibility)
+        top_row_layout.addWidget(self.btn_toggle_api)
 
-        help_api_button = QPushButton("❓")
-        help_api_button.setFixedSize(QSize(30, self.api_key_edit.sizeHint().height()))
-        help_api_button.setToolTip(self._get_api_key_help_text_plain())
-        api_key_layout.addWidget(help_api_button)
+        top_row_layout.addSpacing(15)
+        
+        top_row_layout.addWidget(QLabel("Model:"))
+        self.model_combo = QComboBox()
+        self.model_combo.setEditable(True)
+        self.model_combo.setMinimumWidth(180)
+        self.model_combo.setMaxVisibleItems(20)
+        self.model_combo.setStyleSheet("""
+            QComboBox { border: 1px solid #999; border-radius: 3px; padding: 4px; padding-right: 20px; }
+            QComboBox::drop-down { width: 20px; border-left: 1px solid #999; background: #eee; }
+            QComboBox::down-arrow { width: 0; height: 0; border-top: 5px solid black; border-left: 4px solid transparent; border-right: 4px solid transparent; }
+        """)
+        self.model_combo.currentIndexChanged.connect(self._save_current_settings)
+        top_row_layout.addWidget(self.model_combo, 1)
 
-        main_tab_layout.addWidget(api_key_group)
+        self.btn_fetch_models = QPushButton("🔄")
+        self.btn_fetch_models.setToolTip("Quét danh sách Model mới")
+        self.btn_fetch_models.setFixedWidth(30)
+        self.btn_fetch_models.clicked.connect(self._fetch_available_models)
+        top_row_layout.addWidget(self.btn_fetch_models)
 
-        save_info_label = QLabel(f"<i>API Key sẽ được mã hóa và lưu tự động vào file <code>{self.API_KEY_FILE.relative_to(self.main_app.base_dir)}</code> khi bạn thay đổi.</i>")
-        save_info_label.setWordWrap(True)
-        save_info_label.setStyleSheet("color: #6c757d; font-size: 9pt; margin-bottom: 10px;")
-        main_tab_layout.addWidget(save_info_label)
+        main_layout.addWidget(config_group)
 
-        info_form = QFormLayout()
-        info_form.setSpacing(8)
+        info_group = QGroupBox("Thông tin Code Output")
+        info_layout = QVBoxLayout(info_group)
+        info_layout.setContentsMargins(10, 15, 10, 10)
+        
+        row_info = QHBoxLayout()
+        row_info.addWidget(QLabel("File Name:"))
         self.file_name_edit = QLineEdit()
-        self.file_name_edit.setPlaceholderText("Ví dụ: advanced_frequency")
-        self.file_name_edit.textChanged.connect(self._suggest_class_name)
-        info_form.addRow("📗Tên file:", self.file_name_edit)
-
+        self.file_name_edit.setPlaceholderText("vd: logic_2026")
+        row_info.addWidget(self.file_name_edit)
+        
+        row_info.addSpacing(15)
+        
+        row_info.addWidget(QLabel("Class Name:"))
         self.class_name_edit = QLineEdit()
-        self.class_name_edit.setPlaceholderText("Ví dụ: AdvancedFrequencyAlgorithm")
-        info_form.addRow("📒Tên Lớp (Class):", self.class_name_edit)
+        self.class_name_edit.setPlaceholderText("vd: Logic2026Algorithm")
+        row_info.addWidget(self.class_name_edit)
+        info_layout.addLayout(row_info)
+        
+        main_layout.addWidget(info_group)
 
+        row_desc = QHBoxLayout()
+        row_desc.addWidget(QLabel("Mô tả thuật toán:"))
         self.description_edit = QLineEdit()
-        self.description_edit.setPlaceholderText("Mô tả ngắn gọn về thuật toán")
-        info_form.addRow("♻️Mô tả thuật toán:", self.description_edit)
-        main_tab_layout.addLayout(info_form)
-
-        logic_label = QLabel("✍️ Mô tả thuật toán (tiếng Việt hoặc Anh):")
-        main_tab_layout.addWidget(logic_label)
+        self.description_edit.setPlaceholderText("vd: Thuật toán dựa trên tần suất xuất hiện...")
+        row_desc.addWidget(self.description_edit)
+        info_layout.addLayout(row_desc)
+        
+        main_layout.addWidget(QLabel("<b>Mô tả ý tưởng thuật toán (Prompt):</b>"))
         self.logic_description_edit = QPlainTextEdit()
-        self.logic_description_edit.setPlaceholderText(
-            "Ví dụ:\n"
-            "- Tính điểm dựa trên tần suất xuất hiện trong 90 ngày qua.\n"
-            "- Cộng thêm điểm nếu số đó là số lân cận (trong khoảng +/- 3) của giải đặc biệt ngày hôm trước.\n"
-            "- Giảm điểm mạnh nếu số đó đã về trong 2 ngày liên tiếp gần đây.\n"
-            "- Ưu tiên các số không xuất hiện trong 10 ngày gần nhất...\n"
-            "(Càng chi tiết, Gemini càng tạo code tốt hơn)"
-        )
-        self.logic_description_edit.setMinimumHeight(120)
-        main_tab_layout.addWidget(self.logic_description_edit)
+        self.logic_description_edit.setPlaceholderText("Nhập logic bạn muốn AI viết...")
+        self.logic_description_edit.setMinimumHeight(80)
+        main_layout.addWidget(self.logic_description_edit)
 
-        self.generate_button = QPushButton("🧠Tạo Thuật Toán")
-        self.generate_button.setObjectName("AccentButton")
-        self.generate_button.setStyleSheet("padding: 8px;")
+        action_bar = QHBoxLayout()
+        action_bar.setSpacing(10)
+
+        self.generate_button = QPushButton("🚀 TẠO CODE")
+        self.generate_button.setMinimumHeight(35)
+        self.generate_button.setMinimumWidth(120)
+        self.generate_button.setStyleSheet("font-weight: bold; color: white; background-color: #007bff; border-radius: 4px;")
         self.generate_button.clicked.connect(self._generate_algorithm)
-        main_tab_layout.addWidget(self.generate_button)
+        action_bar.addWidget(self.generate_button)
 
         self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedWidth(100)
+        self.progress_bar.setFixedHeight(10)
+        self.progress_bar.setTextVisible(False)
         self.progress_bar.setRange(0, 0)
         self.progress_bar.setVisible(False)
-        self.progress_bar.setFixedHeight(10)
-        main_tab_layout.addWidget(self.progress_bar)
+        action_bar.addWidget(self.progress_bar)
 
-        self.status_label = QLabel("Trạng thái: Sẵn sàng")
-        self.status_label.setStyleSheet("color: #6c757d;")
-        main_tab_layout.addWidget(self.status_label)
+        self.status_label = QLabel("Sẵn sàng.")
+        self.status_label.setStyleSheet("color: #555; font-style: italic;")
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        action_bar.addWidget(self.status_label, 1)
 
-        code_label = QLabel("Nội dung thuật toán:")
-        main_tab_layout.addWidget(code_label)
+        self.copy_button = QPushButton(" 📋 Copy ")
+        self.copy_button.setFixedWidth(110)
+        self.copy_button.clicked.connect(self._copy_generated_code)
+        
+        self.save_button = QPushButton(" 💾 Lưu File  ")
+        self.save_button.setFixedWidth(120)
+        self.save_button.clicked.connect(self._save_algorithm_file)
+
+        action_bar.addWidget(self.copy_button)
+        action_bar.addWidget(self.save_button)
+
+        main_layout.addLayout(action_bar)
+
         self.generated_code_display = QPlainTextEdit()
         self.generated_code_display.setReadOnly(True)
-        code_font = self.main_app.get_qfont("code")
-        self.generated_code_display.setFont(code_font)
+        self.generated_code_display.setFont(self.main_app.get_qfont("code"))
+        self.generated_code_display.setStyleSheet("background-color: #f8f9fa; border: 1px solid #ccc;")
+        main_layout.addWidget(self.generated_code_display, 1)
 
-        self.generated_code_display.setMinimumHeight(200)
-        self.highlighter = PythonSyntaxHighlighter(self.generated_code_display.document())
-        main_tab_layout.addWidget(self.generated_code_display, 1)
+        self._load_saved_settings()
 
-        button_layout_gen = QHBoxLayout()
-        button_layout_gen.addStretch(1)
-
-        self.copy_button = QPushButton("📄Sao chép")
-        self.copy_button.setEnabled(False)
-        self.copy_button.setStyleSheet("padding: 8px;")
-        self.copy_button.clicked.connect(self._copy_generated_code)
-        button_layout_gen.addWidget(self.copy_button)
-
-        self.save_button = QPushButton("💾 Lưu")
-        self.save_button.setEnabled(False)
-        self.save_button.setObjectName("AccentButton")
-        self.save_button.setStyleSheet("padding: 8px;")
-        self.save_button.clicked.connect(self._save_algorithm_file)
-        button_layout_gen.addWidget(self.save_button)
-
-        main_tab_layout.addLayout(button_layout_gen)
 
 
 
@@ -645,30 +818,54 @@ class AlgorithmGeminiBuilderTab(QWidget):
 
 
     def _validate_inputs(self) -> bool:
-        self.api_key = self.api_key_edit.text().strip()
-        file_name_base = self.file_name_edit.text().strip()
-        class_name = self.class_name_edit.text().strip()
-        logic_desc = self.logic_description_edit.toPlainText().strip()
-
-        if not self.api_key:
-            QMessageBox.warning(self, "Thiếu API Key", "Vui lòng nhập Gemini API Key.")
+        """
+        Kiểm tra tính hợp lệ của các thông tin đầu vào trước khi gửi yêu cầu tới Gemini.
+        Trả về True nếu tất cả hợp lệ, ngược lại trả về False.
+        """
+        api_key = self.api_key_edit.text().strip()
+        if not api_key:
+            QtWidgets.QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập Gemini API Key.")
             self.api_key_edit.setFocus()
             return False
-        if not HAS_GEMINI:
-            QMessageBox.critical(self, "Thiếu Thư Viện", "Vui lòng cài đặt thư viện 'google-generativeai' bằng lệnh:\n\npip install google-generativeai")
-            return False
-        if not re.match(r"^[a-zA-Z0-9_]+$", file_name_base):
-            QMessageBox.warning(self, "Tên file không hợp lệ", "Tên file chỉ nên chứa chữ cái, số và dấu gạch dưới (_).")
-            self.file_name_edit.setFocus()
-            return False
-        if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", class_name) or class_name == "BaseAlgorithm":
-            QMessageBox.warning(self, "Tên lớp không hợp lệ", "Tên lớp phải là định danh Python hợp lệ và không trùng 'BaseAlgorithm'.")
-            self.class_name_edit.setFocus()
-            return False
-        if not logic_desc:
-            QMessageBox.warning(self, "Thiếu Mô Tả Logic", "Vui lòng mô tả logic bạn muốn cho thuật toán.")
+
+        logic_desc = self.logic_description_edit.toPlainText().strip()
+        if not logic_desc or len(logic_desc) < 10:
+            QtWidgets.QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng mô tả logic thuật toán chi tiết hơn (tối thiểu 10 ký tự).")
             self.logic_description_edit.setFocus()
             return False
+
+        file_name = self.file_name_edit.text().strip()
+        if not file_name:
+            QtWidgets.QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập tên file (ví dụ: my_algo).")
+            self.file_name_edit.setFocus()
+            return False
+        
+        if not re.match(r'^[a-zA-Z0-9_-]+$', file_name):
+            QtWidgets.QMessageBox.warning(self, "Lỗi tên file", "Tên file chỉ được chứa chữ cái, số, dấu gạch ngang (-) và gạch dưới (_).")
+            self.file_name_edit.setFocus()
+            return False
+
+        class_name = self.class_name_edit.text().strip()
+        if not class_name:
+            QtWidgets.QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập tên Class (ví dụ: MyAlgorithm).")
+            self.class_name_edit.setFocus()
+            return False
+        
+        if not class_name[0].isalpha() or not class_name.isalnum():
+            QtWidgets.QMessageBox.warning(self, "Lỗi tên Class", "Tên Class phải bắt đầu bằng chữ cái và không chứa ký tự đặc biệt.")
+            self.class_name_edit.setFocus()
+            return False
+
+        try:
+            algo_desc = self.description_edit.text().strip()
+            if not algo_desc:
+                QtWidgets.QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập mô tả ngắn gọn về chức năng của thuật toán.")
+                self.description_edit.setFocus()
+                return False
+        except AttributeError:
+            QtWidgets.QMessageBox.critical(self, "Lỗi hệ thống", "Widget 'description_edit' chưa được khởi tạo trong giao diện.")
+            return False
+
         return True
 
     def _get_base_algorithm_code(self) -> str:
@@ -741,7 +938,7 @@ class AlgorithmGeminiBuilderTab(QWidget):
         Nhiệm vụ của bạn là tạo ra ĐOẠN CODE PYTHON HOÀN CHỈNH cho một lớp thuật toán mới dựa trên mô tả của người dùng.
 
         **Bối cảnh:**
-        *   Thuật toán mới phải kế thừa từ lớp `BaseAlgorithm`. Dưới đây là nội dung của file `algorithms/base.py` mà lớp cha được định nghĩa:
+        *   Hãy viết thuật toán kế thừa từ BaseAlgorithm, sử dụng hàm predict(self, date_to_predict, historical_results) và trả về dictionary gồm các key từ '00' đến '99' với giá trị là điểm số (float). Không định nghĩa lại lớp BaseAlgorithm mà hãy dùng from algorithms.base import BaseAlgorithm. Thuật toán mới phải kế thừa từ lớp `BaseAlgorithm`. Dưới đây là nội dung của file `algorithms/base.py` mà lớp cha được định nghĩa:
             ```python
             {textwrap.indent(base_algo_code, '            ')}
             ```
@@ -788,32 +985,92 @@ class AlgorithmGeminiBuilderTab(QWidget):
         if not self._validate_inputs():
             return
 
-        self.api_key = self.api_key_edit.text().strip()
-
-
-        prompt = self._construct_prompt()
-        if prompt is None:
-            QMessageBox.critical(self, "Lỗi Tạo Prompt", "Không thể tạo yêu cầu cho Gemini.")
+        api_key = self.api_key_edit.text().strip()
+        model_name = self.model_combo.currentText()
+        
+        full_prompt = self._construct_prompt()
+        
+        if not full_prompt:
             return
 
-        self.generated_code = ""
-        self.generated_code_display.setPlainText("")
-        self.save_button.setEnabled(False)
-        self.copy_button.setEnabled(False)
         self.generate_button.setEnabled(False)
+        self.generated_code_display.setPlaceholderText("Đang tạo thuật toán, vui lòng đợi...")
         self.progress_bar.setVisible(True)
-        self.status_label.setText("Trạng thái: Đang liên lạc với Gemini API...")
-        self.status_label.setStyleSheet("color: #ffc107;")
         self.start_time = time.time()
+        
+        self.gemini_worker = GeminiWorker(api_key, model_name, full_prompt)
+        
+        self.gemini_worker.finished.connect(self._on_generation_finished)
+        self.gemini_worker.error.connect(self._handle_gemini_error)
+        
+        self.gemini_worker.start()
 
-        self.gemini_worker = GeminiWorker(self.api_key, prompt)
-        self.gemini_thread = threading.Thread(target=self.gemini_worker.run, daemon=True)
+    def _on_generation_finished(self, code: str):
+        """
+        Hàm này được gọi tự động khi GeminiWorker hoàn thành việc tạo code.
+        Nó sẽ nhận 'code' (chuỗi văn bản) từ AI và hiển thị lên UI.
+        """
+        self.generated_code = code 
+        
+        self.generated_code_display.setPlainText(code)
+        
+        self.generate_button.setEnabled(True)
+        self.generate_button.setText("🚀 TẠO LẠI CODE")
+        self.save_button.setEnabled(True)
+        self.copy_button.setEnabled(True)
+        
+        self.progress_bar.setVisible(False)
+        
+        elapsed = time.time() - self.start_time
+        self.status_label.setText(f"✅ Đã tạo xong! ({elapsed:.1f}s)")
+        self.status_label.setStyleSheet("color: #28a745; font-weight: bold;")
+        
+        QtWidgets.QMessageBox.information(self, "Thành công", "AI đã viết xong code thuật toán cho bạn!")
 
-        self.gemini_worker.result_ready.connect(self._handle_gemini_response)
-        self.gemini_worker.error_occurred.connect(self._handle_gemini_error)
-        self.gemini_worker.status_update.connect(self._update_status_from_worker)
+    def _handle_gemini_error(self, error_message):
+        """Xử lý lỗi API và hiển thị popup có nút Auto chuyển model."""
+        self.generate_button.setEnabled(True)
+        self.generate_button.setText("🚀 TẠO CODE")
+        self.progress_bar.setVisible(False)
+        self.status_label.setText("❌ Lỗi API hoặc Model.")
+        self.status_label.setStyleSheet("color: red;")
 
-        self.gemini_thread.start()
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Lỗi Model / API")
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setText("Model hiện tại không dùng được hoặc gặp lỗi API.")
+        
+        auto_button = msg_box.addButton("Chuyển Model Tự Động (Auto)", QMessageBox.ActionRole)
+        close_button = msg_box.addButton("Đóng", QMessageBox.RejectRole)
+        
+        msg_box.exec_()
+
+        if msg_box.clickedButton() == auto_button:
+            self._auto_switch_and_retry()
+
+    def _auto_switch_and_retry(self):
+        """Tự động tìm model tiếp theo trong danh sách ưu tiên và thực hiện tạo lại code."""
+        current_model = self.model_combo.currentText().strip()
+        
+        full_current_model = current_model if current_model.startswith("models/") else f"models/{current_model}"
+            
+        next_model = None
+        
+        if full_current_model in self.PRIORITY_MODELS:
+            current_idx = self.PRIORITY_MODELS.index(full_current_model)
+            if current_idx + 1 < len(self.PRIORITY_MODELS):
+                next_model = self.PRIORITY_MODELS[current_idx + 1]
+        else:
+            next_model = self.PRIORITY_MODELS[0]
+
+        if next_model:
+            self.model_combo.setCurrentText(next_model)
+            self.status_label.setText(f"🔄 Đang thử model: {next_model}...")
+            
+            QtCore.QTimer.singleShot(800, self._generate_algorithm)
+        else:
+            self.status_label.setText("❌ Đã thử hết các model thông dụng nhưng không thành công.")
+            QMessageBox.critical(self, "Lỗi", "Không còn model nào trong danh sách ưu tiên để thử lại.")
 
     def _update_status_from_worker(self, message):
         if self.start_time:
@@ -888,23 +1145,7 @@ class AlgorithmGeminiBuilderTab(QWidget):
         self.status_label.setStyleSheet(f"color: {status_color};")
         self.start_time = None
 
-    def _handle_gemini_error(self, error_message):
-        elapsed = time.time() - self.start_time if self.start_time else 0
-        self.logger.error(f"Gemini worker error: {error_message}")
-        QMessageBox.critical(self, "Lỗi Gemini API", error_message)
 
-        self.generated_code = ""
-        self.generated_code_display.setPlainText(f"# Lỗi xảy ra:\n# {error_message}")
-        self.save_button.setEnabled(False)
-        self.copy_button.setEnabled(False)
-        self.generate_button.setEnabled(True)
-        self.progress_bar.setVisible(False)
-        status_text = f"Trạng thái: Lỗi - {error_message} ({elapsed:.1f}s)"
-        if len(status_text) > 150:
-            status_text = status_text[:147] + "..."
-        self.status_label.setText(status_text)
-        self.status_label.setStyleSheet("color: #dc3545;")
-        self.start_time = None
 
     def _copy_generated_code(self):
         code_to_copy = self.generated_code_display.toPlainText()
@@ -925,7 +1166,6 @@ class AlgorithmGeminiBuilderTab(QWidget):
         file_name_base = self.file_name_edit.text().strip()
         if not re.match(r"^[a-zA-Z0-9_]+$", file_name_base):
             QMessageBox.warning(self, "Tên file không hợp lệ", "Vui lòng kiểm tra lại tên file (chỉ chữ cái, số, gạch dưới) trước khi lưu.")
-            self.tab_widget_internal.setCurrentIndex(0)
             self.file_name_edit.setFocus()
             return
 
@@ -942,15 +1182,18 @@ class AlgorithmGeminiBuilderTab(QWidget):
         try:
             self.ALGORITHMS_DIR.mkdir(parents=True, exist_ok=True)
             save_path.write_text(self.generated_code, encoding='utf-8')
+            
             QMessageBox.information(self, "Lưu Thành Công",
                                     f"Đã lưu thuật toán vào:\n{save_path.resolve()}\n\n"
                                     "Các danh sách thuật toán sẽ được tự động làm mới.")
+            
             self.status_label.setText(f"Trạng thái: Đã lưu {full_file_name}")
             self.status_label.setStyleSheet("color: #28a745;")
 
             if self.main_app:
                 self.main_app.reload_algorithms()
-                self.main_app.update_status(f"Đã lưu và tải lại thuật toán: {full_file_name}")
+                if hasattr(self.main_app, 'update_status'):
+                    self.main_app.update_status(f"Đã lưu và tải lại thuật toán: {full_file_name}")
 
         except IOError as e:
             QMessageBox.critical(self, "Lỗi Lưu File", f"Không thể lưu file thuật toán:\n{e}")
@@ -958,12 +1201,78 @@ class AlgorithmGeminiBuilderTab(QWidget):
             self.status_label.setStyleSheet("color: #dc3545;")
         except Exception as e:
             QMessageBox.critical(self, "Lỗi Không Xác Định", f"Đã xảy ra lỗi khi lưu file:\n{e}")
-            self.status_label.setText("Trạng thái: Lỗi không xác định khi lưu")
-            self.status_label.setStyleSheet("color: #dc3545;")
+
+
+    def _save_current_settings(self):
+        """Lưu Model và API Key vào cả settings.ini và config/gemini.api."""
+        api_key = self.api_key_edit.text().strip()
+        model = self.model_combo.currentText().strip()
+
+        if hasattr(self.main_app, 'config'):
+            if not self.main_app.config.has_section('GEMINI'):
+                self.main_app.config.add_section('GEMINI')
+            
+            self.main_app.config.set('GEMINI', 'api_key', api_key)
+            self.main_app.config.set('GEMINI', 'selected_model', model)
+            
+            models_list = [self.model_combo.itemText(i) for i in range(self.model_combo.count())]
+            if models_list and "Không tìm thấy" not in models_list[0]:
+                self.main_app.config.set('GEMINI', 'cached_models', ",".join(models_list))
+
+            try:
+                with open('settings.ini', 'w', encoding='utf-8') as configfile:
+                    self.main_app.config.write(configfile)
+            except Exception as e:
+                self.logger.error(f"Lỗi lưu settings.ini: {e}")
+
+        if api_key:
+            try:
+                if not os.path.exists("config"):
+                    os.makedirs("config")
+                encoded_str = base64.b64encode(api_key.encode("utf-8")).decode("utf-8")
+                with open("config/gemini.api", "w", encoding="utf-8") as f:
+                    f.write(encoded_str)
+            except Exception as e:
+                self.logger.error(f"Lỗi lưu file API: {e}")
+
+
+    def _load_saved_settings(self):
+        """
+        Load Model từ settings.ini và giải mã API Key từ config/gemini.api
+        """
+        if hasattr(self.main_app, 'config'):
+            if self.main_app.config.has_option('GEMINI', 'cached_models'):
+                cached = self.main_app.config.get('GEMINI', 'cached_models')
+                if cached:
+                    self.model_combo.blockSignals(True)
+                    self.model_combo.clear()
+                    self.model_combo.addItems(cached.split(','))
+                    self.model_combo.blockSignals(False)
+
+            if self.main_app.config.has_option('GEMINI', 'selected_model'):
+                last_model = self.main_app.config.get('GEMINI', 'selected_model')
+                self.model_combo.setCurrentText(last_model)
+
+        try:
+            import os
+            import base64
+            
+            if os.path.exists("config/gemini.api"):
+                with open("config/gemini.api", "r", encoding="utf-8") as f:
+                    encrypted_content = f.read().strip()
+                
+                if encrypted_content:
+                    decoded_bytes = base64.b64decode(encrypted_content)
+                    real_api_key = decoded_bytes.decode("utf-8")
+                    
+                    self.api_key_edit.setText(real_api_key)
+        except Exception as e:
+            print(f"Lỗi đọc file API: {e}")
+
 
 class EvaluationWorker(QObject):
     """Worker chạy nền để đánh giá hiệu suất thuật toán."""
-    progress_signal = pyqtSignal(int, int)  # current, total
+    progress_signal = pyqtSignal(int, int)
     finished_signal = pyqtSignal(dict)
     error_signal = pyqtSignal(str)
     
@@ -6129,6 +6438,22 @@ class SimulationWorker(QObject):
             if len(s) >= 2 and s[-2:].isdigit(): return s[-2:]
         return None
 
+class VnMoneySpinBox(QSpinBox):
+    """SpinBox tùy chỉnh để hiển thị dấu chấm phân cách hàng nghìn."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setGroupSeparatorShown(True)
+
+    def textFromValue(self, value):
+        return "{:,}".format(value).replace(",", ".")
+
+    def valueFromText(self, text):
+        clean_text = text.replace(".", "")
+        try:
+            return int(clean_text)
+        except ValueError:
+            return 0
+
 class TrialPlayTab(QWidget):
     def __init__(self, main_app):
         super().__init__()
@@ -6158,7 +6483,7 @@ class TrialPlayTab(QWidget):
         top_layout = QGridLayout(top_group)
         
         top_layout.addWidget(QLabel("Vốn ban đầu:"), 0, 0)
-        self.capital_spin = QSpinBox()
+        self.capital_spin = VnMoneySpinBox()
         self.capital_spin.setRange(100, 1000000000)
         self.capital_spin.setValue(10000)
         self.capital_spin.setSuffix(".000 đ")
@@ -6505,10 +6830,147 @@ class TrialPlayTab(QWidget):
         self.log_view.append(f"<br><center><b>{msg}</b></center>")
         self.lbl_progress_text.setText(f"Hoàn thành ({sm['total_days']}/{sm['total_days']})")
 
+
+class NewsFetcherWorker(QObject):
+    """Worker tải nội dung tin tức từ URL."""
+    news_received = pyqtSignal(list)
+
+    def run(self):
+        url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/news.txt"
+        try:
+            import requests
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                raw_text = response.text
+                lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
+                self.news_received.emit(lines)
+            else:
+                self.news_received.emit([f"Không thể tải tin tức (Code {response.status_code})"])
+        except Exception as e:
+            self.news_received.emit([f"Lỗi tải tin tức: {e}"])
+
+class ScrollingNewsWidget(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedHeight(30)
+        
+        self.setObjectName("NewsTicker")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        
+        self.setStyleSheet("""
+            #NewsTicker { background-color: transparent; }
+            QLabel { background-color: transparent; }
+            QMenu { background-color: #ffffff; color: #000000; border: 1px solid #cccccc; }
+            QMenu::item { background-color: transparent; padding: 4px 20px; color: #000000; }
+            QMenu::item:selected { background-color: #0078d7; color: #ffffff; }
+            QToolTip { border: 1px solid #888888; background-color: #ffffff; color: #000000; }
+        """)
+        
+        self.layout = QHBoxLayout(self)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.label = QLabel(self)
+        self.label.setTextFormat(Qt.RichText)
+        self.label.setOpenExternalLinks(True) 
+        self.label.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        
+        font = self.label.font()
+        font.setPointSize(10)
+        self.label.setFont(font)
+        
+        self.news_items = []
+        self.px_pos = 0
+        self.speed = 1 
+        self.separator = "&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;✦&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"
+        
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.scroll_text)
+        self.timer_interval = 25
+        
+    def set_news(self, lines):
+        if not lines:
+            self.label.setText("Chưa có tin tức.")
+            self.news_items = []
+            return
+
+        self.news_items = lines
+        
+        full_tooltip_text = """
+        <div style='background-color: #ffffff; color: #000000; padding: 5px; font-size: 10pt;'>
+            <b style='color: #d63384;'>TIN TỨC:</b>
+            <hr style='border: 1px solid #ccc;'>
+            <ul style='margin-left: -15px;'>
+        """
+        for line in lines:
+            full_tooltip_text += f"<li>{line}</li><br>"
+        full_tooltip_text += "</ul></div>"
+        
+        self.label.setToolTip(full_tooltip_text)
+        
+        self.update_display_text()
+        self.timer.start(self.timer_interval)
+
+    def update_display_text(self):
+        """Nối tất cả tin thành 1 chuỗi dài với dấu ngăn cách và hiển thị."""
+        if not self.news_items:
+            return
+
+        processed_lines = []
+        for line in self.news_items:
+            processed_lines.append(f"<span style='color: #000000; font-weight: 500;'>{line}</span>")
+        
+        full_html = self.separator.join(processed_lines)
+        
+        self.label.setText(full_html)
+        self.label.adjustSize()
+        
+        self.px_pos = self.width()
+        self.label.move(self.px_pos, (self.height() - self.label.height()) // 2)
+
+    def next_news(self):
+        """Đảo danh sách: Đưa tin đầu xuống cuối -> Tin thứ 2 sẽ chạy ngay lập tức."""
+        if not self.news_items or len(self.news_items) < 2: return
+        
+        first_item = self.news_items.pop(0)
+        self.news_items.append(first_item)
+        
+        self.update_display_text()
+
+    def prev_news(self):
+        """Đảo danh sách: Đưa tin cuối lên đầu -> Tin đó sẽ chạy ngay lập tức."""
+        if not self.news_items or len(self.news_items) < 2: return
+        
+        last_item = self.news_items.pop()
+        self.news_items.insert(0, last_item)
+        
+        self.update_display_text()
+
+    def scroll_text(self):
+        if not self.news_items: return
+        
+        self.px_pos -= self.speed
+        self.label.move(self.px_pos, (self.height() - self.label.height()) // 2)
+        
+        if self.px_pos < -self.label.width():
+            self.px_pos = self.width()
+
+    def resizeEvent(self, event):
+        self.label.move(self.px_pos, (self.height() - self.label.height()) // 2)
+        super().resizeEvent(event)
+
+    def enterEvent(self, event):
+        self.timer.stop()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        if self.news_items:
+            self.timer.start(self.timer_interval)
+        super().leaveEvent(event)
+
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v5.5)")
+        self.setWindowTitle("Lottery Predictor (v5.6)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
@@ -6665,6 +7127,7 @@ class LotteryPredictionApp(QMainWindow):
 
         self.update_status("Ứng dụng sẵn sàng.")
         QTimer.singleShot(200, self._log_actual_window_size)
+        self.start_news_fetcher()
 
         main_logger.info("LotteryPredictionApp (PyQt5) initialization complete.")
         self.show()
@@ -6678,6 +7141,26 @@ class LotteryPredictionApp(QMainWindow):
             self._update_server_status_label(self.server_data_sync_status_label, "Data Sync", is_online)
         elif service_name == "Update":
             self._update_server_status_label(self.server_update_status_label, "Update", is_online)
+
+    def start_news_fetcher(self):
+        """Khởi chạy luồng tải tin tức."""
+        self.news_thread = QThread()
+        self.news_worker = NewsFetcherWorker()
+        self.news_worker.moveToThread(self.news_thread)
+        
+        self.news_thread.started.connect(self.news_worker.run)
+        self.news_worker.news_received.connect(self.on_news_received)
+        self.news_worker.news_received.connect(self.news_thread.quit)
+        self.news_worker.news_received.connect(self.news_worker.deleteLater)
+        self.news_thread.finished.connect(self.news_thread.deleteLater)
+        
+        self.news_thread.start()
+
+    def on_news_received(self, news_lines):
+        """Nhận dữ liệu tin tức và cập nhật widget."""
+        if hasattr(self, 'news_ticker_widget'):
+            main_logger.info(f"Đã tải {len(news_lines)} dòng tin tức.")
+            self.news_ticker_widget.set_news(news_lines)
 
     def cleanup_on_quit(self):
         """Được gọi khi QApplication chuẩn bị thoát."""
@@ -6945,7 +7428,7 @@ class LotteryPredictionApp(QMainWindow):
 
 
     def setup_main_ui_structure(self):
-        """Thiết lập cấu trúc giao diện người dùng chính của ứng dụng, bao gồm các tab."""
+        """Thiết lập cấu trúc giao diện người dùng chính của ứng dụng."""
         main_logger.debug("Thiết lập cấu trúc UI chính (PyQt5)...")
 
         self.top_status_toolbar = QtWidgets.QToolBar("TopStatusToolBar")
@@ -6956,10 +7439,50 @@ class LotteryPredictionApp(QMainWindow):
 
         self.status_bar_label = QLabel("Khởi tạo...")
         self.status_bar_label.setObjectName("StatusBarLabel")
-        self.status_bar_label.setMinimumWidth(400)
+        self.status_bar_label.setMinimumWidth(300)
         self.status_bar_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.top_status_toolbar.addWidget(self.status_bar_label)
         
+        spacer_widget = QWidget()
+        spacer_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.top_status_toolbar.addWidget(spacer_widget)
+
+        news_title_label = QLabel(" 📰 Tin tức: ")
+        news_font = self.get_qfont("bold")
+        news_title_label.setFont(news_font)
+        news_title_label.setStyleSheet("color: #d63384; margin-left: 10px; margin-right: 2px;") 
+        self.top_status_toolbar.addWidget(news_title_label)
+
+        
+        btn_prev_news = QPushButton("◀") 
+        btn_prev_news.setObjectName("SmallNavButton")
+        btn_prev_news.setFixedSize(28, 24)
+        btn_prev_news.setCursor(Qt.PointingHandCursor)
+        btn_prev_news.setToolTip("Tin trước đó")
+        
+        
+        self.top_status_toolbar.addWidget(btn_prev_news)
+
+        self.top_status_toolbar.addWidget(QLabel("", self).setFixedWidth(2) or QWidget())
+
+        btn_next_news = QPushButton("▶") 
+        btn_next_news.setObjectName("SmallNavButton")
+        btn_next_news.setFixedSize(28, 24)
+        btn_next_news.setCursor(Qt.PointingHandCursor)
+        btn_next_news.setToolTip("Tin tiếp theo")
+        
+        self.top_status_toolbar.addWidget(btn_next_news)
+        
+        self.top_status_toolbar.addWidget(QLabel("  "))
+
+        self.news_ticker_widget = ScrollingNewsWidget()
+        self.news_ticker_widget.setMinimumWidth(400) 
+        self.news_ticker_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.top_status_toolbar.addWidget(self.news_ticker_widget)
+        
+        btn_prev_news.clicked.connect(self.news_ticker_widget.prev_news)
+        btn_next_news.clicked.connect(self.news_ticker_widget.next_news)
+
         self.addToolBar(Qt.TopToolBarArea, self.top_status_toolbar)
 
         self.central_widget = QWidget()
@@ -6976,22 +7499,18 @@ class LotteryPredictionApp(QMainWindow):
         self.optimizer_tab_frame = QWidget()
         self.tools_tab_frame = QWidget()
         self.settings_tab_frame = QWidget()
+        self.help_tab_frame = QWidget()
         self.update_tab_frame = QWidget()
         
-        self.help_tab_frame = QWidget()
-
         self.tab_widget.addTab(self.main_tab_frame, " Main 🏠")
         self.tab_widget.addTab(self.optimizer_tab_frame, " Thuật toán🔧  ")
         self.tab_widget.addTab(self.trial_play_tab, " Chơi Thử 🎰")
         self.tab_widget.addTab(self.kqxs_tab_frame, " Xem KQXS 🔍 ")
         self.tab_widget.addTab(self.tools_tab_frame, " Công Cụ 🧰")
         self.tab_widget.addTab(self.settings_tab_frame, " Cài Đặt ⚙️")
-        
         self.tab_widget.addTab(self.help_tab_frame, " Hướng Dẫn 📒") 
-        
         self.tab_widget.addTab(self.update_tab_frame, " Update 🔄 ")
 
-        
         main_layout.addWidget(self.tab_widget)
 
         self.setup_main_tab()
@@ -7285,6 +7804,40 @@ class LotteryPredictionApp(QMainWindow):
                 self.update_kqxs_tab(selected_date_obj)
             else:
                 QMessageBox.warning(self, "Ngày không hợp lệ", "Vui lòng chọn một ngày được đánh dấu (có dữ liệu).")
+
+    def _on_ana_link_clicked(self, url):
+        """Xử lý khi bấm vào link trong bảng kết quả phân tích (Đã bỏ dấu ?)."""
+        url_str = url.toString()
+        if url_str == "cmd:view_max_freq_dates":
+            dates_list = getattr(self, '_current_max_freq_dates', [])
+            if not dates_list:
+                return
+            
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Danh Sách Ngày Xuất Hiện Nhiều Nhất")
+            dialog.setMinimumSize(400, 500)
+            
+            flags = dialog.windowFlags()
+            flags = flags & ~Qt.WindowContextHelpButtonHint
+            dialog.setWindowFlags(flags)
+
+            layout = QVBoxLayout(dialog)
+            
+            info = QLabel(f"Tổng cộng: {len(dates_list)} ngày đạt kỷ lục.")
+            info.setStyleSheet("font-weight: bold; color: #0056b3; font-size: 11pt; margin-bottom: 5px;")
+            layout.addWidget(info)
+            
+            text_edit = QTextEdit()
+            text_edit.setReadOnly(True)
+            text_edit.setPlainText("\n".join(dates_list))
+            text_edit.setFont(self.get_qfont("code"))
+            layout.addWidget(text_edit)
+            
+            btn_close = QPushButton("Đóng")
+            btn_close.clicked.connect(dialog.accept)
+            layout.addWidget(btn_close)
+            
+            dialog.exec_()
 
 
     def setup_gemini_creator_tab(self):
@@ -8147,11 +8700,32 @@ class LotteryPredictionApp(QMainWindow):
         return "N/A"
 
     def setup_kqxs_tab(self):
-        """Thiết lập giao diện cho tab Xem KQXS với layout chia 2 cột: Kết quả và Thống kê."""
-        main_logger.debug("Setting up KQXS View tab with split layout...")
+        """Thiết lập giao diện cho tab Xem KQXS (Chia 2 tab con: Xem Kết Quả & Phân Tích)."""
+        main_logger.debug("Setting up KQXS Tab with sub-tabs...")
+        
+        if self.kqxs_tab_frame.layout():
+            QWidget().setLayout(self.kqxs_tab_frame.layout())
+            
         main_layout = QVBoxLayout(self.kqxs_tab_frame)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+        main_layout.setSpacing(5)
+
+        self.kqxs_sub_tab_widget = QTabWidget()
+        main_layout.addWidget(self.kqxs_sub_tab_widget)
+
+        self.view_results_tab = QWidget()
+        self._init_kqxs_view_tab_ui(self.view_results_tab)
+        self.kqxs_sub_tab_widget.addTab(self.view_results_tab, " 📅 Xem Kết Quả ")
+
+        self.analysis_tab = QWidget()
+        self._init_kqxs_analysis_tab_ui(self.analysis_tab)
+        self.kqxs_sub_tab_widget.addTab(self.analysis_tab, " 📊 Phân Tích Chuyên Sâu  ")
+
+    def _init_kqxs_view_tab_ui(self, parent_widget):
+        """Khởi tạo giao diện xem kết quả ngày (Giao diện cũ)."""
+        layout = QVBoxLayout(parent_widget)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
 
         top_bar_widget = QWidget()
         top_bar_layout = QHBoxLayout(top_bar_widget)
@@ -8183,7 +8757,7 @@ class LotteryPredictionApp(QMainWindow):
         top_bar_layout.addWidget(self.kqxs_next_button)
         top_bar_layout.addStretch(1)
         
-        main_layout.addWidget(top_bar_widget)
+        layout.addWidget(top_bar_widget)
 
         content_splitter = QSplitter(Qt.Horizontal)
         content_splitter.setHandleWidth(5)
@@ -8277,7 +8851,6 @@ class LotteryPredictionApp(QMainWindow):
         
         prize_names_layout.addStretch(1)
         numbers_layout.addStretch(1)
-        
         left_layout.addWidget(results_container)
         
         right_container = QGroupBox("Thống Kê Trong Ngày")
@@ -8325,7 +8898,390 @@ class LotteryPredictionApp(QMainWindow):
         content_splitter.setStretchFactor(0, 6)
         content_splitter.setStretchFactor(1, 4)
 
-        main_layout.addWidget(content_splitter, 1)
+        layout.addWidget(content_splitter, 1)
+
+
+    def _init_kqxs_analysis_tab_ui(self, parent_widget):
+        """Khởi tạo giao diện tab Phân tích chuyên sâu (Đã Fix lỗi chuyển trang)."""
+        layout = QVBoxLayout(parent_widget)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
+        
+        control_group = QGroupBox("Bộ lọc Tra Cứu")
+        control_group.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum) 
+        
+        control_layout = QGridLayout(control_group)
+        control_layout.setContentsMargins(10, 10, 10, 10)
+        control_layout.setVerticalSpacing(5)
+        
+        control_layout.addWidget(QLabel("Nhập số (VD: 68, 86):"), 0, 0)
+        self.ana_numbers_edit = QLineEdit()
+        self.ana_numbers_edit.setPlaceholderText("Nhập 1 số hoặc bộ số...")
+        self.ana_numbers_edit.setToolTip("Nhập số cần tra cứu, cách nhau bởi dấu phẩy.")
+        control_layout.addWidget(self.ana_numbers_edit, 0, 1)
+        
+        self.ana_btn_analyze = QPushButton("🔍 TRA CỨU")
+        self.ana_btn_analyze.setObjectName("AccentButton")
+        self.ana_btn_analyze.setCursor(Qt.PointingHandCursor)
+        self.ana_btn_analyze.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Expanding)
+        control_layout.addWidget(self.ana_btn_analyze, 0, 2, 2, 1)
+        
+        control_layout.addWidget(QLabel("Thời gian:"), 1, 0)
+        date_layout = QHBoxLayout()
+        date_layout.setSpacing(5)
+        
+        self.ana_start_date = QLineEdit()
+        self.ana_end_date = QLineEdit()
+        self.ana_btn_start = QPushButton("📅"); self.ana_btn_start.setFixedWidth(30)
+        self.ana_btn_end = QPushButton("📅"); self.ana_btn_end.setFixedWidth(30)
+        
+        self.ana_btn_start.clicked.connect(lambda: self.show_calendar_dialog_qt(self.ana_start_date))
+        self.ana_btn_end.clicked.connect(lambda: self.show_calendar_dialog_qt(self.ana_end_date))
+        
+        self.ana_chk_all_time = QCheckBox("Toàn bộ thời gian")
+        self.ana_chk_all_time.setChecked(True)
+        self.ana_chk_all_time.toggled.connect(self._toggle_ana_date_inputs)
+        
+        date_layout.addWidget(self.ana_start_date)
+        date_layout.addWidget(self.ana_btn_start)
+        date_layout.addWidget(QLabel("-"))
+        date_layout.addWidget(self.ana_end_date)
+        date_layout.addWidget(self.ana_btn_end)
+        date_layout.addWidget(self.ana_chk_all_time)
+        
+        control_layout.addLayout(date_layout, 1, 1)
+        control_layout.setColumnStretch(1, 1)
+        
+        layout.addWidget(control_group)
+        self._toggle_ana_date_inputs(True)
+        self.ana_btn_analyze.clicked.connect(self._perform_kqxs_analysis)
+        
+        splitter = QSplitter(Qt.Horizontal)
+        
+        left_box = QGroupBox("Kết Quả Tổng Hợp")
+        left_layout = QVBoxLayout(left_box)
+        left_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.ana_summary_browser = QTextBrowser()
+        self.ana_summary_browser.setOpenExternalLinks(False)
+        self.ana_summary_browser.setOpenLinks(False)
+        self.ana_summary_browser.anchorClicked.connect(self._on_ana_link_clicked)
+        
+        left_layout.addWidget(self.ana_summary_browser)
+        splitter.addWidget(left_box)
+        
+        right_box = QGroupBox("Chi Tiết Theo Thời Gian")
+        right_layout = QVBoxLayout(right_box)
+        right_layout.setContentsMargins(5, 5, 5, 5)
+        self.ana_tree_widget = QtWidgets.QTreeWidget()
+        self.ana_tree_widget.setHeaderLabels(["Thời gian", "Số lượng", "Tỉ lệ %", "Ghi chú"])
+        self.ana_tree_widget.setColumnWidth(0, 140)
+        self.ana_tree_widget.setColumnWidth(1, 70)
+        self.ana_tree_widget.setColumnWidth(2, 70)
+        right_layout.addWidget(self.ana_tree_widget)
+        splitter.addWidget(right_box)
+        
+        splitter.setSizes([400, 600])
+        layout.addWidget(splitter, 1)
+
+    def _toggle_ana_date_inputs(self, checked):
+        """Helper để ẩn/hiện ô nhập ngày khi chọn 'Toàn bộ'."""
+        enabled = not checked
+        self.ana_start_date.setEnabled(enabled)
+        self.ana_end_date.setEnabled(enabled)
+        self.ana_btn_start.setEnabled(enabled)
+        self.ana_btn_end.setEnabled(enabled)
+
+    def _perform_kqxs_analysis(self):
+        """Thực hiện logic phân tích số liệu KQXS (Logic Nháy Bộ Số & Link xem chi tiết)."""
+        
+        nums_str = self.ana_numbers_edit.text().strip()
+        if not nums_str:
+            QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập ít nhất 1 con số.")
+            return
+            
+        try:
+            target_numbers = set()
+            for x in nums_str.replace(' ', ',').split(','):
+                if x.strip():
+                    val = int(x.strip())
+                    if 0 <= val <= 99: 
+                        target_numbers.add(f"{val:02d}")
+            if not target_numbers: raise ValueError
+        except ValueError:
+            QMessageBox.warning(self, "Lỗi nhập liệu", "Vui lòng nhập các số từ 00 đến 99.")
+            return
+
+        target_numbers = sorted(list(target_numbers))
+        target_display = ", ".join(target_numbers)
+        is_single_search = (len(target_numbers) == 1)
+        
+        if not self.results:
+            QMessageBox.warning(self, "Lỗi", "Chưa có dữ liệu KQXS.")
+            return
+
+        sorted_data = sorted(self.results, key=lambda x: x['date'])
+        start_date = sorted_data[0]['date']
+        end_date = sorted_data[-1]['date']
+        
+        if not self.ana_chk_all_time.isChecked():
+            try:
+                s_txt = self.ana_start_date.text()
+                e_txt = self.ana_end_date.text()
+                if not s_txt or not e_txt: raise ValueError
+                s = datetime.datetime.strptime(s_txt, '%d/%m/%Y').date()
+                e = datetime.datetime.strptime(e_txt, '%d/%m/%Y').date()
+                if s > e: 
+                    QMessageBox.warning(self, "Lỗi ngày", "Ngày bắt đầu phải nhỏ hơn ngày kết thúc.")
+                    return
+                start_date, end_date = s, e
+            except ValueError:
+                QMessageBox.warning(self, "Lỗi ngày", "Ngày không hợp lệ.")
+                return
+
+        filtered_data = [r for r in sorted_data if start_date <= r['date'] <= end_date]
+        total_draws = len(filtered_data)
+        
+        if total_draws == 0:
+            self.ana_summary_browser.setHtml("<h3 style='color:red'>Không tìm thấy kỳ quay nào.</h3>")
+            self.ana_tree_widget.clear()
+            return
+
+        hits_count = 0
+        special_hits_count = 0
+        yearly_stats = {} 
+        
+        current_streak = 0
+        current_streak_start_date = None
+        max_streak = 0
+        max_streak_range = "N/A"
+        
+        current_gap = 0
+        gap_start_date = filtered_data[0]['date']
+        max_gap = 0
+        max_gap_range = "N/A"
+        
+        max_freq_val = 0
+        max_freq_dates = [] 
+        
+        co_occurrence = Counter()
+
+        def analyze_day_result(result_dict):
+            day_loto_strs = []
+            keys_to_ignore = {'date', '_id', 'source', 'day_of_week', 'sign', 'created_at', 'updated_at', 'province_name', 'province_id'}
+            for k, v in result_dict.items():
+                if k in keys_to_ignore: continue
+                vals = v if isinstance(v, (list, tuple)) else [v]
+                for val in vals:
+                    if val is not None:
+                        s = str(val).strip()
+                        if len(s) >= 2 and s[-2:].isdigit(): day_loto_strs.append(s[-2:])
+                        elif len(s) == 1 and s.isdigit(): day_loto_strs.append(f"{int(s):02d}")
+            
+            counts_per_target = []
+            for target in target_numbers:
+                counts_per_target.append(day_loto_strs.count(target))
+            
+            freq_in_day = min(counts_per_target) if counts_per_target else 0
+            
+            is_hit = freq_in_day > 0
+            
+            special_val = result_dict.get('special', result_dict.get('dac_biet', ''))
+            is_special = False
+            if special_val:
+                s_str = str(special_val).strip()
+                if len(s_str) >= 2 and s_str[-2:] in target_numbers:
+                    is_special = True
+            
+            return is_hit, freq_in_day, day_loto_strs, is_special
+
+        for entry in filtered_data:
+            d = entry['date']
+            y, m = d.year, d.month
+            
+            if y not in yearly_stats: 
+                yearly_stats[y] = {'draws': 0, 'hits': 0, 'months': {}}
+            if m not in yearly_stats[y]['months']:
+                yearly_stats[y]['months'][m] = {'draws': 0, 'hits': 0, 'dates': []}
+                
+            yearly_stats[y]['draws'] += 1
+            yearly_stats[y]['months'][m]['draws'] += 1
+            
+            is_hit, freq, day_lotos_list, is_spec = analyze_day_result(entry['result'])
+            
+            if is_hit:
+                hits_count += 1
+                yearly_stats[y]['hits'] += 1
+                yearly_stats[y]['months'][m]['hits'] += 1
+                
+                note = f"{freq} nháy" if freq > 1 else ""
+                if is_spec: note = f"{note} (GĐB)" if note else "(GĐB)"
+                yearly_stats[y]['months'][m]['dates'].append(f"{d.day} {note}")
+                
+                if is_spec: special_hits_count += 1
+                
+                if current_streak == 0: current_streak_start_date = d
+                current_streak += 1
+                
+                if current_streak > max_streak:
+                    max_streak = current_streak
+                    max_streak_range = f"{current_streak_start_date.strftime('%d/%m/%Y')} - {d.strftime('%d/%m/%Y')}"
+                elif current_streak == max_streak and max_streak > 0:
+                    max_streak_range = f"{current_streak_start_date.strftime('%d/%m/%Y')} - {d.strftime('%d/%m/%Y')}"
+
+                if current_gap > max_gap:
+                    max_gap = current_gap
+                    gap_end_date_real = d - datetime.timedelta(days=1)
+                    max_gap_range = f"{gap_start_date.strftime('%d/%m/%Y')} - {gap_end_date_real.strftime('%d/%m/%Y')}"
+                current_gap = 0
+                gap_start_date = d + datetime.timedelta(days=1)
+                
+                if freq > max_freq_val:
+                    max_freq_val = freq
+                    max_freq_dates = [d.strftime('%d/%m/%Y')]
+                elif freq == max_freq_val and freq > 0:
+                    max_freq_dates.append(d.strftime('%d/%m/%Y'))
+                
+                if is_single_search:
+                    target = target_numbers[0]
+                    others = [n for n in day_lotos_list if n != target]
+                    co_occurrence.update(others)
+            else:
+                current_streak = 0
+                current_streak_start_date = None
+                if current_gap == 0: gap_start_date = d
+                current_gap += 1
+
+        current_dry_spell = current_gap
+        if current_dry_spell > max_gap:
+            max_gap = current_dry_spell
+            end_gap_date = end_date
+            max_gap_range = f"{gap_start_date.strftime('%d/%m/%Y')} - {end_gap_date.strftime('%d/%m/%Y')}"
+
+        
+        max_freq_display_html = ""
+        if max_freq_val > 0:
+            limit_show = 5
+            if len(max_freq_dates) <= limit_show:
+                max_freq_display_html = ", ".join(max_freq_dates)
+            else:
+                self._current_max_freq_dates = max_freq_dates 
+                shown = ", ".join(max_freq_dates[:3])
+                max_freq_display_html = f"{shown}, ... (<a href='cmd:view_max_freq_dates' style='color:#007BFF;'>Xem toàn bộ {len(max_freq_dates)} ngày</a>)"
+        else:
+            max_freq_display_html = "Chưa xuất hiện lần nào"
+
+        html = f"""
+        <style>
+            .highlight {{ color: #007bff; font-weight: bold; }}
+            .success {{ color: #28a745; font-weight: bold; }}
+            .danger {{ color: #dc3545; font-weight: bold; }}
+            .warning {{ color: #fd7e14; font-weight: bold; }}
+            td {{ padding: 4px 0; vertical-align: top; }}
+        </style>
+        
+        <h3 style='margin:0; color:#333;'>KẾT QUẢ: <span style='color:#d63384; font-size:16pt'>{target_display}</span></h3>
+        <div style='color:#666; font-size:9pt; margin-bottom:10px'>
+            Giai đoạn: {start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')} ({total_draws} kỳ)
+        </div>
+        <hr style='border: 0; border-top: 1px solid #ddd;'>
+        
+        <table width='100%'>
+            <tr>
+                <td width='40%'>🔢 <b>Tổng xuất hiện:</b></td>
+                <td class='success'>{hits_count} lần <span style='font-weight:normal; color:#333'>({(hits_count/total_draws*100) if total_draws else 0:.2f}%)</span></td>
+            </tr>
+            <tr>
+                <td>🏆 <b>Về Đặc Biệt:</b></td>
+                <td class='danger'>{special_hits_count} lần</td>
+            </tr>
+            <tr>
+                <td>⏳ <b>Trung bình cứ:</b></td>
+                <td><b>{total_draws/hits_count if hits_count else 0:.1f}</b> kỳ về 1 lần</td>
+            </tr>
+            <tr>
+                <td colspan='2'><hr style='border:0; border-top:1px dashed #ccc'></td>
+            </tr>
+            <tr>
+                <td>🌵 <b>Gan cực đại (Max):</b></td>
+                <td><b>{max_gap}</b> ngày <br><span style='font-size:9pt; color:#666'>({max_gap_range})</span></td>
+            </tr>
+            <tr>
+                <td>💧 <b>Gan hiện tại:</b></td>
+                <td class='warning'>{current_dry_spell} ngày chưa về</td>
+            </tr>
+            <tr>
+                <td colspan='2'><hr style='border:0; border-top:1px dashed #ccc'></td>
+            </tr>
+            <tr>
+                <td>🔥 <b>Thông liên tiếp (Max):</b></td>
+                <td><b>{max_streak}</b> ngày <br><span style='font-size:9pt; color:#666'>({max_streak_range})</span></td>
+            </tr>
+            <tr>
+                <td>⚡ <b>Nhiều nhất 1 ngày:</b></td>
+                <td><b>{max_freq_val}</b> nháy <br><span style='font-size:9pt; color:#666'>({max_freq_display_html})</span></td>
+            </tr>
+        </table>
+        """
+        
+        if is_single_search and hits_count > 0:
+            html += "<hr style='border:0; border-top:1px solid #ddd; margin-top:10px'>"
+            html += "<div style='margin-bottom:5px'><b>💡 Cặp số hay về cùng (Top 5):</b></div>"
+            most_common = co_occurrence.most_common(5)
+            for num, cnt in most_common:
+                pct = (cnt / hits_count * 100)
+                html += f"<div style='margin-left:10px'>- Số <b>{num}</b>: {cnt} lần ({pct:.1f}%)</div>"
+                
+        self.ana_summary_browser.setHtml(html)
+        
+        self.ana_tree_widget.clear()
+        
+        current_year = datetime.date.today().year
+        
+        for y in sorted(yearly_stats.keys(), reverse=True):
+            y_data = yearly_stats[y]
+            y_hits = y_data['hits']
+            y_draws = y_data['draws']
+            y_pct = (y_hits / y_draws * 100) if y_draws else 0
+            
+            y_note = ""
+            if y == current_year: y_note = "(Năm hiện tại)"
+            
+            item_year = QtWidgets.QTreeWidgetItem(self.ana_tree_widget)
+            item_year.setText(0, f"Năm {y}")
+            item_year.setText(1, str(y_hits))
+            item_year.setText(2, f"{y_pct:.1f}%")
+            item_year.setText(3, y_note)
+            
+            font = item_year.font(0)
+            font.setBold(True)
+            item_year.setFont(0, font)
+            item_year.setBackground(0, QBrush(QColor("#f0f0f0")))
+            for i in range(1, 4): item_year.setBackground(i, QBrush(QColor("#f0f0f0")))
+            
+            for m in sorted(y_data['months'].keys(), reverse=True):
+                m_data = y_data['months'][m]
+                m_hits = m_data['hits']
+                m_draws = m_data['draws']
+                m_pct = (m_hits / m_draws * 100) if m_draws else 0
+                
+                dates_str = ", ".join(m_data['dates'])
+                if not dates_str: dates_str = "-"
+                else: dates_str = f"Ngày về: {dates_str}"
+                
+                item_month = QtWidgets.QTreeWidgetItem(item_year)
+                item_month.setText(0, f"Tháng {m}")
+                item_month.setText(1, str(m_hits))
+                item_month.setText(2, f"{m_pct:.1f}%")
+                item_month.setText(3, dates_str)
+                
+                if m_hits > 0:
+                    item_month.setForeground(1, QBrush(QColor("#28a745")))
+                    item_month.setFont(1, font)
+                else:
+                    item_month.setForeground(0, QBrush(QColor("#888")))
+
+        self.ana_tree_widget.expandAll()
 
     def _create_styled_stat_box(self, title, content_label):
         """Helper tạo khung thống kê đẹp mắt."""
@@ -8553,83 +9509,319 @@ class LotteryPredictionApp(QMainWindow):
         main_logger.debug("Hoàn tất thiết lập giao diện tab Cài đặt.")
 
     def setup_help_tab(self):
-        """Thiết lập giao diện tab Hướng dẫn sử dụng."""
-        main_logger.debug("Setting up Help tab UI...")
-        layout = QVBoxLayout(self.help_tab_frame)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-
-        toolbar_layout = QHBoxLayout()
-        reload_btn = QPushButton("🔄 Tải lại Hướng dẫn")
-        reload_btn.setFixedWidth(150)
-        reload_btn.clicked.connect(self.load_guide_content)
-        toolbar_layout.addWidget(reload_btn)
-        toolbar_layout.addStretch()
-        layout.addLayout(toolbar_layout)
-
-        self.help_browser = QTextBrowser()
-        self.help_browser.setOpenExternalLinks(True)
-        font = self.get_qfont("base")
-        font.setPointSize(font.pointSize() + 1)
-        self.help_browser.setFont(font)
+        """Thiết lập giao diện tab Hướng dẫn sử dụng (Đã chỉnh sửa độ rộng ô chọn ngày)."""
+        main_logger.debug("Setting up Help tab UI (Compact)...")
         
-        layout.addWidget(self.help_browser)
+        layout = QVBoxLayout(self.help_tab_frame)
+        layout.setContentsMargins(5, 5, 5, 5)
+        layout.setSpacing(5)
 
-        self.load_guide_content()
+        control_frame = QFrame()
+        control_frame.setFrameShape(QFrame.StyledPanel)
+        control_frame.setStyleSheet("QFrame { background-color: #f9f9f9; border: 1px solid #ddd; border-radius: 4px; }")
+        
+        control_layout = QHBoxLayout(control_frame)
+        control_layout.setContentsMargins(5, 5, 5, 5)
+        control_layout.setSpacing(10)
+        
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(5)
+        self.guide_mode_group = QButtonGroup(self)
+        self.guide_radio_online = QRadioButton("Xem Online")
+        self.guide_radio_offline = QRadioButton("Xem Offline")
+        self.guide_mode_group.addButton(self.guide_radio_online)
+        self.guide_mode_group.addButton(self.guide_radio_offline)
+        
+        self.guide_radio_online.setChecked(True)
+        self.guide_radio_online.toggled.connect(self._on_guide_mode_changed)
+        
+        mode_layout.addWidget(QLabel("<b>Chế độ:</b>"))
+        mode_layout.addWidget(self.guide_radio_online)
+        mode_layout.addWidget(self.guide_radio_offline)
+        
+        control_layout.addLayout(mode_layout)
+        
+        line1 = QFrame()
+        line1.setFrameShape(QFrame.VLine); line1.setFrameShadow(QFrame.Sunken)
+        control_layout.addWidget(line1)
 
-    def load_guide_content(self):
-        """
-        Đọc file HTML và hiển thị lên tab. 
-        Nếu file chưa có trên máy, tự động tải về từ Github.
-        """
-        guide_path = self.base_dir / "guide.html"
-        guide_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/guide.html"
+        sync_layout = QHBoxLayout()
+        sync_layout.setSpacing(5)
+        
+        self.guide_auto_sync_chk = QCheckBox("Tự động đồng bộ")
+        self.guide_auto_sync_chk.setToolTip("Tự động tải hướng dẫn mới nhất về máy tính.")
+        
+        self.guide_sync_period_combo = QComboBox()
+        self.guide_sync_period_combo.addItems(["7 ngày", "10 ngày", "30 ngày", "Tùy chỉnh"])
+        self.guide_sync_period_combo.setFixedWidth(110) 
+        self.guide_sync_period_combo.currentIndexChanged.connect(self._on_guide_period_changed)
+        
+        self.guide_custom_days_spin = QSpinBox()
+        self.guide_custom_days_spin.setRange(1, 365)
+        self.guide_custom_days_spin.setSuffix(" ngày")
+        self.guide_custom_days_spin.setFixedWidth(70)
+        self.guide_custom_days_spin.setVisible(False)
 
-        if not guide_path.exists():
-            self.update_status("Đang tải hướng dẫn sử dụng từ Server...")
-            QApplication.processEvents()
+        sync_layout.addWidget(self.guide_auto_sync_chk)
+        sync_layout.addWidget(self.guide_sync_period_combo)
+        sync_layout.addWidget(self.guide_custom_days_spin)
+        
+        control_layout.addLayout(sync_layout)
+
+        line2 = QFrame()
+        line2.setFrameShape(QFrame.VLine); line2.setFrameShadow(QFrame.Sunken)
+        control_layout.addWidget(line2)
+
+        btn_layout = QHBoxLayout()
+        self.guide_sync_btn = QPushButton("🔄 Đồng bộ ngay")
+        self.guide_sync_btn.setToolTip("Tải dữ liệu mới nhất từ Server về máy.")
+        self.guide_sync_btn.clicked.connect(self._sync_guide_now)
+        
+        self.guide_reload_btn = QPushButton("Tải lại")
+        self.guide_reload_btn.setToolTip("Tải lại giao diện các tab.")
+        self.guide_reload_btn.clicked.connect(self._load_guide_interface)
+
+        btn_layout.addWidget(self.guide_sync_btn)
+        btn_layout.addWidget(self.guide_reload_btn)
+        
+        control_layout.addLayout(btn_layout)
+        control_layout.addStretch(1)
+
+        layout.addWidget(control_frame)
+
+        self.guide_sub_tab_widget = QTabWidget()
+        self.guide_sub_tab_widget.setDocumentMode(True)
+        self.guide_sub_tab_widget.currentChanged.connect(self._on_guide_sub_tab_changed)
+        
+        layout.addWidget(self.guide_sub_tab_widget)
+
+        self.guide_data_list = [] 
+
+        self._load_guide_config()
+        self._load_guide_interface()
+        
+        QTimer.singleShot(5000, self._check_auto_sync_guide)
+
+    def _on_guide_period_changed(self, index):
+        """Hiện/Ẩn spinbox tùy chỉnh ngày."""
+        self.guide_custom_days_spin.setVisible(index == 3)
+
+    def _on_guide_mode_changed(self, checked):
+        if checked:
+            self._load_guide_interface()
+
+    def _load_guide_config(self):
+        """Đọc cấu hình guide từ file settings.ini."""
+        if self.config.has_section('GUIDE'):
+            auto_sync = self.config.getboolean('GUIDE', 'auto_sync', fallback=False)
+            days = self.config.getint('GUIDE', 'sync_days', fallback=7)
+            last_sync = self.config.get('GUIDE', 'last_sync_date', fallback="")
             
-            try:
-                import requests
-                main_logger.info(f"Guide file not found. Downloading from: {guide_url}")
-                
-                response = requests.get(guide_url, timeout=15)
-                response.raise_for_status()
-                
-                guide_path.write_text(response.text, encoding='utf-8')
-                
-                main_logger.info("Downloaded and saved guide.html successfully.")
-                self.update_status("Đã tải hướng dẫn thành công.")
-                
-            except ImportError:
-                self.help_browser.setHtml("<h3 style='color:red'>Thiếu thư viện 'requests' để tải hướng dẫn.</h3>")
-                return
-            except Exception as e:
-                main_logger.error(f"Failed to download guide: {e}")
-                error_html = f"""
-                <div style='padding: 20px;'>
-                    <h2 style='color: #dc3545;'>Không thể tải hướng dẫn</h2>
-                    <p>File <b>guide.html</b> không có sẵn trên máy và quá trình tải về gặp lỗi.</p>
-                    <p><b>Chi tiết lỗi:</b> {e}</p>
-                    <p>Vui lòng kiểm tra kết nối mạng hoặc thử lại sau.</p>
-                </div>
-                """
-                self.help_browser.setHtml(error_html)
-                self.update_status("Lỗi tải hướng dẫn.")
-                return
+            self.guide_auto_sync_chk.setChecked(auto_sync)
+            
+            if days == 7: self.guide_sync_period_combo.setCurrentIndex(0)
+            elif days == 10: self.guide_sync_period_combo.setCurrentIndex(1)
+            elif days == 30: self.guide_sync_period_combo.setCurrentIndex(2)
+            else: 
+                self.guide_sync_period_combo.setCurrentIndex(3)
+                self.guide_custom_days_spin.setValue(days)
+        else:
+            self.guide_auto_sync_chk.setChecked(False)
+            self.guide_sync_period_combo.setCurrentIndex(0)
+
+    def _save_guide_config(self):
+        """Lưu cấu hình guide vào settings.ini."""
+        if not self.config.has_section('GUIDE'):
+            self.config.add_section('GUIDE')
+        
+        self.config.set('GUIDE', 'auto_sync', str(self.guide_auto_sync_chk.isChecked()))
+        
+        idx = self.guide_sync_period_combo.currentIndex()
+        days = 7
+        if idx == 1: days = 10
+        elif idx == 2: days = 30
+        elif idx == 3: days = self.guide_custom_days_spin.value()
+        
+        self.config.set('GUIDE', 'sync_days', str(days))
+        
+        self.save_config()
+
+    def _sync_guide_now(self):
+        """Bắt đầu quá trình đồng bộ."""
+        if hasattr(self, 'guide_sync_worker_thread') and self.guide_sync_worker_thread.isRunning():
+            QMessageBox.warning(self, "Đang chạy", "Quá trình đồng bộ đang diễn ra.")
+            return
+
+        self.guide_sync_btn.setEnabled(False)
+        self.guide_reload_btn.setEnabled(False)
+        self.update_status("Đang đồng bộ hướng dẫn...")
+
+        index_url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/guide/index.txt"
+        
+        self.guide_sync_thread = QThread()
+        self.guide_sync_worker = GuideSyncWorker(self.base_dir, index_url)
+        self.guide_sync_worker.moveToThread(self.guide_sync_thread)
+        
+        self.guide_sync_worker.progress_signal.connect(lambda msg: self.update_status(msg))
+        self.guide_sync_worker.finished_signal.connect(self._on_guide_sync_finished)
+        
+        self.guide_sync_thread.started.connect(self.guide_sync_worker.run_sync)
+        self.guide_sync_thread.finished.connect(self.guide_sync_thread.deleteLater)
+        
+        self.guide_sync_thread.start()
+
+    def _on_guide_sync_finished(self, success, message):
+        self.guide_sync_btn.setEnabled(True)
+        self.guide_reload_btn.setEnabled(True)
+        self.guide_sync_thread.quit()
+        
+        if success:
+            if not self.config.has_section('GUIDE'): self.config.add_section('GUIDE')
+            self.config.set('GUIDE', 'last_sync_date', datetime.date.today().strftime("%Y-%m-%d"))
+            self.save_config()
+            
+            QMessageBox.information(self, "Thành công", message)
+            
+            if self.guide_radio_offline.isChecked():
+                self._load_guide_interface()
+            else:
+                reply = QMessageBox.question(self, "Chuyển chế độ", "Dữ liệu đã tải về. Bạn có muốn chuyển sang chế độ Xem Offline không?", QMessageBox.Yes | QMessageBox.No)
+                if reply == QMessageBox.Yes:
+                    self.guide_radio_offline.setChecked(True)
+        else:
+            QMessageBox.critical(self, "Lỗi đồng bộ", message)
+            self.update_status(message)
+
+    def _check_auto_sync_guide(self):
+        """Kiểm tra xem có cần tự động đồng bộ không."""
+        if not self.guide_auto_sync_chk.isChecked():
+            return
+
+        last_sync_str = self.config.get('GUIDE', 'last_sync_date', fallback="")
+        if not last_sync_str:
+            main_logger.info("Chưa đồng bộ lần nào. Auto-sync kích hoạt.")
+            self._sync_guide_now()
+            return
 
         try:
-            with open(guide_path, 'r', encoding='utf-8') as f:
-                html_content = f.read()
+            last_date = datetime.datetime.strptime(last_sync_str, "%Y-%m-%d").date()
+            today = datetime.date.today()
+            
+            idx = self.guide_sync_period_combo.currentIndex()
+            threshold_days = 7
+            if idx == 1: threshold_days = 10
+            elif idx == 2: threshold_days = 30
+            elif idx == 3: threshold_days = self.guide_custom_days_spin.value()
+            
+            delta = (today - last_date).days
+            if delta >= threshold_days:
+                main_logger.info(f"Auto-sync kích hoạt (Lần cuối: {delta} ngày trước).")
+                self._sync_guide_now()
                 
-            self.help_browser.setSearchPaths([str(self.base_dir)])
+        except ValueError:
+            pass
+
+    def _load_guide_interface(self):
+        """Tải danh sách các tab con dựa trên index (Online hoặc Offline)."""
+        self.guide_sub_tab_widget.clear()
+        self.guide_data_list = []
+        
+        is_online = self.guide_radio_online.isChecked()
+        index_content = ""
+
+        if is_online:
+            self.update_status("Đang tải mục lục hướng dẫn Online...")
+            url = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/guide/index.txt"
+            content = self._fetch_online_content(url, service_type="generic")
+            if content:
+                index_content = content
+            else:
+                self.guide_sub_tab_widget.addTab(QLabel("Không thể tải mục lục Online."), " Lỗi ")
+                return
+        else:
+            guide_dir = self.base_dir / "guide"
+            index_path = guide_dir / "index.txt"
+            if not index_path.exists():
+                lbl = QLabel("Chưa có dữ liệu Offline.\nVui lòng nhấn nút 'Đồng bộ ngay' để tải về.")
+                lbl.setAlignment(Qt.AlignCenter)
+                self.guide_sub_tab_widget.addTab(lbl, " Thông báo ")
+                return
             
-            self.help_browser.setHtml(html_content)
-            main_logger.info("Loaded guide content to UI.")
+            try:
+                index_content = index_path.read_text(encoding='utf-8')
+            except Exception as e:
+                self.guide_sub_tab_widget.addTab(QLabel(f"Lỗi đọc file index: {e}"), " Lỗi ")
+                return
+
+        pattern = re.compile(r"\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]")
+        matches = pattern.findall(index_content)
+        
+        if not matches:
+            self.guide_sub_tab_widget.addTab(QLabel("Mục lục trống hoặc sai định dạng."), " Trống ")
+            return
+
+        for g_id, link, info in matches:
+            self.guide_data_list.append({
+                'id': g_id,
+                'link': link,
+                'info': info
+            })
             
-        except Exception as e:
-            self.help_browser.setHtml(f"<h3 style='color:red'>Lỗi đọc file hướng dẫn từ đĩa: {e}</h3>")
-            main_logger.error(f"Error reading guide file: {e}")
+            browser = QTextBrowser()
+            browser.setOpenExternalLinks(True)
+            browser.setHtml(f"<h3 style='color:gray'>Đang tải nội dung cho: {info}...</h3>")
+            
+            padded_title = f" {info} "
+            
+            self.guide_sub_tab_widget.addTab(browser, padded_title)
+
+        self.update_status(f"Đã tải {len(matches)} mục hướng dẫn.")
+        
+        if self.guide_sub_tab_widget.count() > 0:
+            self._on_guide_sub_tab_changed(0)
+
+    def _on_guide_sub_tab_changed(self, index):
+        """Khi chuyển tab con, tải nội dung HTML tương ứng."""
+        if index < 0 or index >= len(self.guide_data_list):
+            return
+            
+        current_widget = self.guide_sub_tab_widget.widget(index)
+        if not isinstance(current_widget, QTextBrowser):
+            return
+            
+        
+        data = self.guide_data_list[index]
+        is_online = self.guide_radio_online.isChecked()
+        
+        html_content = ""
+        
+        if is_online:
+            url = data['link']
+            content = self._fetch_online_content(url, service_type="generic")
+            if content:
+                html_content = content
+            else:
+                html_content = "<h3 style='color:red'>Lỗi tải nội dung từ Server.</h3>"
+        else:
+            safe_id = "".join(c for c in data['id'] if c.isalnum() or c in ('-','_'))
+            file_path = self.base_dir / "guide" / f"{safe_id}.txt"
+            
+            if file_path.exists():
+                try:
+                    html_content = file_path.read_text(encoding='utf-8')
+                except Exception as e:
+                    html_content = f"<h3 style='color:red'>Lỗi đọc file: {e}</h3>"
+            else:
+                html_content = f"<h3 style='color:orange'>File offline không tồn tại ({file_path.name}).<br>Vui lòng Đồng bộ lại.</h3>"
+
+        font = self.get_qfont("base")
+        # font.setPointSize(font.pointSize() + 1)
+        current_widget.setFont(font)
+        
+        if not is_online:
+            current_widget.setSearchPaths([str(self.base_dir / "guide")])
+            
+        current_widget.setHtml(html_content)
 
     
     def setup_update_tab(self):
@@ -13068,6 +14260,58 @@ class LotteryPredictionApp(QMainWindow):
         main_logger.info("Accepting close event. Application will now quit.")
         event.accept()
 
+class GuideSyncWorker(QObject):
+    finished_signal = pyqtSignal(bool, str)
+    progress_signal = pyqtSignal(str)
+
+    def __init__(self, base_dir, index_url):
+        super().__init__()
+        self.base_dir = base_dir
+        self.guide_dir = self.base_dir / "guide"
+        self.index_url = index_url
+        self.logger = logging.getLogger("GuideSync")
+
+    @pyqtSlot()
+    def run_sync(self):
+        import requests
+        try:
+            self.progress_signal.emit("Đang khởi tạo thư mục...")
+            if self.guide_dir.exists():
+                shutil.rmtree(self.guide_dir)
+            self.guide_dir.mkdir(parents=True, exist_ok=True)
+
+            self.progress_signal.emit("Đang tải danh mục hướng dẫn...")
+            response = requests.get(self.index_url, timeout=15)
+            response.raise_for_status()
+            index_content = response.text
+            
+            index_path = self.guide_dir / "index.txt"
+            index_path.write_text(index_content, encoding='utf-8')
+
+            pattern = re.compile(r"\[([^\]]+)\]\[([^\]]+)\]\[([^\]]+)\]")
+            matches = pattern.findall(index_content)
+
+            total = len(matches)
+            for i, (g_id, link, info) in enumerate(matches):
+                self.progress_signal.emit(f"Đang tải mục {i+1}/{total}: {info}...")
+                
+                try:
+                    sub_res = requests.get(link, timeout=15)
+                    sub_res.raise_for_status()
+                    content = sub_res.text
+                    
+                    safe_id = "".join(c for c in g_id if c.isalnum() or c in ('-','_'))
+                    file_path = self.guide_dir / f"{safe_id}.txt"
+                    file_path.write_text(content, encoding='utf-8')
+                    
+                except Exception as e:
+                    self.logger.error(f"Lỗi tải mục {info}: {e}")
+
+            self.finished_signal.emit(True, "Đồng bộ hoàn tất!")
+
+        except Exception as e:
+            self.logger.error(f"Lỗi đồng bộ hướng dẫn: {e}")
+            self.finished_signal.emit(False, f"Lỗi: {e}")
 
 class UpdateCheckWorker(QObject):
     finished_signal = pyqtSignal()
