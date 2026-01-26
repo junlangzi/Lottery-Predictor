@@ -1,6 +1,17 @@
 # Update list
 
 
+### 26/01/2026
+
+**Update ver 5.6**
+
+Tối ưu lại phần tạo thuật toán bằng AI Gemini 
+Thêm phần phân tích chuyên sâu số và cặp số ( Sẽ còn update tiếp trong bảng cập nhật tới)
+Thêm mục tin tức (update) <br> Tuỳ chỉnh lại phần hướng dẫn ( sẽ update thêm vào thời gian tới)
+
+
+
+
 ### 19/01/2026
 
 **Update ver 5.5**
