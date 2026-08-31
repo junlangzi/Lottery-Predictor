@@ -1,36 +1,30 @@
 name: Sync KQXS Data Daily
-
 on:
   schedule:
     # Chạy vào lúc 11:50 UTC hàng ngày, tương đương 18:50 GMT+7 (Việt Nam)
     - cron: '50 11 * * *'
   # Cho phép chạy thủ công từ tab Actions trên GitHub để test
   workflow_dispatch:
-
 jobs:
   sync_data:
     runs-on: ubuntu-latest # Sử dụng máy ảo Ubuntu mới nhất
-
     steps:
       - name: Check out repository code
         # Bước này checkout code của repository bạn vào máy ảo runner
-        uses: actions/checkout@v4
-
+        uses: actions/checkout@v5          # ← đổi từ @v4 thành @v5 (hoặc @v6)
       - name: Create data directory if it doesn't exist
         # Tạo thư mục 'data' nếu nó chưa tồn tại trong repo
         run: mkdir -p data
-
       - name: Download latest data file
         # Tải file JSON từ URL nguồn và lưu vào thư mục data/ của repo bạn
         # Sử dụng curl để tải file, -o để chỉ định tên file output
         run: curl -o data/xsmb-2-digits.json https://raw.githubusercontent.com/junlangzi/data-kqxs/refs/heads/main/data/xsmb-2-digits.json
-
       - name: Commit and push if data changed
         # Sử dụng action có sẵn để tự động commit và push nếu file đã thay đổi
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7   # ← đổi từ @v5 thành @v7
         with:
           # Thông điệp commit
-          commit_message: "Đồng bộ dữ liệu KQXS mới nhất"
+          commit_message: "Đồng bộ dữ liệu KQXS mới nhất"
           # Chỉ định file cần theo dõi thay đổi và commit
           file_pattern: data/xsmb-2-digits.json
           # Bạn có thể tùy chỉnh tên và email của người commit nếu muốn
