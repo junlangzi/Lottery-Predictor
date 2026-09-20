@@ -1,2 +1,7 @@
-<b> Đã có phiên bản Lottery Predictor V5.6. Hãy cập nhật ngay </b>
-<b> Mọi ý kiến đóng góp, xin gửi về email: luvideez@outlook.com </b>
+<p>
+  Chương trình dự đoán kết quả 
+  <a href="https://thiencoso.github.io/" target="_blank" style="color: #f59e0b; font-weight: bold; text-decoration: none;">
+    thiên cơ số
+  </a> 
+  cho điện thoại Android
+</p><b> Mọi ý kiến đóng góp, xin gửi về email: luvideez@outlook.com </b>
