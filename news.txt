@@ -1,2 +1,2 @@
-<b> Chương trình dự đoán kết quả <a href="https://thiencoso.github.io/">thiên cơ số</a> cho điện thoại Android </b>
+<b> Đã có phiên bản Lottery Predictor V5.5. Hãy cập nhật ngay </b>
 <b> Mọi ý kiến đóng góp, xin gửi về email: luvideez@outlook.com </b>
