@@ -1,2 +1,2 @@
-<p>Chương trình dự đoán kết quả <a href="https://thiencoso.github.io/" target="_blank" style="color: #f59e0b; font-weight: bold; text-decoration: none;">thiên cơ số</a> cho điện thoại Android </p>
+<b> Chương trình dự đoán kết quả <a href="https://thiencoso.github.io/">thiên cơ số</a> cho điện thoại Android </b>
 <b> Mọi ý kiến đóng góp, xin gửi về email: luvideez@outlook.com </b>
