@@ -1,6 +1,16 @@
 # Update list
 
 
+
+### 04/10/2026
+
+**Update ver 6.0.0**
+
+Tái cấu trúc toàn bộ code
+Thay đổi nâng cấp giao diện
+Hỗ trợ sử dụng thuật toán tối ưu từ chương trình Thiên cơ số Studio PC pro
+Tối ưu lại quy trình update, sync data
+
 ### 26/01/2026
 
 **Update ver 5.6**
