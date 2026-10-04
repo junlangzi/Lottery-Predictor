@@ -4,7 +4,7 @@
 
 ### 04/10/2026
 
-**Update ver 6.0.0**
+**Update ver 6.0.1**
 
 Tái cấu trúc toàn bộ code
 Thay đổi nâng cấp giao diện
