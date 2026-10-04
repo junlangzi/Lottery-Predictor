@@ -585,9 +585,9 @@ class AlgorithmEvaluationTab(QWidget):
 class ResponsiveSettingsContainer(QWidget):
     """
     Container for the 4 optimization settings groupboxes that dynamically reflows:
-    - >= 1150px: 1 row x 4 columns (Stretch: 1, 1, 2, 1)
-    - 650px - 1149px: 2 rows x 2 columns (Stretch: 1, 1)
-    - < 650px: 4 rows x 1 column (Stretch: 1)
+    - >= 1320px: 1 row x 4 columns (Stretch: 1, 1, 1, 1)
+    - 780px - 1319px: 2 rows x 2 columns (Stretch: 1, 1)
+    - < 780px: 4 rows x 1 column (Stretch: 1)
     Prevents controls and text from being squished or clipped when window is resized narrower.
     """
     def __init__(self, parent=None):
@@ -600,6 +600,39 @@ class ResponsiveSettingsContainer(QWidget):
         self.w_steps = None
         self.w_combo = None
         self._current_mode = None
+        self._scroll_area = None
+
+    def attach_scroll_area(self, scroll_area):
+        self._scroll_area = scroll_area
+        if scroll_area and scroll_area.viewport():
+            scroll_area.viewport().installEventFilter(self)
+
+    def eventFilter(self, watched, event):
+        if self._scroll_area and watched == self._scroll_area.viewport():
+            if event.type() == QtCore.QEvent.Resize:
+                self._update_layout()
+        return super().eventFilter(watched, event)
+
+    def minimumSizeHint(self):
+        return QtCore.QSize(300, self.minimumHeight())
+
+    def sizeHint(self):
+        w = self._get_target_width()
+        return QtCore.QSize(w, self.minimumHeight())
+
+    def _get_target_width(self):
+        if self._scroll_area and self._scroll_area.viewport():
+            vw = self._scroll_area.viewport().width()
+            if vw > 50:
+                return vw
+        p = self.parentWidget()
+        while p:
+            if isinstance(p, QScrollArea):
+                vw = p.viewport().width()
+                if vw > 50:
+                    return vw
+            p = p.parentWidget()
+        return self.width()
 
     def set_widgets(self, w_basic, w_mode, w_steps, w_combo):
         self.w_basic = w_basic
@@ -620,10 +653,10 @@ class ResponsiveSettingsContainer(QWidget):
         if not (self.w_basic and self.w_mode and self.w_steps and self.w_combo):
             return
 
-        w = self.width()
-        if w >= 1150:
+        w = self._get_target_width()
+        if w >= 1320:
             target_mode = "4_col"
-        elif w >= 650:
+        elif w >= 780:
             target_mode = "2_col"
         else:
             target_mode = "1_col"
@@ -652,7 +685,7 @@ class ResponsiveSettingsContainer(QWidget):
             self.grid_layout.addWidget(self.w_combo, 0, 3)
             self.grid_layout.setColumnStretch(0, 1)
             self.grid_layout.setColumnStretch(1, 1)
-            self.grid_layout.setColumnStretch(2, 2)
+            self.grid_layout.setColumnStretch(2, 1)
             self.grid_layout.setColumnStretch(3, 1)
             self.grid_layout.setRowStretch(0, 1)
             self.setMinimumHeight(220)
@@ -1069,6 +1102,7 @@ class OptimizerEmbedded(QWidget):
         top_layout.addWidget(info_frame)
 
         self.settings_container = ResponsiveSettingsContainer()
+        self.settings_container.attach_scroll_area(opt_scroll)
         top_layout.addWidget(self.settings_container)
 
         settings_groupbox = QGroupBox("Cài Đặt Cơ Bản")
@@ -1146,7 +1180,6 @@ class OptimizerEmbedded(QWidget):
             "các file tối ưu (.py và .json) có điểm số thấp hơn trong cùng thư mục 'success' của thuật toán này sẽ bị xóa."
         )
         self.delete_old_optimized_files_checkbox.setChecked(False)
-        self.delete_old_optimized_files_checkbox.setWordWrap(True)
         settings_layout.addWidget(self.delete_old_optimized_files_checkbox, 5, 0, 1, 3, Qt.AlignLeft)
 
         settings_layout.setColumnStretch(0, 0)
@@ -1162,15 +1195,14 @@ class OptimizerEmbedded(QWidget):
         mode_outer_layout.setSpacing(6)
 
         self.opt_mode_group = QButtonGroup(self)
-        self.opt_mode_auto_radio = QRadioButton("Tối ưu Tự động (Hill Climb / Custom)")
+        self.opt_mode_auto_radio = QRadioButton("Tối ưu Tự động (Hill Climb)")
+        self.opt_mode_auto_radio.setToolTip("Tối ưu Tự động (Hill Climb / Custom)")
         self.opt_mode_auto_radio.setChecked(True)
-        self.opt_mode_auto_radio.setWordWrap(True)
         self.opt_mode_auto_radio.toggled.connect(self._on_optimization_mode_changed)
         self.opt_mode_group.addButton(self.opt_mode_auto_radio)
         mode_outer_layout.addWidget(self.opt_mode_auto_radio)
 
         self.opt_mode_combo_radio = QRadioButton("Tạo Bộ Tham Số")
-        self.opt_mode_combo_radio.setWordWrap(True)
         self.opt_mode_combo_radio.toggled.connect(self._on_optimization_mode_changed)
         self.opt_mode_group.addButton(self.opt_mode_combo_radio)
         mode_outer_layout.addWidget(self.opt_mode_combo_radio)
@@ -1226,6 +1258,7 @@ class OptimizerEmbedded(QWidget):
         self.initial_adv_label = QLabel("Chọn thuật toán để xem tham số.")
         self.initial_adv_label.setStyleSheet("font-style: italic; color: #6c757d;")
         self.initial_adv_label.setAlignment(Qt.AlignCenter)
+        self.initial_adv_label.setWordWrap(True)
         self.advanced_opt_params_layout.addWidget(self.initial_adv_label)
         param_scroll_layout.addWidget(adv_scroll_area)
 
@@ -1251,6 +1284,7 @@ class OptimizerEmbedded(QWidget):
         self.initial_combo_label = QLabel("Chọn thuật toán để tối ưu...")
         self.initial_combo_label.setStyleSheet("font-style: italic; color: #6c757d;")
         self.initial_combo_label.setAlignment(Qt.AlignCenter)
+        self.initial_combo_label.setWordWrap(True)
         self.combination_layout.addWidget(self.initial_combo_label)
         combo_outer_layout.addWidget(combo_scroll_area)
 
@@ -1267,26 +1301,26 @@ class OptimizerEmbedded(QWidget):
         control_layout.setSpacing(8)
         self.opt_start_button = QPushButton("Bắt đầu Tối ưu")
         self.opt_start_button.setObjectName("AccentButton")
-        self.opt_start_button.setMinimumWidth(110)
+        self.opt_start_button.setMinimumWidth(100)
         self.opt_start_button.clicked.connect(self.start_optimization)
         control_layout.addWidget(self.opt_start_button)
 
         self.opt_resume_button = QPushButton("Tiếp tục Tối ưu")
         self.opt_resume_button.setObjectName("AccentButton")
-        self.opt_resume_button.setMinimumWidth(110)
+        self.opt_resume_button.setMinimumWidth(100)
         self.opt_resume_button.clicked.connect(self.resume_optimization_session)
         self.opt_resume_button.setEnabled(False)
         control_layout.addWidget(self.opt_resume_button)
 
         self.opt_pause_button = QPushButton("Tạm dừng")
         self.opt_pause_button.setObjectName("WarningButton")
-        self.opt_pause_button.setMinimumWidth(80)
+        self.opt_pause_button.setMinimumWidth(75)
         self.opt_pause_button.setEnabled(False)
         control_layout.addWidget(self.opt_pause_button)
 
         self.opt_stop_button = QPushButton("Dừng Hẳn")
         self.opt_stop_button.setObjectName("DangerButton")
-        self.opt_stop_button.setMinimumWidth(80)
+        self.opt_stop_button.setMinimumWidth(75)
         self.opt_stop_button.clicked.connect(self.stop_optimization)
         self.opt_stop_button.setEnabled(False)
         control_layout.addWidget(self.opt_stop_button)
@@ -1295,7 +1329,7 @@ class OptimizerEmbedded(QWidget):
         
         open_folder_button_control_bar = QPushButton("📂 Mở Thư Mục Tối Ưu")
         open_folder_button_control_bar.setToolTip("Mở thư mục chứa kết quả tối ưu của thuật toán này.")
-        open_folder_button_control_bar.setMinimumWidth(150)
+        open_folder_button_control_bar.setMinimumWidth(140)
         open_folder_button_control_bar.clicked.connect(self.open_optimize_folder)
         control_layout.addWidget(open_folder_button_control_bar)
 
@@ -3019,7 +3053,6 @@ class OptimizerEmbedded(QWidget):
             class_name_only = algo_name.split(' (')[0]
             chk = QCheckBox(class_name_only)
             chk.setToolTip(algo_name)
-            chk.setWordWrap(True)
             container_layout.addWidget(chk)
             self.combination_selection_checkboxes[algo_name] = chk
 
