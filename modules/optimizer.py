@@ -582,6 +582,101 @@ class AlgorithmEvaluationTab(QWidget):
         self.summary_label.setText(summary_html)
 
 
+class ResponsiveSettingsContainer(QWidget):
+    """
+    Container for the 4 optimization settings groupboxes that dynamically reflows:
+    - >= 1150px: 1 row x 4 columns (Stretch: 1, 1, 2, 1)
+    - 650px - 1149px: 2 rows x 2 columns (Stretch: 1, 1)
+    - < 650px: 4 rows x 1 column (Stretch: 1)
+    Prevents controls and text from being squished or clipped when window is resized narrower.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.grid_layout = QGridLayout(self)
+        self.grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.grid_layout.setSpacing(10)
+        self.w_basic = None
+        self.w_mode = None
+        self.w_steps = None
+        self.w_combo = None
+        self._current_mode = None
+
+    def set_widgets(self, w_basic, w_mode, w_steps, w_combo):
+        self.w_basic = w_basic
+        self.w_mode = w_mode
+        self.w_steps = w_steps
+        self.w_combo = w_combo
+        self._update_layout(force=True)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._update_layout(force=True)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_layout()
+
+    def _update_layout(self, force=False):
+        if not (self.w_basic and self.w_mode and self.w_steps and self.w_combo):
+            return
+
+        w = self.width()
+        if w >= 1150:
+            target_mode = "4_col"
+        elif w >= 650:
+            target_mode = "2_col"
+        else:
+            target_mode = "1_col"
+
+        if not force and target_mode == self._current_mode:
+            return
+
+        self._current_mode = target_mode
+
+        # Remove all 4 widgets from layout without destroying them
+        self.grid_layout.removeWidget(self.w_basic)
+        self.grid_layout.removeWidget(self.w_mode)
+        self.grid_layout.removeWidget(self.w_steps)
+        self.grid_layout.removeWidget(self.w_combo)
+
+        # Reset stretches
+        for c in range(4):
+            self.grid_layout.setColumnStretch(c, 0)
+        for r in range(4):
+            self.grid_layout.setRowStretch(r, 0)
+
+        if target_mode == "4_col":
+            self.grid_layout.addWidget(self.w_basic, 0, 0)
+            self.grid_layout.addWidget(self.w_mode, 0, 1)
+            self.grid_layout.addWidget(self.w_steps, 0, 2)
+            self.grid_layout.addWidget(self.w_combo, 0, 3)
+            self.grid_layout.setColumnStretch(0, 1)
+            self.grid_layout.setColumnStretch(1, 1)
+            self.grid_layout.setColumnStretch(2, 2)
+            self.grid_layout.setColumnStretch(3, 1)
+            self.grid_layout.setRowStretch(0, 1)
+            self.setMinimumHeight(220)
+        elif target_mode == "2_col":
+            self.grid_layout.addWidget(self.w_basic, 0, 0)
+            self.grid_layout.addWidget(self.w_mode, 0, 1)
+            self.grid_layout.addWidget(self.w_steps, 1, 0)
+            self.grid_layout.addWidget(self.w_combo, 1, 1)
+            self.grid_layout.setColumnStretch(0, 1)
+            self.grid_layout.setColumnStretch(1, 1)
+            self.grid_layout.setRowStretch(0, 1)
+            self.grid_layout.setRowStretch(1, 1)
+            self.setMinimumHeight(440)
+        else:
+            self.grid_layout.addWidget(self.w_basic, 0, 0)
+            self.grid_layout.addWidget(self.w_mode, 1, 0)
+            self.grid_layout.addWidget(self.w_steps, 2, 0)
+            self.grid_layout.addWidget(self.w_combo, 3, 0)
+            self.grid_layout.setColumnStretch(0, 1)
+            for r in range(4):
+                self.grid_layout.setRowStretch(r, 1)
+            self.setMinimumHeight(880)
+
+
 class OptimizerEmbedded(QWidget):
     log_signal = pyqtSignal(str, str, str)
     status_signal = pyqtSignal(str)
@@ -649,6 +744,13 @@ class OptimizerEmbedded(QWidget):
         self.opt_initial_online_algo_label = None
         self.current_optimization_mode = 'auto_hill_climb'
         self.opt_initial_online_algo_label = None
+
+        # Mapping mặc định giữa session timestamp của các bundle tối ưu và ID chuẩn thư viện
+        self._online_session_to_id_map = {
+            "000154-031026": "000003",
+            "101406-041026": "000004",
+            "223507-031026": "000005",
+        }
 
 
 
@@ -939,6 +1041,8 @@ class OptimizerEmbedded(QWidget):
         opt_scroll.setWidgetResizable(True)
         opt_scroll.setFrameShape(QFrame.NoFrame)
         opt_scroll.setStyleSheet("QScrollArea { background-color: transparent; border: none; }")
+        opt_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        opt_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         opt_container = QWidget()
         opt_container.setObjectName("OptimizeTabScrollContent")
@@ -952,7 +1056,6 @@ class OptimizerEmbedded(QWidget):
         top_layout = QVBoxLayout(top_widget)
         top_layout.setContentsMargins(0,0,0,0)
         top_layout.setSpacing(8)
-        top_widget.setMinimumHeight(320)
         layout.addWidget(top_widget, 0)
 
         info_frame = QWidget()
@@ -965,11 +1068,7 @@ class OptimizerEmbedded(QWidget):
         info_h_layout.addStretch(1)
         top_layout.addWidget(info_frame)
 
-        self.settings_container = QWidget()
-        self.settings_container.setMinimumHeight(220)
-        settings_h_layout = QHBoxLayout(self.settings_container)
-        settings_h_layout.setContentsMargins(0, 0, 0, 0)
-        settings_h_layout.setSpacing(10)
+        self.settings_container = ResponsiveSettingsContainer()
         top_layout.addWidget(self.settings_container)
 
         settings_groupbox = QGroupBox("Cài Đặt Cơ Bản")
@@ -983,13 +1082,13 @@ class OptimizerEmbedded(QWidget):
         settings_layout.addWidget(QLabel("Khoảng thời gian tối ưu:"), 0, 0, 1, 3, Qt.AlignLeft)
 
         lbl_from = QLabel("Từ ngày:")
-        lbl_from.setFixedWidth(65)
+        lbl_from.setMinimumWidth(60)
         settings_layout.addWidget(lbl_from, 1, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.opt_start_date_edit = QLineEdit()
         self.opt_start_date_edit.setReadOnly(True)
         self.opt_start_date_edit.setAlignment(Qt.AlignCenter)
-        self.opt_start_date_edit.setMinimumWidth(100)
+        self.opt_start_date_edit.setMinimumWidth(90)
         self.opt_start_date_edit.setToolTip("Ngày bắt đầu dữ liệu dùng để kiểm tra tối ưu.")
         settings_layout.addWidget(self.opt_start_date_edit, 1, 1)
 
@@ -1000,13 +1099,13 @@ class OptimizerEmbedded(QWidget):
         settings_layout.addWidget(self.opt_start_date_button, 1, 2)
 
         lbl_to = QLabel("Đến ngày:")
-        lbl_to.setFixedWidth(65)
+        lbl_to.setMinimumWidth(60)
         settings_layout.addWidget(lbl_to, 2, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.opt_end_date_edit = QLineEdit()
         self.opt_end_date_edit.setReadOnly(True)
         self.opt_end_date_edit.setAlignment(Qt.AlignCenter)
-        self.opt_end_date_edit.setMinimumWidth(100)
+        self.opt_end_date_edit.setMinimumWidth(90)
         self.opt_end_date_edit.setToolTip("Ngày kết thúc dữ liệu dùng để kiểm tra tối ưu (phải trước ngày cuối cùng trong file data).")
         settings_layout.addWidget(self.opt_end_date_edit, 2, 1)
 
@@ -1018,10 +1117,11 @@ class OptimizerEmbedded(QWidget):
 
         date_info_label = QLabel("(Ngày cuối < ngày cuối data 1 ngày)")
         date_info_label.setStyleSheet("font-style: italic; color: #64748b; font-size: 8.5pt;")
+        date_info_label.setWordWrap(True)
         settings_layout.addWidget(date_info_label, 3, 0, 1, 3, Qt.AlignLeft)
 
         lbl_time = QLabel("Thời gian tối đa:")
-        lbl_time.setFixedWidth(95)
+        lbl_time.setMinimumWidth(90)
         settings_layout.addWidget(lbl_time, 4, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
         time_box = QWidget()
@@ -1046,14 +1146,13 @@ class OptimizerEmbedded(QWidget):
             "các file tối ưu (.py và .json) có điểm số thấp hơn trong cùng thư mục 'success' của thuật toán này sẽ bị xóa."
         )
         self.delete_old_optimized_files_checkbox.setChecked(False)
+        self.delete_old_optimized_files_checkbox.setWordWrap(True)
         settings_layout.addWidget(self.delete_old_optimized_files_checkbox, 5, 0, 1, 3, Qt.AlignLeft)
 
         settings_layout.setColumnStretch(0, 0)
         settings_layout.setColumnStretch(1, 1)
         settings_layout.setColumnStretch(2, 0)
         settings_layout.setRowStretch(6, 1)
-
-        settings_h_layout.addWidget(settings_groupbox, 1)
 
         self.optimization_mode_groupbox = QGroupBox("Chế Độ Tối Ưu")
         self.optimization_mode_groupbox.setMinimumHeight(220)
@@ -1065,11 +1164,13 @@ class OptimizerEmbedded(QWidget):
         self.opt_mode_group = QButtonGroup(self)
         self.opt_mode_auto_radio = QRadioButton("Tối ưu Tự động (Hill Climb / Custom)")
         self.opt_mode_auto_radio.setChecked(True)
+        self.opt_mode_auto_radio.setWordWrap(True)
         self.opt_mode_auto_radio.toggled.connect(self._on_optimization_mode_changed)
         self.opt_mode_group.addButton(self.opt_mode_auto_radio)
         mode_outer_layout.addWidget(self.opt_mode_auto_radio)
 
         self.opt_mode_combo_radio = QRadioButton("Tạo Bộ Tham Số")
+        self.opt_mode_combo_radio.setWordWrap(True)
         self.opt_mode_combo_radio.toggled.connect(self._on_optimization_mode_changed)
         self.opt_mode_group.addButton(self.opt_mode_combo_radio)
         mode_outer_layout.addWidget(self.opt_mode_combo_radio)
@@ -1099,7 +1200,6 @@ class OptimizerEmbedded(QWidget):
         self.combo_gen_settings_widget.setEnabled(False)
 
         mode_outer_layout.addStretch(1)
-        settings_h_layout.addWidget(self.optimization_mode_groupbox, 1)
 
         self.custom_steps_groupbox = QGroupBox("Tùy Chỉnh tham số tối ưu (bước nhảy)")
         self.custom_steps_groupbox.setMinimumHeight(220)
@@ -1116,6 +1216,8 @@ class OptimizerEmbedded(QWidget):
         adv_scroll_area = QScrollArea()
         adv_scroll_area.setWidgetResizable(True)
         adv_scroll_area.setStyleSheet("QScrollArea { background-color: #FFFFFF; border: none; }")
+        adv_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        adv_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.advanced_opt_params_widget = QWidget()
         adv_scroll_area.setWidget(self.advanced_opt_params_widget)
         self.advanced_opt_params_layout = QVBoxLayout(self.advanced_opt_params_widget)
@@ -1128,7 +1230,6 @@ class OptimizerEmbedded(QWidget):
         param_scroll_layout.addWidget(adv_scroll_area)
 
         steps_outer_layout.addWidget(self.param_scroll_widget_container)
-        settings_h_layout.addWidget(self.custom_steps_groupbox, 2)
 
         self.combination_groupbox = QGroupBox("Kết hợp với Thuật toán +")
         self.combination_groupbox.setMinimumHeight(220)
@@ -1140,6 +1241,8 @@ class OptimizerEmbedded(QWidget):
         combo_scroll_area = QScrollArea()
         combo_scroll_area.setWidgetResizable(True)
         combo_scroll_area.setStyleSheet("QScrollArea { background-color: #FFFFFF; border: none; }")
+        combo_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        combo_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.combination_scroll_widget = QWidget()
         combo_scroll_area.setWidget(self.combination_scroll_widget)
         self.combination_layout = QVBoxLayout(self.combination_scroll_widget)
@@ -1150,7 +1253,13 @@ class OptimizerEmbedded(QWidget):
         self.initial_combo_label.setAlignment(Qt.AlignCenter)
         self.combination_layout.addWidget(self.initial_combo_label)
         combo_outer_layout.addWidget(combo_scroll_area)
-        settings_h_layout.addWidget(self.combination_groupbox, 1)
+
+        self.settings_container.set_widgets(
+            settings_groupbox,
+            self.optimization_mode_groupbox,
+            self.custom_steps_groupbox,
+            self.combination_groupbox
+        )
 
         control_frame = QWidget()
         control_layout = QHBoxLayout(control_frame)
@@ -1158,35 +1267,35 @@ class OptimizerEmbedded(QWidget):
         control_layout.setSpacing(8)
         self.opt_start_button = QPushButton("Bắt đầu Tối ưu")
         self.opt_start_button.setObjectName("AccentButton")
-        self.opt_start_button.setMinimumWidth(130)
+        self.opt_start_button.setMinimumWidth(110)
         self.opt_start_button.clicked.connect(self.start_optimization)
         control_layout.addWidget(self.opt_start_button)
 
         self.opt_resume_button = QPushButton("Tiếp tục Tối ưu")
         self.opt_resume_button.setObjectName("AccentButton")
-        self.opt_resume_button.setMinimumWidth(130)
+        self.opt_resume_button.setMinimumWidth(110)
         self.opt_resume_button.clicked.connect(self.resume_optimization_session)
         self.opt_resume_button.setEnabled(False)
         control_layout.addWidget(self.opt_resume_button)
 
         self.opt_pause_button = QPushButton("Tạm dừng")
         self.opt_pause_button.setObjectName("WarningButton")
-        self.opt_pause_button.setMinimumWidth(95)
+        self.opt_pause_button.setMinimumWidth(80)
         self.opt_pause_button.setEnabled(False)
         control_layout.addWidget(self.opt_pause_button)
 
         self.opt_stop_button = QPushButton("Dừng Hẳn")
         self.opt_stop_button.setObjectName("DangerButton")
-        self.opt_stop_button.setMinimumWidth(95)
+        self.opt_stop_button.setMinimumWidth(80)
         self.opt_stop_button.clicked.connect(self.stop_optimization)
         self.opt_stop_button.setEnabled(False)
         control_layout.addWidget(self.opt_stop_button)
         
-        control_layout.addSpacing(20)
+        control_layout.addSpacing(10)
         
         open_folder_button_control_bar = QPushButton("📂 Mở Thư Mục Tối Ưu")
         open_folder_button_control_bar.setToolTip("Mở thư mục chứa kết quả tối ưu của thuật toán này.")
-        open_folder_button_control_bar.setMinimumWidth(180)
+        open_folder_button_control_bar.setMinimumWidth(150)
         open_folder_button_control_bar.clicked.connect(self.open_optimize_folder)
         control_layout.addWidget(open_folder_button_control_bar)
 
@@ -1207,6 +1316,9 @@ class OptimizerEmbedded(QWidget):
 
         self.opt_status_label = QLabel("Trạng thái: Chờ")
         self.opt_status_label.setStyleSheet("color: #6c757d;")
+        self.opt_status_label.setWordWrap(False)
+        self.opt_status_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.opt_status_label.setMinimumWidth(1)
         progress_layout.addWidget(self.opt_status_label, 1, 0)
 
         self.opt_progress_label = QLabel("0%")
@@ -1457,6 +1569,35 @@ class OptimizerEmbedded(QWidget):
 
             optimizer_logger.debug(f"Optimizer: Processing file: {f_path.name}")
             try:
+                # ── Nhận dạng sớm: file .py có chứa JSON không? ──────────────────
+                try:
+                    _raw = f_path.read_text(encoding='utf-8').strip()
+                    if _raw.startswith('{') or _raw.startswith('['):
+                        try:
+                            json.loads(_raw)
+                            # JSON hợp lệ trong file .py → xử lý như TCS bundle
+                            optimizer_logger.info(
+                                f"Optimizer: '{f_path.name}' chứa nội dung JSON, xử lý như TCS bundle."
+                            )
+                            instance = JsonBundleAlgorithm(
+                                json_path=f_path,
+                                data_results_list=data_copy_for_init,
+                                cache_dir=cache_dir_for_init
+                            )
+                            config = instance.get_config()
+                            algo_title = f"[TCS] {instance.bundle_name or f_path.stem}"
+                            display_name_key = f"{algo_title} ({f_path.name})"
+                            self.loaded_algorithms[display_name_key] = {
+                                'instance': instance, 'path': f_path, 'config': config,
+                                'class_name': algo_title, 'module_name': f"algorithms.{f_path.stem}"
+                            }
+                            count_success += 1
+                            continue  # Bỏ qua phần import Python bên dưới
+                        except (json.JSONDecodeError, ValueError):
+                            pass  # Không phải JSON → tiếp tục import Python bình thường
+                except Exception:
+                    pass
+
                 if module_name in sys.modules:
                     optimizer_logger.debug(f"Optimizer: Reloading module: {module_name}")
                     try: module_obj = reload(sys.modules[module_name])
@@ -1612,7 +1753,10 @@ class OptimizerEmbedded(QWidget):
 
             optimize_button = QPushButton("🚀 Tối ưu")
             optimize_button.setObjectName("ListAccentButton")
-            optimize_button.setToolTip(f"Tối ưu hóa thuật toán: {algo_name_for_display}")
+            if is_tcs:
+                optimize_button.setToolTip("Thuật toán này chỉ có thể tối ưu bằng chương trình Thiên cơ số Studio PC pro.")
+            else:
+                optimize_button.setToolTip(f"Tối ưu hóa thuật toán: {algo_name_for_display}")
             optimize_button.clicked.connect(lambda checked=False, dn_key=display_name_key: self.trigger_select_for_optimize(dn_key))
             
             delete_button = QPushButton("❎ Xóa")
@@ -1626,11 +1770,11 @@ class OptimizerEmbedded(QWidget):
             
             button_fixed_height = 32
             edit_button.setFixedHeight(button_fixed_height)
-            edit_button.setMinimumWidth(85)
+            edit_button.setMinimumWidth(65)
             optimize_button.setFixedHeight(button_fixed_height)
-            optimize_button.setMinimumWidth(105)
+            optimize_button.setMinimumWidth(75)
             delete_button.setFixedHeight(button_fixed_height)
-            delete_button.setMinimumWidth(85)
+            delete_button.setMinimumWidth(65)
             
 
             card_layout.addWidget(button_container)
@@ -1656,9 +1800,23 @@ class OptimizerEmbedded(QWidget):
         self.load_algorithms()
         self.check_resume_possibility()
 
-    
+    def _is_tcs_algorithm(self, display_name: str) -> bool:
+        """Kiểm tra xem thuật toán có phải là thuật toán TCS JSON bundle không."""
+        if not display_name or display_name not in self.loaded_algorithms:
+            return False
+        algo_data = self.loaded_algorithms[display_name]
+        algo_path = algo_data.get('path')
+        class_name = str(algo_data.get('class_name', ''))
+        instance = algo_data.get('instance')
 
-    
+        if algo_path and algo_path.suffix.lower() == '.json':
+            return True
+        if display_name.startswith('[TCS]') or class_name.startswith('[TCS]'):
+            return True
+        if JsonBundleAlgorithm is not None and isinstance(instance, JsonBundleAlgorithm):
+            return True
+        return False
+
     def trigger_select_for_edit(self, display_name):
         main_window = self.get_main_window()
         if display_name not in self.loaded_algorithms:
@@ -1706,6 +1864,14 @@ class OptimizerEmbedded(QWidget):
             return
         if display_name not in self.loaded_algorithms:
             QMessageBox.warning(main_window, "Lỗi", f"Không tìm thấy thuật toán: {display_name}")
+            return
+
+        if self._is_tcs_algorithm(display_name):
+            QMessageBox.information(
+                main_window,
+                "Thông Báo Tối Ưu",
+                "Thuật toán này chỉ có thể tối ưu bằng chương trình Thiên cơ số Studio PC pro."
+            )
             return
 
         if self.optimizer_running:
@@ -1935,14 +2101,42 @@ class OptimizerEmbedded(QWidget):
                         bundle_data = json.load(f)
                     algo_name_display = f"[TCS] {bundle_data.get('bundle_name') or algo_path.stem}"
                     description = bundle_data.get("ai_advisor_summary") or algo_data.get('config', {}).get('description') or "Thuật toán JSON Bundle."
-                    algo_id = bundle_data.get("bundle_id")
-                    algo_date_str = bundle_data.get("trained_date", "")
+                    raw_bid = str(bundle_data.get("bundle_id") or bundle_data.get("id") or "").strip()
+                    if raw_bid.isdigit():
+                        algo_id = f"{int(raw_bid):06d}"
+                    else:
+                        algo_id = raw_bid
+
+                    # Nếu ID vẫn ở dạng session_... nhưng có trong mapping online library
+                    m_tag = re.search(r"(\d{6}-\d{6})", raw_bid) or re.search(r"(\d{6}-\d{6})", algo_path.stem)
+                    if m_tag and hasattr(self, '_online_session_to_id_map'):
+                        tag_str = m_tag.group(1)
+                        if tag_str in self._online_session_to_id_map:
+                            algo_id = self._online_session_to_id_map[tag_str]
+                            try:
+                                if not bundle_data.get("session_id") and raw_bid:
+                                    bundle_data["session_id"] = raw_bid
+                                bundle_data["bundle_id"] = algo_id
+                                bundle_data["id"] = algo_id
+                                algo_path.write_text(json.dumps(bundle_data, indent=2, ensure_ascii=False), encoding='utf-8')
+                            except Exception:
+                                pass
+
+                    algo_date_str = str(bundle_data.get("date_str", "")).strip()
+                    if not algo_date_str and bundle_data.get("trained_date"):
+                        td = str(bundle_data.get("trained_date")).strip()
+                        try:
+                            dt_part = td.split('T')[0] if 'T' in td else td.split(' ')[0]
+                            algo_date_str = datetime.datetime.strptime(dt_part, "%Y-%m-%d").strftime("%d/%m/%Y")
+                        except Exception:
+                            algo_date_str = td
                 else:
                     content = algo_path.read_text(encoding='utf-8')
                     metadata = self.main_app._extract_metadata_from_py_content(content)
                     algo_name_display = metadata.get("name") or algo_data.get('class_name') or algo_path.stem
                     description = metadata.get("description") or algo_data.get('config', {}).get('description') or "Không có mô tả."
-                    algo_id = metadata.get("id")
+                    local_id = str(metadata.get("id", "")).strip()
+                    algo_id = f"{int(local_id):06d}" if local_id.isdigit() else (local_id or None)
                     algo_date_str = metadata.get("date_str")
 
                 self._create_optimizer_local_algorithm_card_qt(
@@ -2021,7 +2215,7 @@ class OptimizerEmbedded(QWidget):
 
         parsed_online_algos = []
         if online_list_content:
-            line_pattern = re.compile(r"\[([^\]]+?)\]-\[([^\]]+?)\]-\[([^\]]+?)\]-\[(ID:\s*\d{6})\]", re.IGNORECASE)
+            line_pattern = re.compile(r"\[([^\]]+?)\]-\[([^\]]+?)\]-\[([^\]]+?)\]-\[(ID:\s*\d+)\]", re.IGNORECASE)
             lines = online_list_content.splitlines()
             for line_num, line in enumerate(lines):
                 line = line.strip()
@@ -2030,10 +2224,16 @@ class OptimizerEmbedded(QWidget):
                 match = line_pattern.fullmatch(line)
                 if match:
                     parsed_url, name, date_str, id_full_part = match.group(1).strip(), match.group(2).strip(), match.group(3).strip(), match.group(4).strip()
-                    id_numeric_match = re.search(r"\d{6}", id_full_part)
+                    id_numeric_match = re.search(r"\d+", id_full_part)
                     if id_numeric_match:
-                        actual_id = id_numeric_match.group(0)
+                        actual_id = f"{int(id_numeric_match.group(0)):06d}"
                         parsed_online_algos.append({"url": parsed_url, "name": name, "date_str": date_str, "id": actual_id})
+                        # Cập nhật mapping session tag -> ID chuẩn thư viện
+                        m_url_tag = re.search(r"(\d{6}-\d{6})", parsed_url)
+                        if m_url_tag:
+                            if not hasattr(self, '_online_session_to_id_map'):
+                                self._online_session_to_id_map = {}
+                            self._online_session_to_id_map[m_url_tag.group(1)] = actual_id
                     else:
                         optimizer_logger.warning(f"Optimizer: Cannot extract ID from '{id_full_part}' in line: {line}")
                 else:
@@ -2053,38 +2253,106 @@ class OptimizerEmbedded(QWidget):
 
         optimizer_logger.info("Optimizer: Finished populating its online algorithms list.")
 
-    def _get_optimizer_local_algorithm_metadata_by_id(self, target_id: str) -> tuple[Path | None, dict | None]:
-         """Optimizer: Finds a local algorithm (from its own loaded_algorithms) by ID."""
+    def _get_optimizer_local_algorithm_metadata_by_id(self, target_id: str, target_url: str | None = None) -> tuple[Path | None, dict | None]:
+         """Optimizer: Finds a local algorithm (from its own loaded_algorithms) by ID.
+         Supports both .py Python algorithms and .json TCS bundle algorithms."""
          if not target_id: return None, None
+
+         target_id_str = str(target_id).strip()
+         target_id_norm = f"{int(target_id_str):06d}" if target_id_str.isdigit() else target_id_str
+
+         # Trích xuất session tag từ URL nếu có (ví dụ '000154-031026')
+         url_session_tag = ""
+         if target_url:
+             m_tag = re.search(r"(\d{6}-\d{6})", target_url)
+             if m_tag:
+                 url_session_tag = m_tag.group(1)
+
          for algo_data in self.loaded_algorithms.values():
              algo_path = algo_data.get('path')
-             if algo_path:
-                 try:
+             if not algo_path:
+                 continue
+             try:
+                 if algo_path.suffix.lower() == '.json':
+                     # Trích metadata từ JSON bundle
+                     raw = json.loads(algo_path.read_text(encoding='utf-8'))
+                     bundle_id = str(raw.get('bundle_id', raw.get('id', ''))).strip()
+                     bundle_id_norm = f"{int(bundle_id):06d}" if bundle_id.isdigit() else bundle_id
+                     session_id = str(raw.get('session_id', '')).strip()
+
+                     date_str  = str(raw.get('date_str', raw.get('date', ''))).strip()
+                     if not date_str and raw.get('trained_date'):
+                         td = str(raw.get('trained_date')).strip()
+                         try:
+                             dt_part = td.split('T')[0] if 'T' in td else td.split(' ')[0]
+                             date_str = datetime.datetime.strptime(dt_part, "%Y-%m-%d").strftime("%d/%m/%Y")
+                         except Exception:
+                             pass
+
+                     name = str(raw.get('bundle_name', raw.get('name', algo_path.stem))).strip()
+
+                     # Kiểm tra xem có khớp ID không:
+                     is_match = (bundle_id_norm == target_id_norm or bundle_id == target_id_str)
+                     if not is_match and session_id:
+                         is_match = (session_id == target_id_str or session_id == f"session_{target_id_str}")
+                     if not is_match and url_session_tag:
+                         if url_session_tag in bundle_id or url_session_tag in session_id or url_session_tag in algo_path.stem:
+                             is_match = True
+
+                     if is_match:
+                         # Tự động cập nhật ID chuẩn vào file nếu file chưa có ID chuẩn
+                         if bundle_id != target_id_norm and target_id_norm.isdigit():
+                             try:
+                                 if not raw.get('session_id') and bundle_id:
+                                     raw['session_id'] = bundle_id
+                                 raw['bundle_id'] = target_id_norm
+                                 raw['id'] = target_id_norm
+                                 if date_str:
+                                     raw['date_str'] = date_str
+                                 algo_path.write_text(json.dumps(raw, indent=2, ensure_ascii=False), encoding='utf-8')
+                             except Exception as e_up:
+                                 optimizer_logger.warning(f"Không thể tự động cập nhật ID chuẩn cho {algo_path.name}: {e_up}")
+
+                         return algo_path, {"id": target_id_norm, "date_str": date_str, "name": name, "description": raw.get('ai_advisor_summary', raw.get('description', ''))}
+                 else:
+                     # Trích metadata từ file Python
                      content = algo_path.read_text(encoding='utf-8')
                      metadata = self.main_app._extract_metadata_from_py_content(content)
-                     if metadata.get("id") == target_id:
+                     local_id = str(metadata.get("id", "")).strip()
+                     local_id_norm = f"{int(local_id):06d}" if local_id.isdigit() else local_id
+                     if local_id_norm == target_id_norm or local_id == target_id_str:
                          return algo_path, metadata
-                 except Exception:
-                     continue
+             except Exception:
+                 continue
          return None, None
+
 
     def _create_optimizer_online_algorithm_card_qt(self, online_algo_data: dict):
          optimizer_logger.debug(f"Optimizer: Creating online algo card for: {online_algo_data.get('name')}")
+
          
          online_url = online_algo_data["url"]
          online_name = online_algo_data["name"]
          online_date_str = online_algo_data["date_str"]
          online_id = online_algo_data["id"]
 
+         is_json_bundle = online_url.lower().endswith('.json')
          description = "Đang tải mô tả..."
          online_code_content = None
          try:
              import requests
-             py_response = requests.get(online_url, timeout=10)
-             py_response.raise_for_status()
-             online_code_content = py_response.text
-             metadata_from_online_code = self.main_app._extract_metadata_from_py_content(online_code_content)
-             description = metadata_from_online_code.get("description") or "Không có mô tả trong code."
+             resp = requests.get(online_url, timeout=10)
+             resp.raise_for_status()
+             online_code_content = resp.text
+             if is_json_bundle:
+                 # Trích metadata từ JSON bundle
+                 raw_json = json.loads(online_code_content)
+                 description = raw_json.get('description', raw_json.get('bundle_name', 'Không có mô tả.'))
+                 if not description:
+                     description = 'Không có mô tả.'
+             else:
+                 metadata_from_online_code = self.main_app._extract_metadata_from_py_content(online_code_content)
+                 description = metadata_from_online_code.get("description") or "Không có mô tả trong code."
          except Exception as e_desc:
              description = f"Lỗi tải/xử lý mô tả: {type(e_desc).__name__}"
              optimizer_logger.warning(f"Optimizer: Failed to fetch/process desc for {online_name}: {e_desc}")
@@ -2092,21 +2360,39 @@ class OptimizerEmbedded(QWidget):
          card_frame = QFrame()
          card_frame.setObjectName("CardFrame")
          card_layout = QVBoxLayout(card_frame)
-         name_label = QLabel(f"{online_name} (ID: {online_id})")
+
+         # Tên thuật toán (có badge TCS nếu là JSON bundle)
+         if is_json_bundle:
+             name_label = QLabel(f"<b style='color: #16a34a;'>[TCS]</b> {online_name} (ID: {online_id})")
+         else:
+             name_label = QLabel(f"{online_name} (ID: {online_id})")
          name_label.setFont(self.main_app.get_qfont("bold"))
+         name_label.setTextFormat(Qt.RichText)
+         name_label.setWordWrap(True)
+         name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+         name_label.setMinimumWidth(1)
          card_layout.addWidget(name_label)
+
          desc_label = QLabel(description)
-         desc_label.setFont(self.main_app.get_qfont("small")); desc_label.setWordWrap(True)
+         desc_label.setFont(self.main_app.get_qfont("small"))
+         desc_label.setWordWrap(True)
+         desc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+         desc_label.setMinimumWidth(1)
          card_layout.addWidget(desc_label)
+
          info_label = QLabel(f"Online Date: {online_date_str}")
-         info_label.setFont(self.main_app.get_qfont("italic_small")); info_label.setStyleSheet("color: #5a5a5a;")
+         info_label.setFont(self.main_app.get_qfont("italic_small"))
+         info_label.setStyleSheet("color: #5a5a5a;")
+         info_label.setWordWrap(True)
+         info_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+         info_label.setMinimumWidth(1)
          card_layout.addWidget(info_label)
 
          button_container = QWidget()
          button_layout_h = QHBoxLayout(button_container)
          button_layout_h.setContentsMargins(0,5,0,0); button_layout_h.addStretch(1)
 
-         local_algo_path, local_metadata = self._get_optimizer_local_algorithm_metadata_by_id(online_id)
+         local_algo_path, local_metadata = self._get_optimizer_local_algorithm_metadata_by_id(online_id, online_url)
          
          action_widget = None
          if local_algo_path and local_metadata:
@@ -2147,13 +2433,12 @@ class OptimizerEmbedded(QWidget):
     def _handle_download_optimizer_online_algorithm(self, online_algo_data: dict, online_code_content: str | None = None):
          online_url = online_algo_data["url"]
          online_name = online_algo_data["name"]
-         
-         filename_from_url_obj = Path(online_url)
-         target_filename = filename_from_url_obj.stem + ".py"
-         save_path = self.algorithms_dir / target_filename
+         online_id = str(online_algo_data.get("id", "")).strip()
+         online_date_str = str(online_algo_data.get("date_str", "")).strip()
+         formatted_id = f"{int(online_id):06d}" if online_id.isdigit() else online_id
 
-         optimizer_logger.info(f"Optimizer: Downloading '{online_name}' to {save_path}")
-         self.update_status(f"Optimizer: Đang tải về {target_filename}...")
+         optimizer_logger.info(f"Optimizer: Preparing to download '{online_name}' (ID: {formatted_id}) from {online_url}")
+         self.update_status(f"Optimizer: Đang chuẩn bị tải về '{online_name}' (ID: {formatted_id})...")
          QApplication.processEvents()
 
          try:
@@ -2163,32 +2448,116 @@ class OptimizerEmbedded(QWidget):
                  response = requests.get(online_url, timeout=15)
                  response.raise_for_status()
                  final_code_content = response.text
-             
+
              if not isinstance(final_code_content, str):
                  raise ValueError("Nội dung tải về không phải là chuỗi.")
+
+             # ── Xác định loại nội dung & tên file đích ───────────────────────
+             url_path_obj   = Path(online_url)
+             filename_stem  = url_path_obj.stem
+             url_ext        = url_path_obj.suffix.lower()  # .json / .py / ...
+
+             is_json_type = (url_ext == '.json')
+             if not is_json_type:
+                 stripped = final_code_content.strip()
+                 if stripped.startswith('{') or stripped.startswith('['):
+                     try:
+                         json.loads(stripped)
+                         is_json_type = True
+                     except (json.JSONDecodeError, ValueError):
+                         pass
+
+             # ── Chuẩn hóa ID và metadata đúng với định dạng thư viện ─────────
+             if is_json_type:
+                 try:
+                     bundle_json = json.loads(final_code_content)
+                     if isinstance(bundle_json, dict):
+                         # Lưu session_id cũ nếu có
+                         old_bid = str(bundle_json.get("bundle_id", "")).strip()
+                         if old_bid and not bundle_json.get("session_id"):
+                             bundle_json["session_id"] = old_bid
+
+                         # Lưu ID đúng chuẩn thư viện (ví dụ 000003, 000004, 000005)
+                         if formatted_id:
+                             bundle_json["bundle_id"] = formatted_id
+                             bundle_json["id"] = formatted_id
+
+                         # Lưu tên và ngày theo thư viện
+                         if online_name:
+                             bundle_json["bundle_name"] = online_name
+                         if online_date_str:
+                             bundle_json["date_str"] = online_date_str
+                             if not bundle_json.get("trained_date"):
+                                 bundle_json["trained_date"] = online_date_str
+
+                         final_code_content = json.dumps(bundle_json, indent=2, ensure_ascii=False)
+                 except Exception as e_json:
+                     optimizer_logger.warning(f"Optimizer: Lỗi khi chuẩn hóa JSON bundle: {e_json}")
+                 target_filename = filename_stem + '.json'
+             else:
+                 if formatted_id:
+                     if re.search(r"#\s*ID:\s*\d+", final_code_content, re.IGNORECASE):
+                         final_code_content = re.sub(
+                             r"#\s*ID:\s*\d+",
+                             f"# ID: {formatted_id}",
+                             final_code_content,
+                             count=1,
+                             flags=re.IGNORECASE
+                         )
+                     else:
+                         final_code_content = f"# ID: {formatted_id}\n" + final_code_content
+
+                 if online_date_str:
+                     if re.search(r"#\s*Date:\s*\d{2}/\d{2}/\d{4}", final_code_content, re.IGNORECASE):
+                         final_code_content = re.sub(
+                             r"#\s*Date:\s*\d{2}/\d{2}/\d{4}",
+                             f"# Date: {online_date_str}",
+                             final_code_content,
+                             count=1,
+                             flags=re.IGNORECASE
+                         )
+                     else:
+                         final_code_content = f"# Date: {online_date_str}\n" + final_code_content
+                 target_filename = filename_stem + '.py'
+
+             # Kiểm tra xem file local đã tồn tại chưa để tránh tạo file trùng lặp
+             local_algo_path, _ = self._get_optimizer_local_algorithm_metadata_by_id(formatted_id, online_url)
+             if local_algo_path and local_algo_path.exists():
+                 save_path = local_algo_path
+             else:
+                 save_path = self.algorithms_dir / target_filename
+
+             optimizer_logger.info(f"Optimizer: Saving '{online_name}' (ID: {formatted_id}) → {save_path}")
 
              normalized_content = final_code_content.replace('\r\n', '\n').replace('\r', '\n')
              save_path.write_text(normalized_content, encoding='utf-8', newline='\n')
              optimizer_logger.info(f"Optimizer: Downloaded and saved to {save_path}")
-             QMessageBox.information(self.get_main_window(), "Tải Thành Công (Optimizer)", f"Đã tải '{target_filename}' vào '{self.algorithms_dir.name}'.")
-             
+             QMessageBox.information(self.get_main_window(), "Tải Thành Công (Optimizer)",
+                                     f"Đã tải '{save_path.name}' (ID: {formatted_id}) vào '{self.algorithms_dir.name}'.")
+
              self._refresh_optimizer_algo_lists()
              if self.main_app:
                  self.main_app.reload_algorithms()
                  if hasattr(self.main_app, '_refresh_algo_management_page'):
                      self.main_app._refresh_algo_management_page()
-             self.update_status(f"Optimizer: Tải thành công {target_filename}")
+             self.update_status(f"Optimizer: Tải thành công {save_path.name} (ID: {formatted_id})")
 
          except Exception as e:
-             optimizer_logger.error(f"Optimizer: Error downloading/saving {online_name}: {e}", exc_info=True)
-             QMessageBox.critical(self.get_main_window(), "Lỗi Tải (Optimizer)", f"Lỗi khi tải {target_filename}:\n{e}")
-             self.update_status(f"Optimizer: Lỗi tải {target_filename}")
+             optimizer_logger.error(f"Optimizer: Error downloading/saving '{online_name}': {e}", exc_info=True)
+             QMessageBox.critical(self.get_main_window(), "Lỗi Tải (Optimizer)",
+                                  f"Lỗi khi tải '{online_name}':\n{e}")
+             self.update_status(f"Optimizer: Lỗi tải '{online_name}'")
 
 
     def _handle_update_optimizer_online_algorithm(self, online_algo_data: dict, local_algo_path: Path, online_code_content: str | None = None):
          online_url = online_algo_data["url"]
-         optimizer_logger.info(f"Optimizer: Updating '{local_algo_path.name}' from {online_url}")
-         self.update_status(f"Optimizer: Đang cập nhật {local_algo_path.name}...")
+         online_name = online_algo_data.get("name", "")
+         online_id = str(online_algo_data.get("id", "")).strip()
+         online_date_str = str(online_algo_data.get("date_str", "")).strip()
+         formatted_id = f"{int(online_id):06d}" if online_id.isdigit() else online_id
+
+         optimizer_logger.info(f"Optimizer: Updating '{local_algo_path.name}' (ID: {formatted_id}) from {online_url}")
+         self.update_status(f"Optimizer: Đang cập nhật {local_algo_path.name} (ID: {formatted_id})...")
          QApplication.processEvents()
 
          try:
@@ -2202,22 +2571,95 @@ class OptimizerEmbedded(QWidget):
              if not isinstance(final_code_content, str):
                  raise ValueError("Nội dung tải về không phải là chuỗi.")
 
+             # ── Phát hiện loại nội dung thực tế ──────────────────────────────
+             stripped = final_code_content.strip()
+             is_json_content = False
+             if stripped.startswith('{') or stripped.startswith('['):
+                 try:
+                     json.loads(stripped)
+                     is_json_content = True
+                 except (json.JSONDecodeError, ValueError):
+                     pass
+
+             # ── Chuẩn hóa ID và metadata đúng với định dạng thư viện ─────────
+             if is_json_content:
+                 try:
+                     bundle_json = json.loads(final_code_content)
+                     if isinstance(bundle_json, dict):
+                         old_bid = str(bundle_json.get("bundle_id", "")).strip()
+                         if old_bid and not bundle_json.get("session_id"):
+                             bundle_json["session_id"] = old_bid
+
+                         if formatted_id:
+                             bundle_json["bundle_id"] = formatted_id
+                             bundle_json["id"] = formatted_id
+
+                         if online_name:
+                             bundle_json["bundle_name"] = online_name
+                         if online_date_str:
+                             bundle_json["date_str"] = online_date_str
+                             if not bundle_json.get("trained_date"):
+                                 bundle_json["trained_date"] = online_date_str
+
+                         final_code_content = json.dumps(bundle_json, indent=2, ensure_ascii=False)
+                 except Exception as e_json:
+                     optimizer_logger.warning(f"Optimizer: Lỗi khi chuẩn hóa JSON bundle cập nhật: {e_json}")
+             else:
+                 if formatted_id:
+                     if re.search(r"#\s*ID:\s*\d+", final_code_content, re.IGNORECASE):
+                         final_code_content = re.sub(
+                             r"#\s*ID:\s*\d+",
+                             f"# ID: {formatted_id}",
+                             final_code_content,
+                             count=1,
+                             flags=re.IGNORECASE
+                         )
+                     else:
+                         final_code_content = f"# ID: {formatted_id}\n" + final_code_content
+
+                 if online_date_str:
+                     if re.search(r"#\s*Date:\s*\d{2}/\d{2}/\d{4}", final_code_content, re.IGNORECASE):
+                         final_code_content = re.sub(
+                             r"#\s*Date:\s*\d{2}/\d{2}/\d{4}",
+                             f"# Date: {online_date_str}",
+                             final_code_content,
+                             count=1,
+                             flags=re.IGNORECASE
+                         )
+                     else:
+                         final_code_content = f"# Date: {online_date_str}\n" + final_code_content
+
+             # Nếu nội dung là JSON nhưng file local đang là .py → đổi sang .json
+             if is_json_content and local_algo_path.suffix.lower() != '.json':
+                 correct_path = local_algo_path.with_suffix('.json')
+                 optimizer_logger.info(
+                     f"Optimizer: Nội dung JSON, đổi đường dẫn lưu từ "
+                     f"'{local_algo_path.name}' → '{correct_path.name}'"
+                 )
+                 # Xóa file .py cũ nếu tồn tại (đã là bản sai extension)
+                 if local_algo_path.exists():
+                     local_algo_path.unlink()
+                 local_algo_path = correct_path
+
              backup_path = local_algo_path.with_suffix(local_algo_path.suffix + ".bak")
-             if local_algo_path.exists(): shutil.copy2(local_algo_path, backup_path)
+             if local_algo_path.exists():
+                 shutil.copy2(local_algo_path, backup_path)
 
              normalized_content = final_code_content.replace('\r\n', '\n').replace('\r', '\n')
              local_algo_path.write_text(normalized_content, encoding='utf-8', newline='\n')
              optimizer_logger.info(f"Optimizer: Updated {local_algo_path}")
-             QMessageBox.information(self.get_main_window(), "Cập Nhật Thành Công (Optimizer)", f"Đã cập nhật:\n{local_algo_path.name}")
+             QMessageBox.information(self.get_main_window(), "Cập Nhật Thành Công (Optimizer)",
+                                     f"Đã cập nhật:\n{local_algo_path.name} (ID: {formatted_id})")
 
              self._refresh_optimizer_algo_lists()
              if self.main_app:
                  self.main_app.reload_algorithms()
-             self.update_status(f"Optimizer: Cập nhật thành công {local_algo_path.name}")
+             self.update_status(f"Optimizer: Cập nhật thành công {local_algo_path.name} (ID: {formatted_id})")
 
          except Exception as e:
              optimizer_logger.error(f"Optimizer: Error updating {local_algo_path.name}: {e}", exc_info=True)
-             QMessageBox.critical(self.get_main_window(), "Lỗi Cập Nhật (Optimizer)", f"Lỗi khi cập nhật {local_algo_path.name}:\n{e}")
+             QMessageBox.critical(self.get_main_window(), "Lỗi Cập Nhật (Optimizer)",
+                                  f"Lỗi khi cập nhật {local_algo_path.name}:\n{e}")
              self.update_status(f"Optimizer: Lỗi cập nhật {local_algo_path.name}")
 
     def save_edited_copy(self):
@@ -2577,6 +3019,7 @@ class OptimizerEmbedded(QWidget):
             class_name_only = algo_name.split(' (')[0]
             chk = QCheckBox(class_name_only)
             chk.setToolTip(algo_name)
+            chk.setWordWrap(True)
             container_layout.addWidget(chk)
             self.combination_selection_checkboxes[algo_name] = chk
 
@@ -2816,6 +3259,14 @@ class OptimizerEmbedded(QWidget):
             QMessageBox.critical(main_window, "Lỗi", f"Thuật toán '{display_name}' không còn được tải.")
             return
 
+        if self._is_tcs_algorithm(display_name):
+            QMessageBox.information(
+                main_window,
+                "Thông Báo Tối Ưu",
+                "Thuật toán này chỉ có thể tối ưu bằng chương trình Thiên cơ số Studio PC pro."
+            )
+            return
+
         algo_data = self.loaded_algorithms[display_name]
         original_params = algo_data['config'].get('parameters', {})
         numeric_params_check = {k: v for k, v in original_params.items() if isinstance(v, (int, float))}
@@ -2953,6 +3404,14 @@ class OptimizerEmbedded(QWidget):
         target_display_name = self.selected_algorithm_for_optimize
         if target_display_name not in self.loaded_algorithms:
             QMessageBox.critical(main_window, "Lỗi", f"Thuật toán '{target_display_name}' không còn được tải.")
+            return
+
+        if self._is_tcs_algorithm(target_display_name):
+            QMessageBox.information(
+                main_window,
+                "Thông Báo Tối Ưu",
+                "Thuật toán này chỉ có thể tối ưu bằng chương trình Thiên cơ số Studio PC pro."
+            )
             return
 
         algo_data = self.loaded_algorithms[target_display_name]
@@ -4457,7 +4916,8 @@ class OptimizerEmbedded(QWidget):
                     return None
 
                 timestamp_suffix = int(time.time() * 10000) + random.randint(0, 9999)
-                temp_target_filename = f"temp_perf_target_{target_class_name}_{timestamp_suffix}.py"
+                safe_target_class_name = re.sub(r'[^a-zA-Z0-9_]', '_', target_class_name)
+                temp_target_filename = f"temp_perf_target_{safe_target_class_name}_{timestamp_suffix}.py"
                 
                 if not optimize_target_dir or not isinstance(optimize_target_dir, Path):
                     worker_logger.error("optimize_target_dir is invalid or not provided to run_combined_performance_test.")
