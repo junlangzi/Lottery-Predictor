@@ -212,12 +212,10 @@ APP_ARCHITECTURE_MANIFEST = {
         ("algorithms/thuat_toan_test_02.py",    "Sample Algorithm Test 02", "Thuật toán mẫu: Kiểm tra chu kỳ lặp", False),
         ("algorithms/thuat_toan_test_03.py",    "Sample Algorithm Test 03", "Thuật toán mẫu: Tần suất 30 ngày gần nhất", False),
     ],
-    # ── 3. CÔNG CỤ BỔ TRỢ & HƯỚNG DẪN ─────────────────────────────────────────
-    "tools_and_guide": [
+    # ── 3. CÔNG CỤ BỔ TRỢ ─────────────────────────────────────────────────────
+    "tools": [
         ("tools/__init__.py",         "Tools Package",           "Gói công cụ mở rộng", False),
         ("tools/date-optimize.pyw",   "Date Optimizer Tool",      "Công cụ tối ưu hóa chuỗi ngày độc lập", False),
-        ("guide/index.txt",           "Guide Index",             "Chỉ mục cẩm nang hướng dẫn sử dụng", False),
-        ("guide/guide.txt",           "Guide Content",           "Nội dung cẩm nang hướng dẫn chi tiết", False),
     ]
 }
 
@@ -255,8 +253,8 @@ def check_and_download_required_files():
                 files_to_sync.append((rel_path, is_crit, f"Version cũ ({mod_ver_str or 'trống'} < {main_ver_str})"))
                 modules_to_update.append(rel_path)
 
-    # 2. Quét các file hệ thống khác trong sơ đồ (algorithms, tools, guide)
-    for group_key in ["algorithms", "tools_and_guide"]:
+    # 2. Quét các file hệ thống khác trong sơ đồ (algorithms, tools)
+    for group_key in ["algorithms", "tools"]:
         for rel_path, name, desc, is_crit in APP_ARCHITECTURE_MANIFEST[group_key]:
             target_path = base_dir / rel_path
             if not target_path.exists():
