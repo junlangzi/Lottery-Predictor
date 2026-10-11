@@ -59,9 +59,14 @@ try:
         QButtonGroup, QPlainTextEdit, QTextBrowser,
         QTableWidget, QTableWidgetItem, QHeaderView, QProgressDialog, QStackedWidget
     )
-    from PyQt5.QtCore import Qt, QTimer, QDate, QObject, pyqtSignal, QThread, QSize, QRect, pyqtSlot
+    from PyQt5.QtCore import Qt, QTimer, QDate, QObject, pyqtSignal, QThread, QSize, QRect, pyqtSlot, QUrl
     from PyQt5.QtGui import QFont, QPalette, QColor, QIcon, QIntValidator, QDoubleValidator, QTextCursor, QFontDatabase, QPixmap, QPainter, QBrush, QFontMetrics
     HAS_PYQT5 = True
+    try:
+        from PyQt5.QtWebEngineWidgets import QWebEngineView
+        HAS_WEBENGINE = True
+    except ImportError:
+        HAS_WEBENGINE = False
 
 except ImportError as e:
     HAS_PYQT5 = False
@@ -4704,12 +4709,15 @@ class LotteryPredictionApp(QMainWindow):
                 'info': info
             })
             
-            browser = QTextBrowser()
-            browser.setOpenExternalLinks(True)
-            browser.setHtml(f"<h3 style='color:gray'>Đang tải nội dung cho: {info}...</h3>")
+            if HAS_WEBENGINE:
+                browser = QWebEngineView()
+                browser.setHtml(f"<h3 style='color:gray; font-family: Segoe UI, sans-serif; padding: 20px;'>Đang tải nội dung cho: {info}...</h3>")
+            else:
+                browser = QTextBrowser()
+                browser.setOpenExternalLinks(True)
+                browser.setHtml(f"<h3 style='color:gray'>Đang tải nội dung cho: {info}...</h3>")
             
             padded_title = f" {info} "
-            
             self.guide_sub_tab_widget.addTab(browser, padded_title)
 
         self.update_status(f"Đã tải {len(matches)} mục hướng dẫn.")
@@ -4723,10 +4731,11 @@ class LotteryPredictionApp(QMainWindow):
             return
             
         current_widget = self.guide_sub_tab_widget.widget(index)
-        if not isinstance(current_widget, QTextBrowser):
+        is_webengine = HAS_WEBENGINE and isinstance(current_widget, QWebEngineView)
+        is_textbrowser = isinstance(current_widget, QTextBrowser)
+        if not is_webengine and not is_textbrowser:
             return
             
-        
         data = self.guide_data_list[index]
         is_online = self.guide_radio_online.isChecked()
         
@@ -4742,6 +4751,14 @@ class LotteryPredictionApp(QMainWindow):
         else:
             safe_id = "".join(c for c in data['id'] if c.isalnum() or c in ('-','_'))
             file_path = self.base_dir / "guide" / f"{safe_id}.txt"
+            if not file_path.exists():
+                for alt_name in [f"{safe_id}.html", "1.txt", "guide.txt", "guide.html"]:
+                    alt_path = self.base_dir / "guide" / alt_name
+                    if alt_path.exists():
+                        file_path = alt_path
+                        break
+                if not file_path.exists() and (self.base_dir / "guide.html").exists():
+                    file_path = self.base_dir / "guide.html"
             
             if file_path.exists():
                 try:
@@ -4751,14 +4768,18 @@ class LotteryPredictionApp(QMainWindow):
             else:
                 html_content = f"<h3 style='color:orange'>File offline không tồn tại ({file_path.name}).<br>Vui lòng Đồng bộ lại.</h3>"
 
-        font = self.get_qfont("base")
-        # font.setPointSize(font.pointSize() + 1)
-        current_widget.setFont(font)
-        
-        if not is_online:
-            current_widget.setSearchPaths([str(self.base_dir / "guide")])
-            
-        current_widget.setHtml(html_content)
+        if is_webengine:
+            if not is_online:
+                base_url = QUrl.fromLocalFile(str(self.base_dir / "guide") + "/")
+            else:
+                base_url = QUrl("https://raw.githubusercontent.com/")
+            current_widget.setHtml(html_content, base_url)
+        elif is_textbrowser:
+            font = self.get_qfont("base")
+            current_widget.setFont(font)
+            if not is_online:
+                current_widget.setSearchPaths([str(self.base_dir / "guide")])
+            current_widget.setHtml(html_content)
 
     
     def setup_update_tab(self):
