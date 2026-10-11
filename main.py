@@ -1,6 +1,6 @@
-# Version: 6.0.1
-# Date: 04/10/2026
-# Update: Tái cấu trúc toàn bộ code<br>Thay đổi nâng cấp giao diện<br>Hỗ trợ sử dụng thuật toán tối ưu từ chương trình Thiên cơ số Studio PC pro<br>Tối ưu lại quy trình update, sync data
+# Version: 6.1.0
+# Date: 11/10/2026
+# Update: Cập nhật chương trình để tương thích với các loại xổ số Vietlott.
 
 import os
 import sys
@@ -28,6 +28,7 @@ import subprocess
 from collections import Counter
 from importlib import reload, util
 from abc import ABC, abstractmethod
+from typing import Any, List, Dict, Tuple, Set, Optional
 import re
 import textwrap
 import itertools
@@ -55,7 +56,8 @@ try:
         QComboBox, QSpinBox, QDoubleSpinBox, QCheckBox, QScrollArea, QTextEdit, QProgressBar,
         QListWidget, QListWidgetItem, QDialog, QCalendarWidget, QMessageBox,
         QFileDialog, QStatusBar, QSplitter, QSizePolicy, QFrame, QRadioButton,
-        QButtonGroup, QPlainTextEdit, QTextBrowser
+        QButtonGroup, QPlainTextEdit, QTextBrowser,
+        QTableWidget, QTableWidgetItem, QHeaderView, QProgressDialog, QStackedWidget
     )
     from PyQt5.QtCore import Qt, QTimer, QDate, QObject, pyqtSignal, QThread, QSize, QRect, pyqtSlot
     from PyQt5.QtGui import QFont, QPalette, QColor, QIcon, QIntValidator, QDoubleValidator, QTextCursor, QFontDatabase, QPixmap, QPainter, QBrush, QFontMetrics
@@ -114,64 +116,175 @@ style_logger = logging.getLogger("UIStyleQt")
 algo_mgmnt_logger = logging.getLogger("AlgoManagementQt")
 
 
-# ── Kiểm tra và tự động tải modules khi chạy lần đầu ─────────────────────────
+# ── Hàm lấy phiên bản hiện tại từ file main.py ────────────────────────────────
+# ── Hàm lấy thông tin phiên bản từ file main.py ──────────────────────────────
+def get_current_app_version() -> str:
+    """Đọc phiên bản hiện tại từ header của main.py."""
+    try:
+        main_file = Path(__file__).resolve()
+        with open(main_file, "r", encoding="utf-8", errors="ignore") as f:
+            for _ in range(15):
+                line = f.readline()
+                if line.lower().startswith("# version:"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return "6.1.0"
+
+
+def get_current_app_date() -> str:
+    """Đọc ngày cập nhật hiện tại từ header của main.py."""
+    try:
+        main_file = Path(__file__).resolve()
+        with open(main_file, "r", encoding="utf-8", errors="ignore") as f:
+            for _ in range(15):
+                line = f.readline()
+                if line.lower().startswith("# date:"):
+                    return line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return datetime.date.today().strftime("%d/%m/%Y")
+
+
+def parse_version_tuple(v_str: str) -> tuple:
+    """Chuyển chuỗi version '6.1.0' thành tuple số (6, 1, 0) để so sánh số học."""
+    import re
+    if not v_str:
+        return (0, 0, 0)
+    nums = re.findall(r'\d+', str(v_str))
+    if not nums:
+        return (0, 0, 0)
+    return tuple(int(n) for n in nums)
+
+
+def extract_file_version_header(file_path: Path) -> dict:
+    """Đọc thông tin Version và Date từ 5 dòng đầu tiên của file python."""
+    info = {"version": "", "date": ""}
+    if not file_path.is_file():
+        return info
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+            for _ in range(5):
+                line = f.readline()
+                if not line:
+                    break
+                line_lower = line.lower().strip()
+                if line_lower.startswith("# version:"):
+                    info["version"] = line.split(":", 1)[1].strip()
+                elif line_lower.startswith("# date:"):
+                    info["date"] = line.split(":", 1)[1].strip()
+    except Exception:
+        pass
+    return info
+
+
+# ── SƠ ĐỒ KIẾN TRÚC HỆ THỐNG & DANH MỤC TẬP TIN CỐT LÕI (PROGRAM ARCHITECTURE MANIFEST) ──
+# Toàn bộ cây cấu trúc tập tin cốt lõi cần thiết để chạy phần mềm.
+# Chương trình quét sơ đồ này khi khởi động:
+#  1. File còn thiếu -> Tải thẳng từ GitHub về.
+#  2. Module có Version trong file < Version của main.py -> Đồng bộ lại từ GitHub.
+#  (Loại trừ các file data do người dùng tự sync, hoặc file cache/logs do app sinh ra).
+APP_ARCHITECTURE_MANIFEST = {
+    # ── 1. CÁC MODULE CHỨC NĂNG CỐT LÕI (BẮT BUỘC ĐỒNG BỘ VERSION VỚI MAIN.PY) ──
+    "modules": [
+        ("modules/__init__.py",        "Modules Package Init",    "Khởi tạo gói module hệ thống", True),
+        ("modules/workers.py",         "Background Workers",       "Quản lý worker kiểm tra server và luồng phụ", True),
+        ("modules/ui_helpers.py",      "UI Syntax Highlighter",    "Tô màu cú pháp Python code và helper giao diện", True),
+        ("modules/gemini_tab.py",      "Gemini AI Studio",         "Tích hợp AI Google Gemini hỗ trợ sinh thuật toán", True),
+        ("modules/optimizer.py",       "Genetic Algorithm Opt",    "Bộ đánh giá và tối ưu hóa tham số thuật toán di truyền", True),
+        ("modules/trial_play.py",      "Trial Play & Risk",        "Mô phỏng chơi thử, đánh giá vốn và quản lý rủi ro", True),
+        ("modules/news_widget.py",     "News & Announcements",     "Widget bảng tin cuộn thông báo từ máy chủ", True),
+        ("modules/update_workers.py",  "Update & Guide Sync",      "Worker cập nhật phần mềm và đồng bộ cẩm nang", True),
+        ("modules/json_bundle.py",     "JSON Bundle Executor",     "Nạp và thực thi các bundle thuật toán Thiên Cơ Số", True),
+        ("modules/lottery_support.py", "Multi-Lottery Support",    "Cấu hình 8 đài xổ số, trích xuất giải và kiểm tra trúng", True),
+    ],
+    # ── 2. THUẬT TOÁN NỀN TẢNG & MẪU ──────────────────────────────────────────
+    "algorithms": [
+        ("algorithms/__init__.py",             "Algorithms Package",       "Khởi tạo package thuật toán", True),
+        ("algorithms/base.py",                 "Base Algorithm Class",     "Lớp trừu tượng BaseAlgorithm nền tảng", True),
+        ("algorithms/thuat_toan_01.py",         "Sample Algorithm 01",      "Thuật toán mẫu: Tần suất điểm xuất hiện", False),
+        ("algorithms/thuat_toan_test_01.py",    "Sample Algorithm Test 01", "Thuật toán mẫu: Số ngày chưa về (gan cực đại)", False),
+        ("algorithms/thuat_toan_test_02.py",    "Sample Algorithm Test 02", "Thuật toán mẫu: Kiểm tra chu kỳ lặp", False),
+        ("algorithms/thuat_toan_test_03.py",    "Sample Algorithm Test 03", "Thuật toán mẫu: Tần suất 30 ngày gần nhất", False),
+    ],
+    # ── 3. CÔNG CỤ BỔ TRỢ & HƯỚNG DẪN ─────────────────────────────────────────
+    "tools_and_guide": [
+        ("tools/__init__.py",         "Tools Package",           "Gói công cụ mở rộng", False),
+        ("tools/date-optimize.pyw",   "Date Optimizer Tool",      "Công cụ tối ưu hóa chuỗi ngày độc lập", False),
+        ("guide/index.txt",           "Guide Index",             "Chỉ mục cẩm nang hướng dẫn sử dụng", False),
+        ("guide/guide.txt",           "Guide Content",           "Nội dung cẩm nang hướng dẫn chi tiết", False),
+    ]
+}
+
+
+# ── Kiểm tra sơ đồ chương trình và quét version trong các module để tự động đồng bộ ──
 def check_and_download_required_files():
     base_dir = Path(__file__).parent.resolve()
     repo_raw = "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/main"
     cdn_raw = "https://cdn.jsdelivr.net/gh/junlangzi/Lottery-Predictor@main"
 
-    # Danh sách tất cả file cần thiết để chương trình hoạt động trọn vẹn
-    required_files = [
-        # 1. Các module chức năng cốt lõi
-        ("modules/__init__.py", True),
-        ("modules/workers.py", True),
-        ("modules/ui_helpers.py", True),
-        ("modules/gemini_tab.py", True),
-        ("modules/optimizer.py", True),
-        ("modules/trial_play.py", True),
-        ("modules/news_widget.py", True),
-        ("modules/update_workers.py", True),
-        ("modules/json_bundle.py", True),
-
-        # 2. Thuật toán nền tảng & thuật toán mẫu
-        ("algorithms/__init__.py", True),
-        ("algorithms/base.py", True),
-        ("algorithms/thuat_toan_01.py", False),
-        ("algorithms/thuat_toan_test_01.py", False),
-        ("algorithms/thuat_toan_test_02.py", False),
-        ("algorithms/thuat_toan_test_03.py", False),
-
-        # 3. Dữ liệu kết quả xổ số
-        ("data/xsmb-2-digits.json", True),
-
-        # 4. Cấu hình & biểu tượng
-        ("config/logo.png", False),
-        ("config/settings.ini", False),
-
-        # 5. Công cụ bổ trợ
-        ("tools/__init__.py", False),
-        ("tools/date-optimize.pyw", False),
-
-        # 6. Hướng dẫn sử dụng
-        ("guide/index.txt", False),
-        ("guide/guide.txt", False),
-    ]
-
     # Tạo trước các thư mục cần thiết
     for folder in ["modules", "algorithms", "data", "config", "tools", "guide", "cache", "calculate", "logs", "optimize", "training"]:
         (base_dir / folder).mkdir(parents=True, exist_ok=True)
 
-    missing_files = [item for item in required_files if not (base_dir / item[0]).exists()]
-    if not missing_files:
+    main_ver_str = get_current_app_version()
+    main_date_str = get_current_app_date()
+    main_ver_tuple = parse_version_tuple(main_ver_str)
+    marker_file = base_dir / "config" / ".modules_synced_version"
+
+    # Quét theo sơ đồ kiến trúc hệ thống
+    files_to_sync = []  # List of tuples: (rel_path, is_critical, reason_str)
+    modules_to_update = []
+
+    # 1. Quét các module: so sánh version trong header với version của main.py
+    for rel_path, name, desc, is_crit in APP_ARCHITECTURE_MANIFEST["modules"]:
+        target_path = base_dir / rel_path
+        if not target_path.exists():
+            files_to_sync.append((rel_path, is_crit, "Chưa có file trong hệ thống"))
+            modules_to_update.append(rel_path)
+        else:
+            hdr = extract_file_version_header(target_path)
+            mod_ver_str = hdr.get("version", "")
+            mod_ver_tuple = parse_version_tuple(mod_ver_str)
+            if mod_ver_tuple < main_ver_tuple:
+                files_to_sync.append((rel_path, is_crit, f"Version cũ ({mod_ver_str or 'trống'} < {main_ver_str})"))
+                modules_to_update.append(rel_path)
+
+    # 2. Quét các file hệ thống khác trong sơ đồ (algorithms, tools, guide)
+    for group_key in ["algorithms", "tools_and_guide"]:
+        for rel_path, name, desc, is_crit in APP_ARCHITECTURE_MANIFEST[group_key]:
+            target_path = base_dir / rel_path
+            if not target_path.exists():
+                files_to_sync.append((rel_path, is_crit, "Thiếu tập tin hệ thống"))
+
+    # Nếu tất cả đã đủ và version modules đều >= main.py -> Bỏ qua đồng bộ, khởi động ngay!
+    if not files_to_sync:
+        main_logger.info(f"✓ Sơ đồ kiến trúc toàn vẹn: Toàn bộ {len(APP_ARCHITECTURE_MANIFEST['modules'])} modules đều đạt phiên bản {main_ver_str}. Khởi động ngay.")
+        try:
+            marker_file.write_text(main_ver_str, encoding="utf-8")
+        except Exception:
+            pass
         return
 
-    main_logger.warning(f"Phát hiện thiếu {len(missing_files)} file/module cần thiết. Đang chuẩn bị tải từ GitHub (junlangzi/Lottery-Predictor)...")
+    main_logger.warning(f"Phát hiện {len(files_to_sync)} file cần đồng bộ từ GitHub (main.py v{main_ver_str}):")
+    for f_rel, f_crit, f_reason in files_to_sync:
+        main_logger.warning(f"  - {f_rel}: {f_reason}")
 
-    # Hiển thị hộp thoại giao diện trực quan thông báo cho người dùng
+    # Sao lưu các module hiện có trước khi cập nhật
+    modules_dir = base_dir / "modules"
+    backup_dir = base_dir / "cache" / f"modules_backup_{main_ver_str}"
+    if modules_to_update:
+        try:
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            for item in modules_dir.glob("*.py"):
+                shutil.copy2(item, backup_dir / item.name)
+        except Exception as e_bk:
+            main_logger.debug(f"Sao lưu modules: {e_bk}")
+
+    # Hiển thị giao diện trực quan thông báo tiến trình đồng bộ
     app = None
     dialog = None
     progress_bar = None
-    status_label = None
     file_label = None
 
     if HAS_PYQT5:
@@ -181,8 +294,8 @@ def check_and_download_required_files():
                 app = QApplication(sys.argv)
 
             dialog = QDialog()
-            dialog.setWindowTitle("Lottery Predictor - Tải Tài Nguyên Ban Đầu")
-            dialog.setFixedSize(520, 220)
+            dialog.setWindowTitle(f"Lottery Predictor - Đồng Bộ Modules & Hệ Thống (v{main_ver_str})")
+            dialog.setFixedSize(540, 230)
             dialog.setWindowFlags(Qt.Dialog | Qt.WindowTitleHint | Qt.CustomizeWindowHint)
             dialog.setStyleSheet("""
                 QDialog {
@@ -213,14 +326,14 @@ def check_and_download_required_files():
             d_layout.setContentsMargins(24, 20, 24, 20)
             d_layout.setSpacing(10)
 
-            title_lbl = QLabel("🚀 <b>Đang tải tài nguyên & module lần đầu...</b>")
+            title_lbl = QLabel(f"🚀 <b>Đang đồng bộ sơ đồ modules cho phiên bản {main_ver_str}...</b>")
             title_lbl.setStyleSheet("font-size: 11pt; color: #0077b6;")
             d_layout.addWidget(title_lbl)
 
-            status_label = QLabel(f"Phát hiện thiếu {len(missing_files)} file/module cần thiết cho ứng dụng.\nĐang tự động tải về từ GitHub chính thức...")
-            status_label.setStyleSheet("font-size: 9.5pt; color: #475569;")
-            status_label.setWordWrap(True)
-            d_layout.addWidget(status_label)
+            desc_lbl = QLabel(f"Quét sơ đồ hệ thống phát hiện {len(files_to_sync)} file cần cập nhật/đồng bộ từ GitHub chính thức...")
+            desc_lbl.setStyleSheet("font-size: 9.5pt; color: #475569;")
+            desc_lbl.setWordWrap(True)
+            d_layout.addWidget(desc_lbl)
 
             d_layout.addSpacing(5)
 
@@ -229,14 +342,14 @@ def check_and_download_required_files():
             d_layout.addWidget(file_label)
 
             progress_bar = QProgressBar()
-            progress_bar.setRange(0, len(missing_files))
+            progress_bar.setRange(0, len(files_to_sync))
             progress_bar.setValue(0)
             d_layout.addWidget(progress_bar)
 
             dialog.show()
             app.processEvents()
         except Exception as e_dlg:
-            main_logger.debug(f"Không thể khởi tạo hộp thoại tải: {e_dlg}")
+            main_logger.debug(f"Không thể khởi tạo hộp thoại đồng bộ: {e_dlg}")
             dialog = None
 
     import urllib.request
@@ -249,18 +362,38 @@ def check_and_download_required_files():
     success_count = 0
     failed_critical = []
 
-    for idx, (rel_path, is_critical) in enumerate(missing_files, 1):
+    for idx, (rel_path, is_critical, reason) in enumerate(files_to_sync, 1):
         target_path = base_dir / rel_path
         target_path.parent.mkdir(parents=True, exist_ok=True)
 
         if file_label:
-            file_label.setText(f"Đang tải ({idx}/{len(missing_files)}): {rel_path} ...")
+            file_label.setText(f"Đang đồng bộ ({idx}/{len(files_to_sync)}): {rel_path} ({reason})...")
         if progress_bar:
             progress_bar.setValue(idx - 1)
         if app:
             app.processEvents()
 
-        main_logger.info(f"Đang tải ({idx}/{len(missing_files)}): {rel_path}...")
+        # Riêng modules/lottery_support.py: Nếu là file mở rộng nội bộ chưa đẩy lên GitHub upstream
+        if rel_path == "modules/lottery_support.py" and target_path.exists():
+            try:
+                txt = target_path.read_text(encoding="utf-8", errors="replace")
+                lines = txt.splitlines(keepends=True)
+                hdr_count = 0
+                for l in lines[:5]:
+                    if l.lower().startswith("# version:") or l.lower().startswith("# date:"):
+                        hdr_count += 1
+                new_body = lines[hdr_count:]
+                new_hdr = f"# Version: {main_ver_str}\n# Date: {main_date_str}\n"
+                target_path.write_text(new_hdr + "".join(new_body), encoding="utf-8", newline="\n")
+                success_count += 1
+                main_logger.info(f"Đã cập nhật header version {main_ver_str} cho {rel_path}")
+                if progress_bar: progress_bar.setValue(idx)
+                if app: app.processEvents()
+                continue
+            except Exception as e_hdr:
+                main_logger.debug(f"Cập nhật header lottery_support.py: {e_hdr}")
+
+        main_logger.info(f"Đang tải ({idx}/{len(files_to_sync)}): {rel_path}...")
 
         urls_to_try = [
             f"{repo_raw}/{rel_path}",
@@ -274,7 +407,7 @@ def check_and_download_required_files():
                     req = urllib.request.Request(
                         url,
                         headers={
-                            'User-Agent': 'LotteryPredictor-Bootstrap/6.0',
+                            'User-Agent': f'LotteryPredictor-Bootstrap/{main_ver_str}',
                             'Accept': '*/*'
                         }
                     )
@@ -284,33 +417,79 @@ def check_and_download_required_files():
                         unverified_ctx = ssl._create_unverified_context()
                         resp = urllib.request.urlopen(req, timeout=15, context=unverified_ctx)
 
-                    with resp, open(target_path, 'wb') as out_f:
-                        out_f.write(resp.read())
+                    raw_data = resp.read()
+                    if raw_data:
+                        # Với các file .py trong modules: bảo đảm luôn có 2 dòng version & date ở đầu
+                        if rel_path.startswith("modules/") and rel_path.endswith(".py"):
+                            try:
+                                code_str = raw_data.decode("utf-8", errors="replace")
+                                lines = code_str.splitlines(keepends=True)
+                                h_count = 0
+                                for l in lines[:5]:
+                                    if l.lower().startswith("# version:") or l.lower().startswith("# date:"):
+                                        h_count += 1
+                                rem = lines[h_count:]
+                                final_code = f"# Version: {main_ver_str}\n# Date: {main_date_str}\n" + "".join(rem)
+                                target_path.write_text(final_code, encoding="utf-8", newline="\n")
+                            except Exception:
+                                with open(target_path, 'wb') as out_f:
+                                    out_f.write(raw_data)
+                        else:
+                            with open(target_path, 'wb') as out_f:
+                                out_f.write(raw_data)
 
-                    if target_path.exists() and target_path.stat().st_size >= 0:
-                        downloaded = True
-                        success_count += 1
-                        main_logger.info(f"Tải thành công: {rel_path} ({target_path.stat().st_size} bytes)")
-                        break
+                        if target_path.exists() and target_path.stat().st_size >= 0:
+                            downloaded = True
+                            success_count += 1
+                            main_logger.info(f"Đồng bộ thành công: {rel_path} ({target_path.stat().st_size} bytes)")
+                            break
                 except Exception as dl_err:
                     main_logger.warning(f"Thử lần {attempt} tải {rel_path} từ {url} không thành công: {dl_err}")
             if downloaded:
                 break
 
         if not downloaded and is_critical:
-            failed_critical.append(rel_path)
+            # Nếu lottery_support.py lỗi download nhưng backup có -> khôi phục từ backup
+            if rel_path == "modules/lottery_support.py" and (backup_dir / "lottery_support.py").exists():
+                shutil.copy2(backup_dir / "lottery_support.py", target_path)
+                success_count += 1
+            else:
+                failed_critical.append(rel_path)
 
         if progress_bar:
             progress_bar.setValue(idx)
         if app:
             app.processEvents()
 
+    # Bảo đảm lottery_support.py luôn nguyên vẹn
+    lottery_supp = modules_dir / "lottery_support.py"
+    if not lottery_supp.exists() and (backup_dir / "lottery_support.py").exists():
+        try:
+            shutil.copy2(backup_dir / "lottery_support.py", lottery_supp)
+        except Exception:
+            pass
+
+    if not failed_critical:
+        try:
+            marker_file.write_text(main_ver_str, encoding="utf-8")
+            main_logger.info(f"Đã hoàn tất đồng bộ toàn bộ modules theo sơ đồ cho phiên bản {main_ver_str}.")
+        except Exception as e_write_flag:
+            main_logger.warning(f"Không thể ghi cờ phiên bản: {e_write_flag}")
+    else:
+        main_logger.warning("Đồng bộ modules gặp lỗi mạng một số file. Đang khôi phục từ bản sao lưu...")
+        try:
+            for bk_file in backup_dir.glob("*.py"):
+                if not (modules_dir / bk_file.name).exists():
+                    shutil.copy2(bk_file, modules_dir / bk_file.name)
+        except Exception:
+            pass
+
     if file_label:
         if failed_critical:
-            file_label.setText(f"⚠️ Có {len(failed_critical)} file tải thất bại. Vui lòng kiểm tra mạng.")
+            file_label.setText(f"⚠️ Có {len(failed_critical)} file tải thất bại. Vui lòng kiểm tra kết nối mạng.")
             file_label.setStyleSheet("font-size: 9pt; font-weight: 600; color: #dc2626;")
         else:
-            file_label.setText("✅ Hoàn tất tải toàn bộ tài nguyên! Đang khởi động...")
+            file_label.setText(f"✅ Sơ đồ modules đã đồng bộ hoàn tất (v{main_ver_str})! Đang khởi động...")
             file_label.setStyleSheet("font-size: 9.5pt; font-weight: 600; color: #16a34a;")
         if app:
             app.processEvents()
@@ -323,7 +502,7 @@ def check_and_download_required_files():
         except Exception:
             pass
 
-    main_logger.info(f"Hoàn tất quá trình tải tài nguyên: {success_count}/{len(missing_files)} file.")
+    main_logger.info(f"Hoàn tất quá trình đồng bộ: {success_count}/{len(files_to_sync)} file.")
     if failed_critical:
         msg = f"Không thể tải các module quan trọng sau từ GitHub:\n" + "\n".join(f"- {f}" for f in failed_critical)
         main_logger.critical(msg)
@@ -421,7 +600,7 @@ def _download_missing_module(module_rel_path: str) -> bool:
     for _url in _urls:
         for _ctx in _ctx_list:
             try:
-                _req = urllib.request.Request(_url, headers={'User-Agent': 'LotteryPredictor-Bootstrap/6.0'})
+                _req = urllib.request.Request(_url, headers={'User-Agent': 'LotteryPredictor-Bootstrap/6.1.0'})
                 _kwargs = {"timeout": 25}
                 if _ctx is not None:
                     _kwargs["context"] = _ctx
@@ -504,12 +683,19 @@ PerformUpdateWorker       = _imported["PerformUpdateWorker"]
 JsonBundleAlgorithm       = _imported["JsonBundleAlgorithm"]
 is_json_bundle_file       = _imported["is_json_bundle_file"]
 
+from modules.lottery_support import (
+    LOTTERY_PROFILES, LOTTERY_ORDER, get_lottery_profile,
+    get_lottery_prefix, get_data_filepath, format_number_for_lottery,
+    is_valid_draw_date, get_next_draw_date, get_prev_draw_date,
+    parse_lottery_file, extract_numbers_for_lottery, extract_numbers_for_lottery_with_special, evaluate_win,
+    detect_algorithm_lottery_type, sync_lottery_data, cleanup_temp_files
+)
 
 
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Lottery Predictor (v6.0.1)")
+        self.setWindowTitle("Lottery Predictor (v6.1.0)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
@@ -538,6 +724,12 @@ class LotteryPredictionApp(QMainWindow):
 
         self.results = []
         self.selected_date = None
+        self.current_lottery_type = "xsmb"
+        self.lottery_type_combo = None
+        self.suppress_mismatch_warning = False
+        self._session_mismatch_confirmed = False
+        self.sync_url_edits = {}
+        self.auto_sync_checkboxes = {}
         self.algorithms = {}
         self.algorithm_instances = {}
         self.loaded_tools = {}
@@ -1017,7 +1209,7 @@ class LotteryPredictionApp(QMainWindow):
 
         self.top_status_toolbar.addWidget(QLabel("  "))
 
-        self.top_version_label = QLabel("Phiên bản: 6.0.1")
+        self.top_version_label = QLabel("Phiên bản: 6.1.0")
         self.top_version_label.setObjectName("TopVersionLabel")
         self.top_status_toolbar.addWidget(self.top_version_label)
 
@@ -1099,29 +1291,511 @@ class LotteryPredictionApp(QMainWindow):
         except Exception as e:
              main_logger.error(f"Error creating directories: {e}", exc_info=True)
 
+    def _render_vietlott_kqxs(self, cur_lot: str, prof: dict, target_date: datetime.date, day_of_week: str, result_data: Any):
+        """Render giao diện xem kết quả xổ số đẹp mắt, chuyên biệt cho từng loại xổ số Vietlott."""
+        if hasattr(self, 'kqxs_results_stack'):
+            self.kqxs_results_stack.setCurrentIndex(1)
+
+        if not hasattr(self, 'vietlott_results_layout') or self.vietlott_results_layout is None:
+            return
+
+        # Dọn dẹp giao diện cũ
+        while self.vietlott_results_layout.count() > 0:
+            child = self.vietlott_results_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        # 1. Header Frame
+        header_frame = QFrame()
+        header_frame.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #f8fafc, stop:1 #edf2f7);
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+            }
+        """)
+        h_layout = QVBoxLayout(header_frame)
+        h_layout.setContentsMargins(10, 8, 10, 8)
+        h_layout.setSpacing(4)
+
+        draw_id = ""
+        if isinstance(result_data, dict):
+            draw_id = str(result_data.get('id', '') or '')
+        id_text = f" &bull; Kỳ quay: <b style='color:#0f172a;'>#{draw_id}</b>" if draw_id else ""
+        header_html = f"""
+            <div style='font-size:15pt; font-weight:bold; color:#1e293b; text-align:center;'>{prof['name'].upper()}</div>
+            <div style='font-size:11pt; color:#475569; text-align:center;'>{day_of_week}, ngày <b>{target_date.strftime('%d/%m/%Y')}</b>{id_text}</div>
+            <div style='font-size:9.5pt; color:#64748b; text-align:center; margin-top:2px;'>Lịch quay: {prof.get('desc', '')}</div>
+        """
+        lbl_head = QLabel(header_html)
+        lbl_head.setTextFormat(Qt.RichText)
+        lbl_head.setAlignment(Qt.AlignCenter)
+        h_layout.addWidget(lbl_head)
+        self.vietlott_results_layout.addWidget(header_frame)
+
+        # 2. Results Frame (Bóng / Số quay thưởng)
+        num_frame = QFrame()
+        num_frame.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border: 1px solid #cbd5e1;
+                border-radius: 8px;
+            }
+        """)
+        num_layout = QVBoxLayout(num_frame)
+        num_layout.setContentsMargins(12, 12, 12, 12)
+        num_layout.setSpacing(10)
+
+        drawn_nums = extract_numbers_for_lottery(cur_lot, result_data)
+
+        if cur_lot == 'power_645':
+            lbl_sec = QLabel("<b style='font-size:12pt; color:#dc2626;'>BỘ SỐ TRÚNG THƯỞNG (6 BÓNG)</b>")
+            lbl_sec.setAlignment(Qt.AlignCenter)
+            num_layout.addWidget(lbl_sec)
+
+            balls_widget = QWidget()
+            balls_l = QHBoxLayout(balls_widget)
+            balls_l.setAlignment(Qt.AlignCenter)
+            balls_l.setSpacing(12)
+            for n in drawn_nums[:6]:
+                lbl_ball = QLabel(f"{n:02d}")
+                lbl_ball.setAlignment(Qt.AlignCenter)
+                lbl_ball.setStyleSheet("""
+                    QLabel {
+                        background: qradialgradient(cx:0.35, cy:0.35, radius: 0.8, fx:0.35, fy:0.35, stop:0 #ff4d4f, stop:1 #cf1322);
+                        color: white;
+                        font-size: 20pt;
+                        font-weight: bold;
+                        border-radius: 28px;
+                        min-width: 56px; max-width: 56px;
+                        min-height: 56px; max-height: 56px;
+                    }
+                """)
+                balls_l.addWidget(lbl_ball)
+            num_layout.addWidget(balls_widget)
+
+        elif cur_lot == 'power_655':
+            main_set, spec_val = extract_numbers_for_lottery_with_special("power_655", result_data)
+            main_list = sorted(list(main_set))[:6]
+
+            lbl_sec = QLabel("<b style='font-size:12pt; color:#dc2626;'>BỘ SỐ TRÚNG THƯỞNG (6 BÓNG CHÍNH + 1 BÓNG ĐẶC BIỆT)</b>")
+            lbl_sec.setAlignment(Qt.AlignCenter)
+            num_layout.addWidget(lbl_sec)
+
+            balls_widget = QWidget()
+            balls_l = QHBoxLayout(balls_widget)
+            balls_l.setAlignment(Qt.AlignCenter)
+            balls_l.setSpacing(10)
+            for n in main_list:
+                lbl_ball = QLabel(f"{n:02d}")
+                lbl_ball.setAlignment(Qt.AlignCenter)
+                lbl_ball.setStyleSheet("""
+                    QLabel {
+                        background: qradialgradient(cx:0.35, cy:0.35, radius: 0.8, fx:0.35, fy:0.35, stop:0 #ff4d4f, stop:1 #cf1322);
+                        color: white;
+                        font-size: 20pt;
+                        font-weight: bold;
+                        border-radius: 28px;
+                        min-width: 56px; max-width: 56px;
+                        min-height: 56px; max-height: 56px;
+                    }
+                """)
+                balls_l.addWidget(lbl_ball)
+
+            lbl_plus = QLabel("+")
+            lbl_plus.setStyleSheet("font-size: 24pt; font-weight: bold; color: #64748b; padding: 0 4px;")
+            balls_l.addWidget(lbl_plus)
+
+            if spec_val is not None:
+                lbl_spec = QLabel(f"{spec_val:02d}")
+                lbl_spec.setToolTip("Số đặc biệt Jackpot 2")
+                lbl_spec.setAlignment(Qt.AlignCenter)
+                lbl_spec.setStyleSheet("""
+                    QLabel {
+                        background: qradialgradient(cx:0.35, cy:0.35, radius: 0.8, fx:0.35, fy:0.35, stop:0 #ffd43b, stop:1 #e67700);
+                        color: #1a1a1a;
+                        font-size: 20pt;
+                        font-weight: bold;
+                        border-radius: 28px;
+                        min-width: 56px; max-width: 56px;
+                        min-height: 56px; max-height: 56px;
+                        border: 2px solid #f59f00;
+                    }
+                """)
+                balls_l.addWidget(lbl_spec)
+            num_layout.addWidget(balls_widget)
+
+        elif cur_lot == 'power_535':
+            main_set, spec_val = extract_numbers_for_lottery_with_special("power_535", result_data)
+            main_list = sorted(list(main_set))[:5]
+
+            lbl_sec = QLabel("<b style='font-size:12pt; color:#7048e8;'>BỘ SỐ TRÚNG THƯỞNG (5 BÓNG CHÍNH + 1 BÓNG ĐẶC BIỆT)</b>")
+            lbl_sec.setAlignment(Qt.AlignCenter)
+            num_layout.addWidget(lbl_sec)
+
+            balls_widget = QWidget()
+            balls_l = QHBoxLayout(balls_widget)
+            balls_l.setAlignment(Qt.AlignCenter)
+            balls_l.setSpacing(10)
+            for n in main_list:
+                lbl_ball = QLabel(f"{n:02d}")
+                lbl_ball.setAlignment(Qt.AlignCenter)
+                lbl_ball.setStyleSheet("""
+                    QLabel {
+                        background: qradialgradient(cx:0.35, cy:0.35, radius: 0.8, fx:0.35, fy:0.35, stop:0 #845ef7, stop:1 #5f3dc4);
+                        color: white;
+                        font-size: 20pt;
+                        font-weight: bold;
+                        border-radius: 28px;
+                        min-width: 56px; max-width: 56px;
+                        min-height: 56px; max-height: 56px;
+                    }
+                """)
+                balls_l.addWidget(lbl_ball)
+
+            if spec_val is not None:
+                lbl_plus = QLabel("+")
+                lbl_plus.setStyleSheet("font-size: 24pt; font-weight: bold; color: #64748b; padding: 0 4px;")
+                balls_l.addWidget(lbl_plus)
+
+                lbl_spec = QLabel(f"{spec_val:02d}")
+                lbl_spec.setAlignment(Qt.AlignCenter)
+                lbl_spec.setStyleSheet("""
+                    QLabel {
+                        background: qradialgradient(cx:0.35, cy:0.35, radius: 0.8, fx:0.35, fy:0.35, stop:0 #ffd43b, stop:1 #e67700);
+                        color: #1a1a1a;
+                        font-size: 20pt;
+                        font-weight: bold;
+                        border-radius: 28px;
+                        min-width: 56px; max-width: 56px;
+                        min-height: 56px; max-height: 56px;
+                        border: 2px solid #f59f00;
+                    }
+                """)
+                balls_l.addWidget(lbl_spec)
+            num_layout.addWidget(balls_widget)
+
+        elif cur_lot == 'keno':
+            lbl_sec = QLabel("<b style='font-size:12pt; color:#1864ab;'>KẾT QUẢ KENO (20 BÓNG MỞ THƯỞNG)</b>")
+            lbl_sec.setAlignment(Qt.AlignCenter)
+            num_layout.addWidget(lbl_sec)
+
+            keno_grid_w = QWidget()
+            keno_grid = QGridLayout(keno_grid_w)
+            keno_grid.setSpacing(6)
+            keno_grid.setAlignment(Qt.AlignCenter)
+            for idx, n in enumerate(drawn_nums[:20]):
+                r, c = idx // 10, idx % 10
+                b = QLabel(f"{n:02d}")
+                b.setAlignment(Qt.AlignCenter)
+                b.setStyleSheet("""
+                    QLabel {
+                        background: qradialgradient(cx:0.35, cy:0.35, radius: 0.8, fx:0.35, fy:0.35, stop:0 #339af0, stop:1 #1864ab);
+                        color: white;
+                        font-size: 13pt;
+                        font-weight: bold;
+                        border-radius: 20px;
+                        min-width: 40px; max-width: 40px;
+                        min-height: 40px; max-height: 40px;
+                    }
+                """)
+                keno_grid.addWidget(b, r, c)
+            num_layout.addWidget(keno_grid_w)
+
+        elif cur_lot == 'bingo18':
+            raw_res = result_data.get('result', []) if isinstance(result_data, dict) else result_data
+            if not isinstance(raw_res, (list, tuple)):
+                raw_res = extract_numbers_for_lottery(cur_lot, result_data)
+            dice_list = list(raw_res)[:3]
+
+            lbl_sec = QLabel("<b style='font-size:12pt; color:#e03131;'>KẾT QUẢ QUAY BINGO 18 (3 VIÊN XÚC XẮC)</b>")
+            lbl_sec.setAlignment(Qt.AlignCenter)
+            num_layout.addWidget(lbl_sec)
+
+            dice_w = QWidget()
+            dice_l = QHBoxLayout(dice_w)
+            dice_l.setAlignment(Qt.AlignCenter)
+            dice_l.setSpacing(18)
+            for v in dice_list:
+                lbl_d = QLabel(str(v))
+                lbl_d.setAlignment(Qt.AlignCenter)
+                lbl_d.setStyleSheet("""
+                    QLabel {
+                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #fa5252, stop:1 #c92a2a);
+                        color: white;
+                        font-size: 26pt;
+                        font-weight: bold;
+                        border: 3px solid #ff8787;
+                        border-radius: 12px;
+                        min-width: 60px; max-width: 60px;
+                        min-height: 60px; max-height: 60px;
+                    }
+                """)
+                dice_l.addWidget(lbl_d)
+            num_layout.addWidget(dice_w)
+
+        elif cur_lot in ('3d', '3d_pro'):
+            lbl_sec = QLabel(f"<b style='font-size:12pt; color:#0c8599;'>CÁC BỘ SỐ MỞ THƯỞNG {prof['name'].upper()}</b>")
+            lbl_sec.setAlignment(Qt.AlignCenter)
+            num_layout.addWidget(lbl_sec)
+
+            table_3d = QWidget()
+            layout_3d = QVBoxLayout(table_3d)
+            layout_3d.setSpacing(6)
+
+            prize_order = ['Giải Đặc biệt', 'Giải Nhất', 'Giải Nhì', 'Giải Ba', 'Giải Tư', 'Giải Năm', 'Giải Sáu', 'Giải Bảy']
+            found_any_prize = False
+            if isinstance(result_data, dict):
+                for p_name in prize_order:
+                    p_nums = result_data.get(p_name)
+                    if not p_nums:
+                        continue
+                    found_any_prize = True
+                    if not isinstance(p_nums, list):
+                        p_nums = [p_nums]
+
+                    row_w = QWidget()
+                    row_l = QHBoxLayout(row_w)
+                    row_l.setContentsMargins(0, 2, 0, 2)
+                    row_l.setSpacing(8)
+
+                    lbl_pname = QLabel(f"<b>{p_name}:</b>")
+                    lbl_pname.setFixedWidth(110)
+                    lbl_pname.setStyleSheet("color: #475569; font-size: 10pt;")
+                    row_l.addWidget(lbl_pname)
+
+                    for item in p_nums:
+                        s_val = str(item).strip()
+                        badge = QLabel(s_val)
+                        badge.setAlignment(Qt.AlignCenter)
+                        is_special = "Đặc biệt" in p_name
+                        bg_col = "#fee2e2" if is_special else "#f1f5f9"
+                        border_col = "#fca5a5" if is_special else "#cbd5e1"
+                        txt_col = "#dc2626" if is_special else "#1e293b"
+                        badge.setStyleSheet(f"""
+                            QLabel {{
+                                background-color: {bg_col};
+                                color: {txt_col};
+                                border: 1px solid {border_col};
+                                border-radius: 6px;
+                                padding: 4px 8px;
+                                font-size: 12pt;
+                                font-weight: bold;
+                            }}
+                        """)
+                        row_l.addWidget(badge)
+                    row_l.addStretch(1)
+                    layout_3d.addWidget(row_w)
+
+            if not found_any_prize and drawn_nums:
+                badge_row = QWidget()
+                b_layout = QHBoxLayout(badge_row)
+                b_layout.setSpacing(8)
+                for n in drawn_nums:
+                    lbl_n = QLabel(f"{n:02d}")
+                    lbl_n.setStyleSheet("background:#f1f5f9; border:1px solid #cbd5e1; border-radius:4px; padding:4px 8px; font-weight:bold;")
+                    b_layout.addWidget(lbl_n)
+                b_layout.addStretch(1)
+                layout_3d.addWidget(badge_row)
+
+            num_layout.addWidget(table_3d)
+
+        self.vietlott_results_layout.addWidget(num_frame)
+
+        # 3. Prize Rules & Minimum Prize Card
+        info_frame = QFrame()
+        info_frame.setStyleSheet("""
+            QFrame {
+                background-color: #f8fafc;
+                border: 1px solid #e2e8f0;
+                border-radius: 8px;
+            }
+        """)
+        info_layout = QVBoxLayout(info_frame)
+        info_layout.setContentsMargins(12, 10, 12, 10)
+        info_layout.setSpacing(6)
+
+        lbl_rule_title = QLabel("<b>📋 QUY ĐỊNH GIẢI THƯỞNG & ĐÁNH GIÁ THUẬT TOÁN</b>")
+        lbl_rule_title.setStyleSheet("color: #334155; font-size: 10.5pt;")
+        info_layout.addWidget(lbl_rule_title)
+
+        rule_html = ""
+        if cur_lot == 'power_645':
+            rule_html = """
+            <table width='100%' style='border-collapse:collapse; font-size:9.5pt;'>
+              <tr style='background:#f1f5f9;'><th align='left' style='padding:4px;'>Giải</th><th align='center'>Điều kiện trúng</th><th align='right' style='padding:4px;'>Giải thưởng</th></tr>
+              <tr><td style='padding:3px;'>🏆 Jackpot</td><td align='center'>Trùng 6 số</td><td align='right' style='color:#dc2626; font-weight:bold;'>≥ 12 Tỷ VNĐ</td></tr>
+              <tr><td style='padding:3px;'>🥇 Giải Nhất</td><td align='center'>Trùng 5 số</td><td align='right'>10.000.000 VNĐ</td></tr>
+              <tr><td style='padding:3px;'>🥈 Giải Nhì</td><td align='center'>Trùng 4 số</td><td align='right'>300.000 VNĐ</td></tr>
+              <tr style='background:#fef2f2; font-weight:bold; color:#dc2626;'><td style='padding:3px;'>🥉 Giải Ba (Nhỏ nhất)</td><td align='center'>Trùng 3 số</td><td align='right'>30.000 VNĐ</td></tr>
+            </table>
+            <div style='margin-top:6px; color:#475569; font-size:9pt;'><b>⚡ Đánh giá thuật toán:</b> Lấy <b>6 số</b> có điểm cao nhất. Nếu có <b>≥ 3 số</b> trùng với kết quả thì tính là <b>TRÚNG</b>.</div>
+            """
+        elif cur_lot == 'power_655':
+            rule_html = """
+            <table width='100%' style='border-collapse:collapse; font-size:9.5pt;'>
+              <tr style='background:#f1f5f9;'><th align='left' style='padding:4px;'>Giải</th><th align='center'>Điều kiện trúng</th><th align='right' style='padding:4px;'>Giải thưởng</th></tr>
+              <tr><td style='padding:3px;'>🏆 Jackpot 1</td><td align='center'>Trùng 6 số chính</td><td align='right' style='color:#dc2626; font-weight:bold;'>≥ 30 Tỷ VNĐ</td></tr>
+              <tr><td style='padding:3px;'>🌟 Jackpot 2</td><td align='center'>Trùng 5 số + 1 số đặc biệt</td><td align='right' style='color:#d97706; font-weight:bold;'>≥ 3 Tỷ VNĐ</td></tr>
+              <tr><td style='padding:3px;'>🥇 Giải Nhất</td><td align='center'>Trùng 5 số chính</td><td align='right'>40.000.000 VNĐ</td></tr>
+              <tr><td style='padding:3px;'>🥈 Giải Nhì</td><td align='center'>Trùng 4 số chính</td><td align='right'>500.000 VNĐ</td></tr>
+              <tr style='background:#fef2f2; font-weight:bold; color:#dc2626;'><td style='padding:3px;'>🥉 Giải Ba (Nhỏ nhất)</td><td align='center'>Trùng 3 số chính</td><td align='right'>50.000 VNĐ</td></tr>
+            </table>
+            <div style='margin-top:6px; color:#475569; font-size:9pt;'><b>⚡ Đánh giá thuật toán:</b> Lấy <b>6 số</b> có điểm cao nhất. Nếu có <b>≥ 3 số</b> trùng 6 số chính thì tính là <b>TRÚNG</b>.</div>
+            """
+        elif cur_lot == 'power_535':
+            rule_html = """
+            <div style='font-size:9.5pt; color:#334155; line-height:1.5;'>
+              • <b>Giải Tư / Khuyến khích (Giải nhỏ nhất):</b> Trùng <b>2 số</b> so với kết quả (<b>20.000 VNĐ</b>).<br>
+              • <b>⚡ Đánh giá thuật toán:</b> Lấy <b>5 số</b> có điểm cao nhất. Nếu có <b>≥ 2 số</b> trùng thì tính là <b>TRÚNG</b>.
+            </div>
+            """
+        elif cur_lot == '3d':
+            rule_html = """
+            <div style='font-size:9.5pt; color:#334155; line-height:1.5;'>
+              • <b>Giải Ba (Giải nhỏ nhất):</b> Trùng đúng 1 bộ 3 số khớp với 1 trong 8 bộ quay thưởng giải Ba (<b>100.000 VNĐ</b>).<br>
+              • <b>⚡ Đánh giá thuật toán:</b> Dự đoán bộ số/đuôi 2 số. Trùng <b>≥ 1 bộ</b> tính là <b>TRÚNG</b>.
+            </div>
+            """
+        elif cur_lot == '3d_pro':
+            rule_html = """
+            <div style='font-size:9.5pt; color:#334155; line-height:1.5;'>
+              • <b>Giải Sáu (Giải nhỏ nhất):</b> Trùng 1 bộ 3 số của giải Sáu hoặc giải ĐB/Nhất/Nhì/Ba (<b>40.000 VNĐ</b>).<br>
+              • <b>⚡ Đánh giá thuật toán:</b> Dự đoán bộ số. Trùng <b>≥ 1 bộ</b> tính là <b>TRÚNG</b>.
+            </div>
+            """
+        elif cur_lot == 'keno':
+            rule_html = """
+            <div style='font-size:9.5pt; color:#334155; line-height:1.5;'>
+              • <b>Bậc 1 (Giải nhỏ nhất):</b> Trùng 1 số trong 20 số quay thưởng (<b>20.000 VNĐ</b> / vé 10k).<br>
+              • <b>⚡ Đánh giá thuật toán:</b> Dự đoán số có điểm cao nhất, trùng với 20 số kết quả tính là <b>TRÚNG</b>.
+            </div>
+            """
+        elif cur_lot == 'bingo18':
+            rule_html = """
+            <div style='font-size:9.5pt; color:#334155; line-height:1.5;'>
+              • <b>Một số trùng (Giải nhỏ nhất):</b> Trùng 1 trong 3 số xúc xắc (1.2x tiền cược).<br>
+              • <b>⚡ Đánh giá thuật toán:</b> Dự đoán số xúc xắc, trùng ≥ 1 số tính là <b>TRÚNG</b>.
+            </div>
+            """
+
+        lbl_rules = QLabel(rule_html)
+        lbl_rules.setTextFormat(Qt.RichText)
+        info_layout.addWidget(lbl_rules)
+        self.vietlott_results_layout.addWidget(info_frame)
+
+        # 4. Cập nhật thanh Thống Kê Trong Ngày ở khung bên phải
+        if hasattr(self, 'stats_nhay_box'):
+            self.stats_nhay_box.setTitle("🎯 Danh Sách Số Mở Thưởng")
+            num_strs = [format_number_for_lottery(cur_lot, n) for n in drawn_nums]
+            self.stats_nhay_label.setText("  •  ".join(num_strs) if num_strs else "Không có số.")
+
+        # Thống kê số rơi từ kỳ trước
+        if hasattr(self, 'stats_roi_box'):
+            self.stats_roi_box.setTitle("🍂 Số Rơi (Trùng từ kỳ trước)")
+            history_data = [r for r in self.results if r['date'] < target_date]
+            if history_data:
+                prev_record = history_data[-1]
+                prev_nums = set(extract_numbers_for_lottery(cur_lot, prev_record.get('result')))
+                curr_nums_set = set(drawn_nums)
+                roi_set = curr_nums_set.intersection(prev_nums)
+                if roi_set:
+                    roi_strs = [format_number_for_lottery(cur_lot, x) for x in sorted(list(roi_set))]
+                    self.stats_roi_label.setText(f"<b style='color:#16a34a; font-size:11pt;'>{', '.join(roi_strs)}</b> ({len(roi_set)} số rơi)")
+                    self.stats_roi_label.setTextFormat(Qt.RichText)
+                else:
+                    self.stats_roi_label.setText("Không có số nào rơi từ kỳ trước.")
+            else:
+                self.stats_roi_label.setText("Đây là kỳ quay đầu tiên trong dữ liệu.")
+
+        # Thống kê chẵn/lẻ
+        if hasattr(self, 'stats_top_gan_box'):
+            self.stats_top_gan_box.setTitle("⚖️ Phân Bố Chẵn / Lẻ")
+            evens = [n for n in drawn_nums if n % 2 == 0]
+            odds = [n for n in drawn_nums if n % 2 != 0]
+            tot = len(drawn_nums) or 1
+            self.stats_top_gan_label.setText(
+                f"• Số Chẵn: <b>{len(evens)}</b> ({len(evens)*100//tot}%)<br>"
+                f"• Số Lẻ: <b>{len(odds)}</b> ({len(odds)*100//tot}%)"
+            )
+            self.stats_top_gan_label.setTextFormat(Qt.RichText)
+
+        # Thống kê tổng điểm & biên độ
+        if hasattr(self, 'stats_gan_ve_box'):
+            self.stats_gan_ve_box.setTitle("📊 Tổng Điểm & Biên Độ")
+            if drawn_nums:
+                total_sum = sum(drawn_nums)
+                avg_val = total_sum / len(drawn_nums)
+                min_val = min(drawn_nums)
+                max_val = max(drawn_nums)
+                self.stats_gan_ve_label.setText(
+                    f"• Tổng điểm: <b>{total_sum}</b> (TB: {avg_val:.1f})<br>"
+                    f"• Nhỏ nhất: <b>{format_number_for_lottery(cur_lot, min_val)}</b> | Lớn nhất: <b>{format_number_for_lottery(cur_lot, max_val)}</b><br>"
+                    f"• Biên độ: <b>{max_val - min_val}</b>"
+                )
+            else:
+                self.stats_gan_ve_label.setText("N/A")
+            self.stats_gan_ve_label.setTextFormat(Qt.RichText)
+
+        # Quy định đánh giá
+        if hasattr(self, 'stats_head_tail_box'):
+            self.stats_head_tail_box.setTitle("💡 Tiêu Chí Đánh Giá")
+            eval_p = prof.get('eval_picks', 3)
+            min_m = prof.get('min_matches', 1)
+            p_name = prof.get('prize_name', 'Giải thưởng')
+            self.stats_head_tail_label.setText(
+                f"<b>{prof['name']}</b>:<br>"
+                f"• Đánh giá Top <b>{eval_p}</b> số dự đoán cao nhất.<br>"
+                f"• Điều kiện trúng: Trùng <b>≥ {min_m}</b> số.<br>"
+                f"• Giải áp dụng: <b>{p_name}</b>."
+            )
+            self.stats_head_tail_label.setTextFormat(Qt.RichText)
+
     def update_kqxs_tab(self, target_date: datetime.date):
-        """Cập nhật tab Xem KQXS: Chỉ hiển thị 2 số cuối (Loto) và thống kê."""
+        """Cập nhật tab Xem KQXS: Hiển thị kết quả phù hợp với từng loại xổ số."""
         main_logger.info(f"Updating KQXS tab for date: {target_date}")
         if not hasattr(self, 'kqxs_date_label') or not self.kqxs_date_label:
             return
 
+        self.current_kqxs_view_date = target_date
+
         d_names = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
         day_of_week = d_names[target_date.weekday()]
-        self.kqxs_date_label.setText(f"<b>XSMB {day_of_week} {target_date:%d-%m-%Y}</b>")
+        cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+        prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+        self.kqxs_date_label.setText(f"<b>{prof['name']} {day_of_week} {target_date:%d-%m-%Y}</b>")
 
         current_entry = next((r for r in self.results if r['date'] == target_date), None)
         result_data = current_entry['result'] if current_entry else None
 
         if result_data is None:
             main_logger.warning(f"No data found for {target_date}")
-            for key in self.kqxs_result_labels:
-                for label in self.kqxs_result_labels[key]: label.setText("")
+            if hasattr(self, 'kqxs_result_labels'):
+                for key in self.kqxs_result_labels:
+                    for label in self.kqxs_result_labels[key]: label.setText("")
             self.stats_nhay_label.setText("Không có dữ liệu.")
             self.stats_roi_label.setText("Wait...")
             self.stats_top_gan_label.setText("Wait...")
             self.stats_gan_ve_label.setText("Wait...")
             self.stats_head_tail_label.setText("Wait...")
             return
+
+        if cur_lot != 'xsmb':
+            try:
+                self._render_vietlott_kqxs(cur_lot, prof, target_date, day_of_week, result_data)
+            except Exception as e:
+                main_logger.error(f"Error rendering Vietlott KQXS: {e}", exc_info=True)
+            return
+
+        # Khôi phục giao diện bảng KQXS Miền Bắc
+        if hasattr(self, 'kqxs_results_stack'):
+            self.kqxs_results_stack.setCurrentIndex(0)
+        if hasattr(self, 'stats_nhay_box'):
+            self.stats_nhay_box.setTitle("⚡ Loto về nhiều nháy")
+            self.stats_roi_box.setTitle("🍂 Loto Rơi (từ hôm qua)")
+            self.stats_top_gan_box.setTitle("🥶 Top 3 Gan Lì (Chưa về)")
+            self.stats_gan_ve_box.setTitle("🔥 Số Hiếm (Gan đã về hôm nay)")
+            self.stats_head_tail_box.setTitle("📊 Thống kê Đầu - Đuôi")
         
         prize_map = {
             'db': ['special', 'dac_biet'], 'nhat': ['prize1', 'giai_nhat'],
@@ -1258,10 +1932,12 @@ class LotteryPredictionApp(QMainWindow):
     def select_previous_kqxs_day(self):
         """Chọn và hiển thị kết quả của ngày có dữ liệu trước đó."""
         try:
-            full_text = self.kqxs_date_label.text()
-            date_str = full_text.split(" ")[-1].replace('</b>', '')
+            current_date = getattr(self, 'current_kqxs_view_date', None)
+            if not current_date:
+                full_text = self.kqxs_date_label.text()
+                date_str = full_text.split(" ")[-1].replace('</b>', '')
+                current_date = datetime.datetime.strptime(date_str, "%d-%m-%Y").date()
             
-            current_date = datetime.datetime.strptime(date_str, "%d-%m-%Y").date()
             sorted_dates = sorted(list(self.available_kqxs_dates), reverse=True)
             
             found_index = -1
@@ -1275,16 +1951,18 @@ class LotteryPredictionApp(QMainWindow):
                 self.update_kqxs_tab(prev_date)
             else:
                 self.update_status("Đang ở ngày đầu tiên trong dữ liệu.")
-        except (ValueError, IndexError):
+        except Exception:
             self.update_status("Không thể xác định ngày trước đó.")
 
     def select_next_kqxs_day(self):
         """Chọn và hiển thị kết quả của ngày có dữ liệu kế tiếp."""
         try:
-            full_text = self.kqxs_date_label.text()
-            date_str = full_text.split(" ")[-1].replace('</b>', '')
+            current_date = getattr(self, 'current_kqxs_view_date', None)
+            if not current_date:
+                full_text = self.kqxs_date_label.text()
+                date_str = full_text.split(" ")[-1].replace('</b>', '')
+                current_date = datetime.datetime.strptime(date_str, "%d-%m-%Y").date()
 
-            current_date = datetime.datetime.strptime(date_str, "%d-%m-%Y").date()
             sorted_dates = sorted(list(self.available_kqxs_dates))
 
             found_index = -1
@@ -1298,7 +1976,7 @@ class LotteryPredictionApp(QMainWindow):
                 self.update_kqxs_tab(next_date)
             else:
                 self.update_status("Đang ở ngày cuối cùng trong dữ liệu.")
-        except (ValueError, IndexError):
+        except Exception:
             self.update_status("Không thể xác định ngày kế tiếp.")
 
     def show_kqxs_calendar(self):
@@ -2124,44 +2802,60 @@ class LotteryPredictionApp(QMainWindow):
         info_layout.setSpacing(10)
         info_layout.setContentsMargins(12, 16, 12, 12)
 
+        lbl_type = QLabel("Loại xổ số:")
+        lbl_type.setStyleSheet("font-weight: 600; color: #334155;")
+        info_layout.addWidget(lbl_type, 0, 0, Qt.AlignLeft | Qt.AlignVCenter)
+
+        self.lottery_type_combo = QComboBox()
+        self.lottery_type_combo.setObjectName("LotteryTypeCombo")
+        self.lottery_type_combo.setMinimumHeight(28)
+        for lid in LOTTERY_ORDER:
+            prof = LOTTERY_PROFILES[lid]
+            self.lottery_type_combo.addItem(prof['name'], lid)
+        cur_idx = self.lottery_type_combo.findData(getattr(self, 'current_lottery_type', 'xsmb'))
+        if cur_idx != -1:
+            self.lottery_type_combo.setCurrentIndex(cur_idx)
+        self.lottery_type_combo.currentIndexChanged.connect(self.on_lottery_type_changed)
+        info_layout.addWidget(self.lottery_type_combo, 0, 1, 1, 2)
+
         lbl_file = QLabel("Đường dẫn file:")
         lbl_file.setStyleSheet("font-weight: 600; color: #334155;")
-        info_layout.addWidget(lbl_file, 0, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        info_layout.addWidget(lbl_file, 1, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.data_file_path_label = QLabel("...")
         self.data_file_path_label.setObjectName("PathDisplayLabel")
         self.data_file_path_label.setWordWrap(False)
-        self.data_file_path_label.setToolTip("Đường dẫn đến file dữ liệu JSON hiện tại.")
+        self.data_file_path_label.setToolTip("Đường dẫn đến file dữ liệu hiện tại.")
         self.data_file_path_label.setMinimumHeight(28)
-        info_layout.addWidget(self.data_file_path_label, 0, 1)
+        info_layout.addWidget(self.data_file_path_label, 1, 1)
 
         edit_data_button = QPushButton("Edit")
         edit_data_button.setObjectName("LightButton")
         edit_data_button.setMinimumWidth(86)
         edit_data_button.setToolTip("Thay đổi file dữ liệu chính 🖍")
         edit_data_button.clicked.connect(self.change_data_path)
-        info_layout.addWidget(edit_data_button, 0, 2, Qt.AlignVCenter)
+        info_layout.addWidget(edit_data_button, 1, 2, Qt.AlignVCenter)
 
         lbl_time = QLabel("Thời gian dữ liệu:")
         lbl_time.setStyleSheet("font-weight: 600; color: #334155;")
-        info_layout.addWidget(lbl_time, 1, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        info_layout.addWidget(lbl_time, 2, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.date_range_label = QLabel("...")
         self.date_range_label.setStyleSheet("color: #1e293b; font-weight: 500;")
         self.date_range_label.setToolTip("Ngày bắt đầu và kết thúc của dữ liệu đã tải.")
-        info_layout.addWidget(self.date_range_label, 1, 1, Qt.AlignVCenter)
+        info_layout.addWidget(self.date_range_label, 2, 1, Qt.AlignVCenter)
 
         sync_button = QPushButton("☁ Sync")
         sync_button.setObjectName("SyncButton")
         sync_button.setMinimumWidth(100)
-        sync_button.setToolTip("Đồng bộ dữ liệu kết quả XSMB.")
+        sync_button.setToolTip("Đồng bộ dữ liệu kết quả xổ số.")
         sync_button.clicked.connect(self.sync_data)
-        info_layout.addWidget(sync_button, 1, 2, Qt.AlignVCenter)
+        info_layout.addWidget(sync_button, 2, 2, Qt.AlignVCenter)
 
         self.sync_url_input = QLineEdit()
         self.sync_url_input.setVisible(False)
 
-        info_layout.setRowStretch(2, 1)
+        info_layout.setRowStretch(3, 1)
         info_layout.setColumnStretch(0, 0)
         info_layout.setColumnStretch(1, 10)
         info_layout.setColumnStretch(2, 0)
@@ -2422,6 +3116,50 @@ class LotteryPredictionApp(QMainWindow):
 
         main_logger.debug("Main tab UI setup complete.")
 
+    def on_lottery_type_changed(self, index):
+        """Xử lý khi người dùng thay đổi loại xổ số trong danh sách chọn."""
+        if isinstance(index, int):
+            if not hasattr(self, 'lottery_type_combo') or not self.lottery_type_combo:
+                return
+            new_type = self.lottery_type_combo.itemData(index)
+        else:
+            new_type = str(index)
+
+        if not new_type or new_type == getattr(self, 'current_lottery_type', 'xsmb'):
+            return
+
+        main_logger.info(f"Thay đổi loại xổ số sang: {new_type}")
+        self.current_lottery_type = new_type
+
+        if not self.config.has_section('DATA'):
+            self.config.add_section('DATA')
+        self.config.set('DATA', 'lottery_type', new_type)
+
+        target_data_file = self.data_dir / LOTTERY_PROFILES[new_type]['file']
+        self.config.set('DATA', 'data_file', str(target_data_file))
+        if hasattr(self, 'config_data_path_edit') and self.config_data_path_edit:
+            self.config_data_path_edit.setText(str(target_data_file))
+        if hasattr(self, 'data_file_path_label') and self.data_file_path_label:
+            self.data_file_path_label.setText(str(target_data_file))
+            self.data_file_path_label.setToolTip(str(target_data_file))
+
+        try:
+            self.save_config()
+        except Exception:
+            pass
+
+        self.load_data()
+        self.reload_algorithms()
+        if hasattr(self, 'optimizer_app_instance') and self.optimizer_app_instance:
+            self.optimizer_app_instance.load_data()
+
+        prof = LOTTERY_PROFILES.get(new_type, LOTTERY_PROFILES['xsmb'])
+        if hasattr(self, 'ana_numbers_edit') and self.ana_numbers_edit:
+            self.ana_numbers_edit.setPlaceholderText(f"Nhập số ({prof['min_val']:02d} - {prof['max_val']:02d})...")
+            self.ana_numbers_edit.setToolTip(f"Nhập số cần tra cứu cho {prof['name']} ({prof['min_val']} - {prof['max_val']}), cách nhau bởi dấu phẩy.")
+
+        self.update_status(f"Đã chuyển sang {prof['name']}")
+
     def _get_loto(self, value) -> str:
         """Lấy 2 chữ số cuối từ một giá trị giải thưởng."""
         if value is None:
@@ -2585,9 +3323,27 @@ class LotteryPredictionApp(QMainWindow):
         
         prize_names_layout.addStretch(1)
         numbers_layout.addStretch(1)
-        left_layout.addWidget(results_container)
+
+        self.kqxs_results_stack = QStackedWidget()
+        self.kqxs_results_stack.addWidget(results_container)
+
+        self.vietlott_results_scroll = QScrollArea()
+        self.vietlott_results_scroll.setWidgetResizable(True)
+        self.vietlott_results_scroll.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
+
+        self.vietlott_results_widget = QWidget()
+        self.vietlott_results_layout = QVBoxLayout(self.vietlott_results_widget)
+        self.vietlott_results_layout.setContentsMargins(5, 5, 5, 5)
+        self.vietlott_results_layout.setSpacing(10)
+        self.vietlott_results_layout.setAlignment(Qt.AlignTop)
+
+        self.vietlott_results_scroll.setWidget(self.vietlott_results_widget)
+        self.kqxs_results_stack.addWidget(self.vietlott_results_scroll)
+
+        left_layout.addWidget(self.kqxs_results_stack)
         
         right_container = QGroupBox("Thống Kê Trong Ngày")
+        self.kqxs_right_groupbox = right_container
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(5, 10, 5, 5)
         right_layout.setSpacing(10)
@@ -2603,26 +3359,31 @@ class LotteryPredictionApp(QMainWindow):
 
         self.stats_nhay_label = QLabel("Đang tải...")
         self.stats_nhay_label.setWordWrap(True)
-        self.stats_content_layout.addWidget(self._create_styled_stat_box("⚡ Loto về nhiều nháy", self.stats_nhay_label))
+        self.stats_nhay_box = self._create_styled_stat_box("⚡ Loto về nhiều nháy", self.stats_nhay_label)
+        self.stats_content_layout.addWidget(self.stats_nhay_box)
 
         self.stats_roi_label = QLabel("Đang tải...")
         self.stats_roi_label.setWordWrap(True)
-        self.stats_content_layout.addWidget(self._create_styled_stat_box("🍂 Loto Rơi (từ hôm qua)", self.stats_roi_label))
+        self.stats_roi_box = self._create_styled_stat_box("🍂 Loto Rơi (từ hôm qua)", self.stats_roi_label)
+        self.stats_content_layout.addWidget(self.stats_roi_box)
 
         self.stats_top_gan_label = QLabel("Đang tải...")
         self.stats_top_gan_label.setWordWrap(True)
-        self.stats_content_layout.addWidget(self._create_styled_stat_box("🥶 Top 3 Gan Lì (Chưa về)", self.stats_top_gan_label))
+        self.stats_top_gan_box = self._create_styled_stat_box("🥶 Top 3 Gan Lì (Chưa về)", self.stats_top_gan_label)
+        self.stats_content_layout.addWidget(self.stats_top_gan_box)
 
         self.stats_gan_ve_label = QLabel("Đang tải...")
         self.stats_gan_ve_label.setWordWrap(True)
-        self.stats_content_layout.addWidget(self._create_styled_stat_box("🔥 Số Hiếm (Gan đã về hôm nay)", self.stats_gan_ve_label))
+        self.stats_gan_ve_box = self._create_styled_stat_box("🔥 Số Hiếm (Gan đã về hôm nay)", self.stats_gan_ve_label)
+        self.stats_content_layout.addWidget(self.stats_gan_ve_box)
 
         self.stats_head_tail_label = QLabel("Đang tải...")
         self.stats_head_tail_label.setWordWrap(True)
         font_mono = QFont("Consolas", 10)
         font_mono.setStyleHint(QFont.Monospace)
         self.stats_head_tail_label.setFont(font_mono)
-        self.stats_content_layout.addWidget(self._create_styled_stat_box("📊 Thống kê Đầu - Đuôi", self.stats_head_tail_label))
+        self.stats_head_tail_box = self._create_styled_stat_box("📊 Thống kê Đầu - Đuôi", self.stats_head_tail_label)
+        self.stats_content_layout.addWidget(self.stats_head_tail_box)
 
         self.stats_scroll.setWidget(stats_widget)
         right_layout.addWidget(self.stats_scroll)
@@ -2734,17 +3495,22 @@ class LotteryPredictionApp(QMainWindow):
         if not nums_str:
             QMessageBox.warning(self, "Thiếu thông tin", "Vui lòng nhập ít nhất 1 con số.")
             return
+
+        cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+        prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+        min_v = prof.get('min_val', 0)
+        max_v = prof.get('max_val', 99)
             
         try:
             target_numbers = set()
             for x in nums_str.replace(' ', ',').split(','):
                 if x.strip():
                     val = int(x.strip())
-                    if 0 <= val <= 99: 
-                        target_numbers.add(f"{val:02d}")
+                    if min_v <= val <= max_v: 
+                        target_numbers.add(format_number_for_lottery(cur_lot, val))
             if not target_numbers: raise ValueError
         except ValueError:
-            QMessageBox.warning(self, "Lỗi nhập liệu", "Vui lòng nhập các số từ 00 đến 99.")
+            QMessageBox.warning(self, "Lỗi nhập liệu", f"Vui lòng nhập các số hợp lệ cho {prof['name']} (từ {min_v} đến {max_v}).")
             return
 
         target_numbers = sorted(list(target_numbers))
@@ -2803,31 +3569,49 @@ class LotteryPredictionApp(QMainWindow):
 
         def analyze_day_result(result_dict):
             day_loto_strs = []
-            keys_to_ignore = {'date', '_id', 'source', 'day_of_week', 'sign', 'created_at', 'updated_at', 'province_name', 'province_id'}
-            for k, v in result_dict.items():
-                if k in keys_to_ignore: continue
-                vals = v if isinstance(v, (list, tuple)) else [v]
-                for val in vals:
-                    if val is not None:
-                        s = str(val).strip()
-                        if len(s) >= 2 and s[-2:].isdigit(): day_loto_strs.append(s[-2:])
-                        elif len(s) == 1 and s.isdigit(): day_loto_strs.append(f"{int(s):02d}")
-            
-            counts_per_target = []
-            for target in target_numbers:
-                counts_per_target.append(day_loto_strs.count(target))
-            
-            freq_in_day = min(counts_per_target) if counts_per_target else 0
-            
-            is_hit = freq_in_day > 0
-            
-            special_val = result_dict.get('special', result_dict.get('dac_biet', ''))
             is_special = False
-            if special_val:
-                s_str = str(special_val).strip()
-                if len(s_str) >= 2 and s_str[-2:] in target_numbers:
-                    is_special = True
-            
+
+            if cur_lot == 'xsmb':
+                keys_to_ignore = {'date', '_id', 'source', 'day_of_week', 'sign', 'created_at', 'updated_at', 'province_name', 'province_id'}
+                for k, v in result_dict.items():
+                    if k in keys_to_ignore: continue
+                    vals = v if isinstance(v, (list, tuple)) else [v]
+                    for val in vals:
+                        if val is not None:
+                            s = str(val).strip()
+                            if len(s) >= 2 and s[-2:].isdigit(): day_loto_strs.append(s[-2:])
+                            elif len(s) == 1 and s.isdigit(): day_loto_strs.append(f"{int(s):02d}")
+                special_val = result_dict.get('special', result_dict.get('dac_biet', ''))
+                if special_val:
+                    s_str = str(special_val).strip()
+                    if len(s_str) >= 2 and s_str[-2:] in target_numbers:
+                        is_special = True
+            elif cur_lot in ('3d', '3d_pro'):
+                for k, val in result_dict.items():
+                    if k in ('date', 'id', 'process_time'): continue
+                    vals = val if isinstance(val, (list, tuple)) else [val]
+                    for item in vals:
+                        if item is not None:
+                            s = str(item).strip()
+                            if len(s) >= 2 and s[-2:].isdigit(): day_loto_strs.append(s[-2:])
+                            elif len(s) == 1 and s.isdigit(): day_loto_strs.append(f"{int(s):02d}")
+                            if "Đặc biệt" in str(k) and (len(s) >= 2 and s[-2:] in target_numbers):
+                                is_special = True
+            else:
+                # Vietlott: Mega 6/45, Power 6/55, Power 5/35, Keno, Bingo 18
+                nums_set, spec_num = extract_numbers_for_lottery_with_special(cur_lot, result_dict)
+                for num_item in nums_set:
+                    day_loto_strs.append(format_number_for_lottery(cur_lot, num_item))
+                if spec_num is not None:
+                    spec_fmt = format_number_for_lottery(cur_lot, spec_num)
+                    day_loto_strs.append(spec_fmt)
+                    if spec_fmt in target_numbers:
+                        is_special = True
+
+            counts_per_target = [day_loto_strs.count(target) for target in target_numbers]
+            freq_in_day = min(counts_per_target) if counts_per_target else 0
+            is_hit = freq_in_day > 0
+
             return is_hit, freq_in_day, day_loto_strs, is_special
 
         for entry in filtered_data:
@@ -2906,6 +3690,14 @@ class LotteryPredictionApp(QMainWindow):
         else:
             max_freq_display_html = "Chưa xuất hiện lần nào"
 
+        spec_row_html = ""
+        if cur_lot in ('power_655', 'power_535'):
+            spec_row_html = f"<tr><td>🌟 <b>Về Số Đặc Biệt:</b></td><td class='danger'>{special_hits_count} lần</td></tr>"
+        elif cur_lot in ('xsmb', '3d', '3d_pro'):
+            spec_row_html = f"<tr><td>🏆 <b>Về Đặc Biệt:</b></td><td class='danger'>{special_hits_count} lần</td></tr>"
+
+        freq_unit = "nháy" if cur_lot in ('xsmb', '3d', '3d_pro') else "lần / kỳ"
+
         html = f"""
         <style>
             .highlight {{ color: #007bff; font-weight: bold; }}
@@ -2917,19 +3709,16 @@ class LotteryPredictionApp(QMainWindow):
         
         <h3 style='margin:0; color:#333;'>KẾT QUẢ: <span style='color:#d63384; font-size:16pt'>{target_display}</span></h3>
         <div style='color:#666; font-size:9pt; margin-bottom:10px'>
-            Giai đoạn: {start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')} ({total_draws} kỳ)
+            Giai đoạn: {start_date.strftime('%d/%m/%Y')} - {end_date.strftime('%d/%m/%Y')} ({total_draws} kỳ mở thưởng - {prof['name']})
         </div>
         <hr style='border: 0; border-top: 1px solid #ddd;'>
         
         <table width='100%'>
             <tr>
-                <td width='40%'>🔢 <b>Tổng xuất hiện:</b></td>
+                <td width='45%'>🔢 <b>Tổng xuất hiện:</b></td>
                 <td class='success'>{hits_count} lần <span style='font-weight:normal; color:#333'>({(hits_count/total_draws*100) if total_draws else 0:.2f}%)</span></td>
             </tr>
-            <tr>
-                <td>🏆 <b>Về Đặc Biệt:</b></td>
-                <td class='danger'>{special_hits_count} lần</td>
-            </tr>
+            {spec_row_html}
             <tr>
                 <td>⏳ <b>Trung bình cứ:</b></td>
                 <td><b>{total_draws/hits_count if hits_count else 0:.1f}</b> kỳ về 1 lần</td>
@@ -2939,22 +3728,22 @@ class LotteryPredictionApp(QMainWindow):
             </tr>
             <tr>
                 <td>🌵 <b>Gan cực đại (Max):</b></td>
-                <td><b>{max_gap}</b> ngày <br><span style='font-size:9pt; color:#666'>({max_gap_range})</span></td>
+                <td><b>{max_gap}</b> kỳ chưa về <br><span style='font-size:9pt; color:#666'>({max_gap_range})</span></td>
             </tr>
             <tr>
                 <td>💧 <b>Gan hiện tại:</b></td>
-                <td class='warning'>{current_dry_spell} ngày chưa về</td>
+                <td class='warning'>{current_dry_spell} kỳ chưa về</td>
             </tr>
             <tr>
                 <td colspan='2'><hr style='border:0; border-top:1px dashed #ccc'></td>
             </tr>
             <tr>
                 <td>🔥 <b>Thông liên tiếp (Max):</b></td>
-                <td><b>{max_streak}</b> ngày <br><span style='font-size:9pt; color:#666'>({max_streak_range})</span></td>
+                <td><b>{max_streak}</b> kỳ liên tục <br><span style='font-size:9pt; color:#666'>({max_streak_range})</span></td>
             </tr>
             <tr>
-                <td>⚡ <b>Nhiều nhất 1 ngày:</b></td>
-                <td><b>{max_freq_val}</b> nháy <br><span style='font-size:9pt; color:#666'>({max_freq_display_html})</span></td>
+                <td>⚡ <b>Nhiều nhất 1 kỳ:</b></td>
+                <td><b>{max_freq_val}</b> {freq_unit} <br><span style='font-size:9pt; color:#666'>({max_freq_display_html})</span></td>
             </tr>
         </table>
         """
@@ -3036,43 +3825,208 @@ class LotteryPredictionApp(QMainWindow):
     def setup_settings_tab(self):
         """Thiết lập giao diện người dùng cho tab Cài đặt."""
         main_logger.debug("Thiết lập giao diện tab Cài đặt (PyQt5)...")
-        settings_tab_layout = QVBoxLayout(self.settings_tab_frame)
+        outer_layout = QVBoxLayout(self.settings_tab_frame)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
+
+        scroll_content = QWidget()
+        settings_tab_layout = QVBoxLayout(scroll_content)
         settings_tab_layout.setContentsMargins(15, 15, 15, 15)
         settings_tab_layout.setSpacing(15)
         settings_tab_layout.setAlignment(Qt.AlignTop)
 
-        settings_group = QGroupBox("⚙Cài Đặt Chung")
+        scroll_area.setWidget(scroll_content)
+        outer_layout.addWidget(scroll_area)
+
+        # --- PHẦN 1: QUẢN LÝ DỮ LIỆU & ĐỒNG BỘ TẤT CẢ 8 LOẠI XỔ SỐ ---
+        sync_mgmt_group = QGroupBox("🌐 Quản Lý & Cài Đặt Đồng Bộ Dữ Liệu (Tất Cả 8 Loại Xổ Số)")
+        sync_mgmt_layout = QVBoxLayout(sync_mgmt_group)
+        sync_mgmt_layout.setContentsMargins(10, 15, 10, 10)
+        sync_mgmt_layout.setSpacing(10)
+
+        self.lottery_sync_table = QTableWidget()
+        self.lottery_sync_table.setColumnCount(6)
+        self.lottery_sync_table.setHorizontalHeaderLabels([
+            "Loại Xổ Số", "File Dữ Liệu", "Dữ Liệu Đã Lưu", "Tự Động", "Link Đồng Bộ (GitHub / URL)", "Thao Tác"
+        ])
+        self.lottery_sync_table.setRowCount(len(LOTTERY_ORDER))
+        self.lottery_sync_table.verticalHeader().setVisible(False)
+        self.lottery_sync_table.setAlternatingRowColors(True)
+        self.lottery_sync_table.setSelectionBehavior(QTableWidget.SelectRows)
+        self.lottery_sync_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.lottery_sync_table.setMinimumHeight(320)
+
+        self.lottery_sync_table.setColumnWidth(0, 160)
+        self.lottery_sync_table.setColumnWidth(1, 130)
+        self.lottery_sync_table.setColumnWidth(2, 175)
+        self.lottery_sync_table.setColumnWidth(3, 80)
+        self.lottery_sync_table.setColumnWidth(5, 140)
+        self.lottery_sync_table.horizontalHeader().setStretchLastSection(False)
+        self.lottery_sync_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch)
+
+        self.sync_url_edits = {}
+        self.auto_sync_checkboxes = {}
+
+        for row, lid in enumerate(LOTTERY_ORDER):
+            prof = LOTTERY_PROFILES[lid]
+            
+            # Cột 0: Tên đài
+            item_name = QTableWidgetItem(prof['name'])
+            item_name.setFont(self.get_qfont("bold"))
+            self.lottery_sync_table.setItem(row, 0, item_name)
+
+            # Cột 1: Tên file
+            item_file = QTableWidgetItem(prof['file'])
+            item_file.setForeground(QBrush(QColor("#475569")))
+            item_file.setTextAlignment(Qt.AlignCenter)
+            self.lottery_sync_table.setItem(row, 1, item_file)
+
+            # Cột 2: Trạng thái dữ liệu đã lưu
+            item_status = QTableWidgetItem("Đang kiểm tra...")
+            item_status.setTextAlignment(Qt.AlignCenter)
+            self.lottery_sync_table.setItem(row, 2, item_status)
+
+            # Cột 3: Checkbox Tự Động (Auto)
+            cell_auto = QWidget()
+            layout_auto = QHBoxLayout(cell_auto)
+            layout_auto.setContentsMargins(0, 0, 0, 0)
+            layout_auto.setAlignment(Qt.AlignCenter)
+            chk_auto = QCheckBox("Auto")
+            chk_auto.setToolTip(f"Tự động đồng bộ {prof['name']} khi khởi động ứng dụng")
+            is_auto = self.get_auto_sync_for_lottery(lid)
+            chk_auto.setChecked(is_auto)
+            chk_auto.toggled.connect(lambda checked, x=lid: self.set_auto_sync_for_lottery(x, checked))
+            layout_auto.addWidget(chk_auto)
+            self.lottery_sync_table.setCellWidget(row, 3, cell_auto)
+            self.auto_sync_checkboxes[lid] = chk_auto
+
+            # Cột 4: Link Đồng Bộ (URL tải dữ liệu)
+            cell_url = QWidget()
+            layout_url = QHBoxLayout(cell_url)
+            layout_url.setContentsMargins(4, 2, 4, 2)
+            edit_url = QLineEdit()
+            edit_url.setObjectName(f"SyncUrlEdit_{lid}")
+            edit_url.setText(self.get_sync_url_for_lottery(lid))
+            edit_url.setPlaceholderText("URL tải dữ liệu raw JSON/JSONL...")
+            edit_url.setToolTip(f"URL tải file dữ liệu cho {prof['name']}. Chỉnh sửa và đổi ô hoặc bấm Enter để lưu.")
+            edit_url.editingFinished.connect(lambda x=lid, w=edit_url: self.set_sync_url_for_lottery(x, w.text().strip()))
+            layout_url.addWidget(edit_url)
+            self.lottery_sync_table.setCellWidget(row, 4, cell_url)
+            self.sync_url_edits[lid] = edit_url
+
+            # Cột 5: Thao Tác (Nút Đồng Bộ Thủ Công)
+            cell_act = QWidget()
+            layout_act = QHBoxLayout(cell_act)
+            layout_act.setContentsMargins(6, 2, 6, 2)
+            layout_act.setAlignment(Qt.AlignCenter)
+            btn_sync_row = QPushButton("🔄 Đồng bộ")
+            btn_sync_row.setObjectName("LightButton")
+            btn_sync_row.setCursor(Qt.PointingHandCursor)
+            btn_sync_row.setMinimumWidth(110)
+            btn_sync_row.setFixedHeight(28)
+            btn_sync_row.setToolTip(f"Đồng bộ ngay dữ liệu mới nhất cho {prof['name']}")
+            btn_sync_row.clicked.connect(lambda _, x=lid: self.sync_single_lottery(x))
+            layout_act.addWidget(btn_sync_row)
+            self.lottery_sync_table.setCellWidget(row, 5, cell_act)
+
+        sync_mgmt_layout.addWidget(self.lottery_sync_table)
+
+        sync_btn_bar = QWidget()
+        sync_btn_vlayout = QVBoxLayout(sync_btn_bar)
+        sync_btn_vlayout.setContentsMargins(0, 6, 0, 0)
+        sync_btn_vlayout.setSpacing(8)
+
+        # Hàng 1: Các nút hành động đồng bộ
+        row1_widget = QWidget()
+        row1_layout = QHBoxLayout(row1_widget)
+        row1_layout.setContentsMargins(0, 0, 0, 0)
+        row1_layout.setSpacing(8)
+
+        btn_sync_all = QPushButton("🌐 Đồng Bộ Tất Cả")
+        btn_sync_all.setObjectName("AccentButton")
+        btn_sync_all.setCursor(Qt.PointingHandCursor)
+        btn_sync_all.setMinimumHeight(32)
+        btn_sync_all.setToolTip("Đồng bộ dữ liệu cho tất cả 8 loại xổ số tuần tự")
+        btn_sync_all.clicked.connect(self.sync_all_lotteries)
+        row1_layout.addWidget(btn_sync_all)
+
+        btn_sync_auto = QPushButton("⚡ Đồng Bộ Auto")
+        btn_sync_auto.setObjectName("LightButton")
+        btn_sync_auto.setCursor(Qt.PointingHandCursor)
+        btn_sync_auto.setMinimumHeight(32)
+        btn_sync_auto.setToolTip("Chỉ đồng bộ các loại xổ số đang được tích chọn 'Auto'")
+        btn_sync_auto.clicked.connect(self.sync_auto_lotteries)
+        row1_layout.addWidget(btn_sync_auto)
+
+        btn_cleanup = QPushButton("🧹 Dọn File Tạm")
+        btn_cleanup.setObjectName("LightButton")
+        btn_cleanup.setCursor(Qt.PointingHandCursor)
+        btn_cleanup.setMinimumHeight(32)
+        btn_cleanup.setToolTip("Xóa các file tạm (.tmp, .bak) sinh ra trong quá trình đồng bộ")
+        btn_cleanup.clicked.connect(self.cleanup_temp_files_action)
+        row1_layout.addWidget(btn_cleanup)
+
+        btn_refresh_tbl = QPushButton("🔄 Làm Mới")
+        btn_refresh_tbl.setObjectName("LightButton")
+        btn_refresh_tbl.setCursor(Qt.PointingHandCursor)
+        btn_refresh_tbl.setMinimumHeight(32)
+        btn_refresh_tbl.setToolTip("Kiểm tra lại số lượng kỳ quay và ngày mới nhất của các file dữ liệu")
+        btn_refresh_tbl.clicked.connect(self.refresh_lottery_sync_table)
+        row1_layout.addWidget(btn_refresh_tbl)
+
+        btn_reset_urls = QPushButton("↺ Khôi Phục Link")
+        btn_reset_urls.setObjectName("LightButton")
+        btn_reset_urls.setCursor(Qt.PointingHandCursor)
+        btn_reset_urls.setMinimumHeight(32)
+        btn_reset_urls.setToolTip("Khôi phục link đồng bộ của tất cả các đài về URL GitHub mặc định")
+        btn_reset_urls.clicked.connect(self.reset_default_sync_urls)
+        row1_layout.addWidget(btn_reset_urls)
+
+        row1_layout.addStretch(1)
+        sync_btn_vlayout.addWidget(row1_widget)
+
+        # Hàng 2: Tùy chọn Auto Sync khởi động
+        row2_widget = QWidget()
+        row2_layout = QHBoxLayout(row2_widget)
+        row2_layout.setContentsMargins(0, 0, 0, 0)
+        row2_layout.setSpacing(10)
+
+        self.auto_sync_checkbox = QCheckBox("Bật tự động đồng bộ khi khởi động ứng dụng 📅")
+        self.auto_sync_checkbox.setToolTip("Nếu bật, khi mở ứng dụng chương trình sẽ tự động đồng bộ các đài đã tích chọn 'Auto'")
+        row2_layout.addWidget(self.auto_sync_checkbox)
+
+        lbl_auto_hint = QLabel("(Chỉ đồng bộ các đài được tích chọn 'Auto' ở bảng trên)")
+        lbl_auto_hint.setStyleSheet("color: #64748b; font-size: 9pt; font-style: italic;")
+        row2_layout.addWidget(lbl_auto_hint)
+        row2_layout.addStretch(1)
+
+        sync_btn_vlayout.addWidget(row2_widget)
+        sync_mgmt_layout.addWidget(sync_btn_bar)
+        settings_tab_layout.addWidget(sync_mgmt_group)
+
+        # Cung cấp thuộc tính tương thích ngược (ẩn)
+        self.config_data_path_edit = QLineEdit()
+        self.config_data_path_edit.setVisible(False)
+        self.config_sync_url_edit = QLineEdit()
+        self.config_sync_url_edit.setVisible(False)
+
+        # --- PHẦN 2: CÀI ĐẶT HỆ THỐNG & ỨNG DỤNG ---
+        settings_group = QGroupBox("⚙️ Cài Đặt Hệ Thống & Ứng Dụng")
         settings_group_layout = QGridLayout(settings_group)
         settings_group_layout.setContentsMargins(10, 15, 10, 10)
         settings_group_layout.setHorizontalSpacing(10)
         settings_group_layout.setVerticalSpacing(12)
 
-        settings_group_layout.addWidget(QLabel("📂 File dữ liệu:"), 0, 0, Qt.AlignLeft)
-        self.config_data_path_edit = QLineEdit()
-        self.config_data_path_edit.setToolTip("Đường dẫn đầy đủ đến file JSON chứa dữ liệu kết quả.")
-        settings_group_layout.addWidget(self.config_data_path_edit, 0, 1, 1, 2)
-        browse_button = QPushButton("📂")
-        browse_button.setFixedWidth(40)
-        browse_button.setToolTip("Chọn file dữ liệu JSON 📂")
-        browse_button.clicked.connect(self.browse_data_file_settings)
-        settings_group_layout.addWidget(browse_button, 0, 3)
-
-        settings_group_layout.addWidget(QLabel("🔗 URL đồng bộ dữ liệu:"), 1, 0, Qt.AlignLeft)
-        self.config_sync_url_edit = QLineEdit()
-        self.config_sync_url_edit.setObjectName("SettingsUrlLineEdit")
-        self.config_sync_url_edit.setToolTip("URL để tải dữ liệu mới khi nhấn nút 'Sync' ở tab Main.")
-        settings_group_layout.addWidget(self.config_sync_url_edit, 1, 1, 1, 3)
-
-        self.auto_sync_checkbox = QCheckBox("  Tự động đồng bộ kết quả quay thưởng hàng ngày 📅  ")
-        settings_group_layout.addWidget(self.auto_sync_checkbox, 2, 1, 1, 3, Qt.AlignLeft)
-
-        settings_group_layout.addWidget(QLabel("🔗 Link danh sách thuật toán:"), 3, 0, Qt.AlignLeft)
+        settings_group_layout.addWidget(QLabel("🔗 Link danh sách thuật toán:"), 0, 0, Qt.AlignLeft)
         self.config_algo_list_url_edit = QLineEdit()
         self.config_algo_list_url_edit.setObjectName("SettingsUrlLineEdit")
         self.config_algo_list_url_edit.setToolTip("URL của file text chứa danh sách thuật toán online.")
-        settings_group_layout.addWidget(self.config_algo_list_url_edit, 3, 1, 1, 3)
+        settings_group_layout.addWidget(self.config_algo_list_url_edit, 0, 1, 1, 3)
 
-        settings_group_layout.addWidget(QLabel("💻 Kích thước cửa sổ:"), 4, 0, Qt.AlignLeft)
+        settings_group_layout.addWidget(QLabel("💻 Kích thước cửa sổ:"), 1, 0, Qt.AlignLeft)
         size_frame = QWidget()
         size_layout = QHBoxLayout(size_frame)
         size_layout.setContentsMargins(0,0,0,0)
@@ -3092,9 +4046,9 @@ class LotteryPredictionApp(QMainWindow):
         size_layout.addWidget(self.window_height_edit)
         size_layout.addWidget(QLabel("(pixels)"))
         size_layout.addStretch(1)
-        settings_group_layout.addWidget(size_frame, 4, 1, 1, 3)
+        settings_group_layout.addWidget(size_frame, 3, 1, 1, 3)
 
-        settings_group_layout.addWidget(QLabel("🔤 Font chữ (Cần khởi động lại):"), 5, 0, Qt.AlignLeft)
+        settings_group_layout.addWidget(QLabel("🔤 Font chữ (Cần khởi động lại):"), 4, 0, Qt.AlignLeft)
         font_frame = QWidget()
         font_layout = QHBoxLayout(font_frame)
         font_layout.setContentsMargins(0,0,0,0)
@@ -3110,9 +4064,9 @@ class LotteryPredictionApp(QMainWindow):
         self.theme_font_size_base_spinbox.setFixedWidth(60)
         font_layout.addWidget(self.theme_font_size_base_spinbox)
         font_layout.addStretch(1)
-        settings_group_layout.addWidget(font_frame, 5, 1, 1, 3)
+        settings_group_layout.addWidget(font_frame, 4, 1, 1, 3)
 
-        settings_group_layout.addWidget(QLabel("🔄 Tự động kiểm tra cập nhật:"), 6, 0, Qt.AlignLeft)
+        settings_group_layout.addWidget(QLabel("🔄 Tự động kiểm tra cập nhật:"), 5, 0, Qt.AlignLeft)
         auto_update_frame = QWidget()
         auto_update_layout = QHBoxLayout(auto_update_frame)
         auto_update_layout.setContentsMargins(0,0,0,0)
@@ -3133,14 +4087,13 @@ class LotteryPredictionApp(QMainWindow):
         self.update_notification_combo.setEnabled(False)
         auto_update_layout.addWidget(self.update_notification_combo)
         auto_update_layout.addStretch(1)
-        
+
         self.auto_check_update_checkbox.toggled.connect(
             lambda checked: self.update_notification_combo.setEnabled(checked)
         )
-        settings_group_layout.addWidget(auto_update_frame, 6, 1, 1, 3)
-        
+        settings_group_layout.addWidget(auto_update_frame, 5, 1, 1, 3)
 
-        settings_group_layout.addWidget(QLabel("🚀 Hiệu năng CPU:"), 7, 0, Qt.AlignLeft | Qt.AlignTop)
+        settings_group_layout.addWidget(QLabel("🚀 Hiệu năng CPU:"), 6, 0, Qt.AlignLeft | Qt.AlignTop)
 
         perf_frame = QFrame()
         perf_layout = QVBoxLayout(perf_frame)
@@ -3172,7 +4125,6 @@ class LotteryPredictionApp(QMainWindow):
 
         self.set_priority_checkbox.toggled.connect(priority_details_frame.setEnabled)
 
-
         self.enable_throttling_checkbox = QCheckBox("Bật điều tiết CPU (chèn sleep)")
         self.enable_throttling_checkbox.setToolTip(
             "Nếu bật, ứng dụng sẽ chèn một khoảng nghỉ nhỏ vào các vòng lặp tính toán nặng để giảm tải CPU.\n"
@@ -3196,12 +4148,11 @@ class LotteryPredictionApp(QMainWindow):
 
         self.enable_throttling_checkbox.toggled.connect(throttle_details_frame.setEnabled)
 
-        settings_group_layout.addWidget(perf_frame, 7, 1, 1, 3)
+        settings_group_layout.addWidget(perf_frame, 6, 1, 1, 3)
 
-
-        settings_group_layout.addWidget(QLabel("⚙️ Quản lý file cấu hình khác:"), 9, 0, Qt.AlignLeft)
+        settings_group_layout.addWidget(QLabel("⚙️ Quản lý file cấu hình khác:"), 7, 0, Qt.AlignLeft)
         self.config_listwidget = QListWidget()
-        settings_group_layout.addWidget(self.config_listwidget, 10, 0, 1, 4)
+        settings_group_layout.addWidget(self.config_listwidget, 8, 0, 1, 4)
         self.update_config_list()
 
         settings_tab_layout.addWidget(settings_group)
@@ -3238,10 +4189,261 @@ class LotteryPredictionApp(QMainWindow):
         button_layout.addStretch(1)
         settings_tab_layout.addWidget(button_frame)
 
-        
-
-        self._populate_settings_tab_ui() 
+        self._populate_settings_tab_ui()
+        self.refresh_lottery_sync_table()
         main_logger.debug("Hoàn tất thiết lập giao diện tab Cài đặt.")
+
+    def get_default_sync_url(self, lid: str) -> str:
+        """Trả về URL GitHub mặc định cho loại xổ số tương ứng."""
+        prof = LOTTERY_PROFILES.get(lid, LOTTERY_PROFILES['xsmb'])
+        if lid == 'xsmb':
+            return "https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/data/xsmb-2-digits.json"
+        return f"https://raw.githubusercontent.com/vietvudanh/vietlott-data/main/data/{prof['file']}"
+
+    def get_sync_url_for_lottery(self, lid: str) -> str:
+        """Lấy URL đồng bộ đang được cấu hình cho loại xổ số (hoặc mặc định)."""
+        if self.config.has_section('SYNC_URLS') and self.config.has_option('SYNC_URLS', lid):
+            val = self.config.get('SYNC_URLS', lid).strip()
+            if val:
+                return val
+        if lid == 'xsmb' and self.config.has_section('DATA') and self.config.has_option('DATA', 'sync_url'):
+            val = self.config.get('DATA', 'sync_url').strip()
+            if val:
+                return val
+        return self.get_default_sync_url(lid)
+
+    def set_sync_url_for_lottery(self, lid: str, url: str):
+        """Lưu URL đồng bộ cho loại xổ số vào cấu hình settings.ini."""
+        try:
+            url_clean = str(url).strip()
+            if not self.config.has_section('SYNC_URLS'):
+                self.config.add_section('SYNC_URLS')
+            self.config.set('SYNC_URLS', lid, url_clean)
+            if lid == 'xsmb':
+                if not self.config.has_section('DATA'):
+                    self.config.add_section('DATA')
+                self.config.set('DATA', 'sync_url', url_clean)
+            self.save_config("settings.ini")
+            main_logger.info(f"Đã lưu URL đồng bộ cho {lid}: {url_clean}")
+        except Exception as e:
+            main_logger.error(f"Lỗi khi lưu sync URL cho {lid}: {e}")
+
+    def get_auto_sync_for_lottery(self, lid: str) -> bool:
+        """Kiểm tra loại xổ số này có được bật tự động đồng bộ không."""
+        if self.config.has_section('AUTO_SYNC') and self.config.has_option('AUTO_SYNC', lid):
+            return self.config.getboolean('AUTO_SYNC', lid, fallback=True)
+        return True
+
+    def set_auto_sync_for_lottery(self, lid: str, enabled: bool):
+        """Lưu trạng thái bật/tắt tự động đồng bộ cho từng loại xổ số."""
+        try:
+            if not self.config.has_section('AUTO_SYNC'):
+                self.config.add_section('AUTO_SYNC')
+            self.config.set('AUTO_SYNC', lid, str(bool(enabled)))
+            self.save_config("settings.ini")
+            main_logger.info(f"Đã lưu auto-sync cho {lid}: {enabled}")
+        except Exception as e:
+            main_logger.error(f"Lỗi khi lưu auto-sync cho {lid}: {e}")
+
+    def reset_default_sync_urls(self):
+        """Khôi phục toàn bộ link đồng bộ về mặc định."""
+        reply = QMessageBox.question(
+            self,
+            "Xác Nhận Khôi Phục Link",
+            "Bạn có chắc chắn muốn khôi phục toàn bộ link đồng bộ của cả 8 loại xổ số về URL GitHub mặc định không?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply == QMessageBox.Yes:
+            if not self.config.has_section('SYNC_URLS'):
+                self.config.add_section('SYNC_URLS')
+            for lid in LOTTERY_ORDER:
+                def_url = self.get_default_sync_url(lid)
+                self.config.set('SYNC_URLS', lid, def_url)
+                if lid == 'xsmb' and self.config.has_section('DATA'):
+                    self.config.set('DATA', 'sync_url', def_url)
+                if hasattr(self, 'sync_url_edits') and lid in self.sync_url_edits:
+                    self.sync_url_edits[lid].setText(def_url)
+            self.save_config("settings.ini")
+            QMessageBox.information(self, "Thành Công", "Đã khôi phục toàn bộ link đồng bộ về URL mặc định!")
+
+    def refresh_lottery_sync_table(self):
+        """Làm mới dữ liệu hiển thị trong bảng quản lý đồng bộ tất cả các đài."""
+        if not hasattr(self, 'lottery_sync_table') or self.lottery_sync_table is None:
+            return
+
+        for row, lid in enumerate(LOTTERY_ORDER):
+            prof = LOTTERY_PROFILES[lid]
+            f_path = self.data_dir / prof['file']
+
+            status_text = "Chưa có file"
+            status_color = "#dc2626"
+            if f_path.exists():
+                try:
+                    recs = parse_lottery_file(f_path)
+                    cnt = len(recs)
+                    if cnt > 0:
+                        last_d = recs[-1]['date'].strftime('%d/%m/%Y')
+                        status_text = f"✓ {cnt:,} kỳ ({last_d})"
+                        status_color = "#16a34a"
+                    else:
+                        status_text = "0 kỳ (file rỗng)"
+                        status_color = "#d97706"
+                except Exception as e:
+                    status_text = "Lỗi đọc file"
+                    status_color = "#dc2626"
+
+            item_status = self.lottery_sync_table.item(row, 2)
+            if item_status:
+                item_status.setText(status_text)
+                item_status.setForeground(QBrush(QColor(status_color)))
+            else:
+                new_item = QTableWidgetItem(status_text)
+                new_item.setForeground(QBrush(QColor(status_color)))
+                new_item.setTextAlignment(Qt.AlignCenter)
+                self.lottery_sync_table.setItem(row, 2, new_item)
+
+            # Cập nhật ô link URL nếu có
+            if hasattr(self, 'sync_url_edits') and lid in self.sync_url_edits:
+                current_cfg_url = self.get_sync_url_for_lottery(lid)
+                if self.sync_url_edits[lid].text().strip() != current_cfg_url:
+                    self.sync_url_edits[lid].setText(current_cfg_url)
+
+            # Cập nhật checkbox Auto
+            if hasattr(self, 'auto_sync_checkboxes') and lid in self.auto_sync_checkboxes:
+                current_auto = self.get_auto_sync_for_lottery(lid)
+                self.auto_sync_checkboxes[lid].setChecked(current_auto)
+
+    def sync_single_lottery(self, lottery_id: str):
+        """Đồng bộ dữ liệu cho 1 loại xổ số cụ thể từ tab Cài Đặt."""
+        prof = LOTTERY_PROFILES.get(lottery_id, LOTTERY_PROFILES['xsmb'])
+        self.update_status(f"Đang đồng bộ dữ liệu {prof['name']}...")
+        QApplication.processEvents()
+        try:
+            custom_url = self.get_sync_url_for_lottery(lottery_id)
+            res = sync_lottery_data(lottery_id, self.data_dir, custom_url=custom_url)
+            cleanup_temp_files(self.data_dir)
+            self.refresh_lottery_sync_table()
+
+            if getattr(self, 'current_lottery_type', 'xsmb') == lottery_id:
+                self.load_data()
+                self.reload_algorithms()
+                if hasattr(self, 'optimizer_app_instance') and self.optimizer_app_instance:
+                    self.optimizer_app_instance.load_data()
+
+            msg = res.get('message', f"Đồng bộ thành công {prof['name']}!")
+            self.update_status(msg)
+            QMessageBox.information(self, "Đồng Bộ Thành Công", msg)
+        except Exception as e:
+            main_logger.error(f"Lỗi đồng bộ {lottery_id}: {e}", exc_info=True)
+            self.update_status(f"Lỗi đồng bộ {lottery_id}: {e}")
+            QMessageBox.critical(self, "Lỗi Đồng Bộ", f"Không thể đồng bộ {prof['name']}:\n{e}")
+
+    def sync_auto_lotteries(self):
+        """Chỉ đồng bộ các loại xổ số đang được tích chọn 'Auto'."""
+        auto_lids = [lid for lid in LOTTERY_ORDER if self.get_auto_sync_for_lottery(lid)]
+        if not auto_lids:
+            QMessageBox.information(self, "Thông Báo", "Không có loại xổ số nào đang được bật 'Auto'.\nVui lòng tích vào ô 'Auto' của đài bạn muốn đồng bộ.")
+            return
+
+        total = len(auto_lids)
+        success_count = 0
+        fail_list = []
+
+        progress = QProgressDialog("Đang đồng bộ các loại xổ số đã chọn...", "Hủy", 0, total, self)
+        progress.setWindowTitle("Đồng Bộ Các Đài Bật Auto")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.show()
+
+        for i, lid in enumerate(auto_lids):
+            if progress.wasCanceled():
+                break
+            prof = LOTTERY_PROFILES.get(lid, LOTTERY_PROFILES['xsmb'])
+            progress.setLabelText(f"[{i+1}/{total}] Đang đồng bộ: {prof['name']}...")
+            progress.setValue(i)
+            QApplication.processEvents()
+
+            try:
+                custom_url = self.get_sync_url_for_lottery(lid)
+                res = sync_lottery_data(lid, self.data_dir, custom_url=custom_url)
+                if res.get('success'):
+                    success_count += 1
+                else:
+                    fail_list.append(f"{prof['name']}: {res.get('message', 'Thất bại')}")
+            except Exception as e:
+                fail_list.append(f"{prof['name']}: {e}")
+
+        cleanup_temp_files(self.data_dir)
+        progress.setValue(total)
+        self.refresh_lottery_sync_table()
+
+        self.load_data()
+        self.reload_algorithms()
+        if hasattr(self, 'optimizer_app_instance') and self.optimizer_app_instance:
+            self.optimizer_app_instance.load_data()
+
+        summary_msg = f"Đã hoàn thành đồng bộ {success_count}/{total} loại xổ số (đã bật Auto)."
+        if fail_list:
+            summary_msg += "\n\nCác đài gặp sự cố:\n" + "\n".join(fail_list)
+            QMessageBox.warning(self, "Kết Quả Đồng Bộ", summary_msg)
+        else:
+            QMessageBox.information(self, "Đồng Bộ Hoàn Tất", summary_msg)
+
+    def sync_all_lotteries(self):
+        """Đồng bộ toàn bộ tất cả 8 loại xổ số tuần tự."""
+        total = len(LOTTERY_ORDER)
+        success_count = 0
+        fail_list = []
+
+        progress = QProgressDialog("Đang đồng bộ tất cả các loại xổ số...", "Hủy", 0, total, self)
+        progress.setWindowTitle("Đồng Bộ Toàn Bộ Dữ Liệu")
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.show()
+
+        for i, lid in enumerate(LOTTERY_ORDER):
+            if progress.wasCanceled():
+                break
+            prof = LOTTERY_PROFILES.get(lid, LOTTERY_PROFILES['xsmb'])
+            progress.setLabelText(f"[{i+1}/{total}] Đang đồng bộ: {prof['name']}...")
+            progress.setValue(i)
+            QApplication.processEvents()
+
+            try:
+                custom_url = self.get_sync_url_for_lottery(lid)
+                res = sync_lottery_data(lid, self.data_dir, custom_url=custom_url)
+                if res.get('success'):
+                    success_count += 1
+                else:
+                    fail_list.append(f"{prof['name']}: {res.get('message', 'Thất bại')}")
+            except Exception as e:
+                fail_list.append(f"{prof['name']}: {e}")
+
+        cleanup_temp_files(self.data_dir)
+        progress.setValue(total)
+        self.refresh_lottery_sync_table()
+
+        self.load_data()
+        self.reload_algorithms()
+        if hasattr(self, 'optimizer_app_instance') and self.optimizer_app_instance:
+            self.optimizer_app_instance.load_data()
+
+        summary_msg = f"Đã hoàn thành đồng bộ {success_count}/{total} loại xổ số."
+        if fail_list:
+            summary_msg += "\n\nCác đài gặp sự cố:\n" + "\n".join(fail_list)
+            QMessageBox.warning(self, "Kết Quả Đồng Bộ", summary_msg)
+        else:
+            QMessageBox.information(self, "Đồng Bộ Hoàn Tất", summary_msg)
+
+    def cleanup_temp_files_action(self):
+        """Xóa sạch các file tạm (.tmp, .bak) trong thư mục data và thông báo cho người dùng."""
+        deleted = cleanup_temp_files(self.data_dir)
+        self.refresh_lottery_sync_table()
+        self.update_status(f"Đã dọn dẹp {deleted} file tạm trong thư mục dữ liệu.")
+        QMessageBox.information(self, "Dọn Dẹp File Tạm", f"Đã dọn dẹp thành công {deleted} file tạm (.tmp, .bak) trong thư mục data!")
 
     def setup_help_tab(self):
         """Thiết lập giao diện tab Hướng dẫn sử dụng (Đã chỉnh sửa độ rộng ô chọn ngày)."""
@@ -4556,6 +5758,7 @@ class LotteryPredictionApp(QMainWindow):
             if not self.config.has_option('DATA', 'auto_sync_on_startup'):
                 self.config.set('DATA', 'auto_sync_on_startup', default_auto_sync)
                 config_needs_saving = True
+            self.suppress_mismatch_warning = self.config.getboolean('DATA', 'suppress_mismatch_warning', fallback=False)
 
             default_width, default_height = 1200, 800
             default_font_family = 'Segoe UI'
@@ -4663,6 +5866,18 @@ class LotteryPredictionApp(QMainWindow):
         except IOError as e:
             main_logger.error(f"Failed to write default/corrected config file {config_path}: {e}")
 
+    def _save_suppress_mismatch_warning(self, val: bool):
+        """Lưu thiết lập tắt cảnh báo thuật toán không khớp vào file settings.ini."""
+        try:
+            self.suppress_mismatch_warning = bool(val)
+            if not self.config.has_section('DATA'):
+                self.config.add_section('DATA')
+            self.config.set('DATA', 'suppress_mismatch_warning', str(bool(val)))
+            self.save_config("settings.ini")
+            main_logger.info(f"Đã lưu suppress_mismatch_warning = {val} vào settings.ini")
+        except Exception as e:
+            main_logger.error(f"Lỗi khi lưu suppress_mismatch_warning: {e}")
+
     def apply_algorithm_config_states(self):
         """Applies enabled/weight states from self.config to algorithm UI widgets."""
         main_logger.debug("Applying algorithm config states from self.config...")
@@ -4686,7 +5901,9 @@ class LotteryPredictionApp(QMainWindow):
                 self.config.add_section(config_section)
                 main_logger.debug(f"Config section '{config_section}' not found. Creating defaults.")
 
+                chk_enable.blockSignals(True)
                 chk_enable.setChecked(True)
+                chk_enable.blockSignals(False)
                 chk_weight.setChecked(False)
                 weight_entry.setText("1.0")
 
@@ -4706,13 +5923,17 @@ class LotteryPredictionApp(QMainWindow):
                         main_logger.warning(f"Invalid weight '{weight_value_str}' in config for '{config_section}'. Using '1.0'.")
                         weight_value_str = "1.0"
 
+                    chk_enable.blockSignals(True)
                     chk_enable.setChecked(is_enabled)
+                    chk_enable.blockSignals(False)
                     chk_weight.setChecked(is_weight_enabled)
                     weight_entry.setText(weight_value_str)
 
                 except (configparser.NoOptionError, ValueError, Exception) as e:
                     main_logger.error(f"Error reading options from existing section '{config_section}': {e}. Setting defaults for UI.", exc_info=True)
+                    chk_enable.blockSignals(True)
                     chk_enable.setChecked(True)
+                    chk_enable.blockSignals(False)
                     chk_weight.setChecked(False)
                     weight_entry.setText("1.0")
 
@@ -5226,58 +6447,42 @@ class LotteryPredictionApp(QMainWindow):
                 self._apply_default_config_to_vars()
                 self.save_config()
 
+            lot_type = getattr(self, 'current_lottery_type', 'xsmb')
+            prof = LOTTERY_PROFILES.get(lot_type, LOTTERY_PROFILES['xsmb'])
+            expected_file = self.data_dir / prof['file']
+
             data_file_str = self.config.get('DATA', 'data_file', fallback="")
-            if not data_file_str:
-                data_file_str = str(self.data_dir / "xsmb-2-digits.json")
-                main_logger.warning(f"Config data_file empty, falling back to default path: {data_file_str}")
+            if not data_file_str or not Path(data_file_str).exists() or Path(data_file_str).name != expected_file.name:
+                data_file_str = str(expected_file)
+                main_logger.info(f"Using default data file for {prof['name']}: {data_file_str}")
                 self.config.set('DATA', 'data_file', data_file_str)
-                if hasattr(self, 'config_data_path_edit'): self.config_data_path_edit.setText(data_file_str)
-                self.save_config()
+                if hasattr(self, 'config_data_path_edit') and self.config_data_path_edit:
+                    self.config_data_path_edit.setText(data_file_str)
+                try:
+                    self.save_config()
+                except Exception:
+                    pass
 
             data_file_path = Path(data_file_str)
 
-            if hasattr(self, 'data_file_path_label'):
+            if hasattr(self, 'data_file_path_label') and self.data_file_path_label:
                 self.data_file_path_label.setText(str(data_file_path))
                 self.data_file_path_label.setToolTip(str(data_file_path))
 
             if not data_file_path.exists():
-                self.update_status(f"Lỗi: File dữ liệu không tồn tại: {data_file_path.name}")
-                if hasattr(self, 'date_range_label'): self.date_range_label.setText("Lỗi file")
-                if data_file_path == self.data_dir / "xsmb-2-digits.json":
-                    self.create_directories()
-                    if data_file_path.exists():
-                        main_logger.info("Sample data created. Reloading data...")
-                        QTimer.singleShot(100, self.load_data)
-                        return
-                    else:
-                        QMessageBox.critical(self, "Lỗi", f"Không tìm thấy hoặc không thể tạo file dữ liệu mẫu:\n{data_file_path}")
-                        return
+                # Thử tự động nạp từ file mặc định trong data/
+                if expected_file.exists():
+                    data_file_path = expected_file
+                    self.config.set('DATA', 'data_file', str(data_file_path))
+                    self.save_config()
                 else:
-                    QMessageBox.critical(self, "Lỗi", f"Không tìm thấy file dữ liệu được chỉ định:\n{data_file_path}")
+                    self.update_status(f"Lỗi: File dữ liệu không tồn tại: {data_file_path.name}")
+                    if hasattr(self, 'date_range_label'): self.date_range_label.setText("Lỗi file")
+                    QMessageBox.warning(self, "Thiếu Dữ Liệu", f"Không tìm thấy file dữ liệu cho {prof['name']}:\n{data_file_path}\n\nVui lòng bấm 'Sync' để tải dữ liệu.")
                     return
 
             main_logger.debug(f"Reading data from: {data_file_path}")
-            with open(data_file_path, 'r', encoding='utf-8') as f: raw_data = json.load(f)
-
-            processed_count, unique_dates, results_temp, data_list_to_process = 0, set(), [], []
-            if isinstance(raw_data, list): data_list_to_process = raw_data
-            elif isinstance(raw_data, dict) and 'results' in raw_data and isinstance(raw_data.get('results'), dict):
-                for date_str, result_dict in raw_data['results'].items():
-                    if isinstance(result_dict, dict): data_list_to_process.append({'date': date_str, 'result': result_dict})
-            else: raise ValueError("Định dạng JSON không hợp lệ hoặc không được hỗ trợ.")
-
-            for item in data_list_to_process:
-                 if not isinstance(item, dict): continue
-                 date_str_raw = item.get("date");
-                 if not date_str_raw: continue
-                 date_str_cleaned = str(date_str_raw).split('T')[0]
-                 try: date_obj = datetime.datetime.strptime(date_str_cleaned, '%Y-%m-%d').date();
-                 except ValueError: continue
-                 if date_obj in unique_dates: continue
-                 result_data = item.get('result');
-                 if result_data is None: result_data = {k: v for k, v in item.items() if k != 'date'}
-                 if not result_data: continue
-                 results_temp.append({'date': date_obj, 'result': result_data}); unique_dates.add(date_obj); processed_count += 1
+            results_temp = parse_lottery_file(data_file_path)
 
             if results_temp:
                 results_temp.sort(key=lambda x: x['date'])
@@ -5659,138 +6864,38 @@ class LotteryPredictionApp(QMainWindow):
             return False
 
     def sync_data(self, is_auto: bool = False):
-        """
-        Quy tắc đồng bộ dữ liệu:
-        - Nếu data kết quả chậm hơn ngày hiện tại 1 ngày:
-          + Từ 00:00 đến 18h45: thông báo chờ quay thưởng.
-          + Từ 18h45 đến 23h59p59s: crawl trực tiếp từ xoso.com.vn và cập nhật vào xsmb-2-digits.json.
-        - Nếu dữ liệu data cũ > 2 ngày:
-          + Sync data trực tiếp từ file GitHub lấy data JSON mới nhất.
-          + Sau đó chạy lại bước kiểm tra trên.
-        """
-        main_logger.info(f"Bắt đầu yêu cầu đồng bộ dữ liệu (is_auto={is_auto})...")
+        """Đồng bộ dữ liệu cho loại xổ số hiện tại (XSMB hoặc Vietlott) và dọn dẹp file tạm."""
+        lot_id = getattr(self, 'current_lottery_type', 'xsmb')
+        prof = LOTTERY_PROFILES.get(lot_id, LOTTERY_PROFILES['xsmb'])
+        main_logger.info(f"Bắt đầu đồng bộ dữ liệu cho {prof['name']} (is_auto={is_auto})...")
 
-        if hasattr(self, '_data_sync_server_online') and self._data_sync_server_online is False:
-            main_logger.warning("Đồng bộ hủy: Server Data Sync offline.")
-            if not is_auto:
-                QMessageBox.warning(self, "Không có kết nối", "Không thể đồng bộ dữ liệu do không có kết nối mạng. Vui lòng kiểm tra kết nối.")
-            self.update_status("Đồng bộ thất bại: Không có kết nối mạng.")
-            return
+        self.update_status(f"Đang đồng bộ dữ liệu {prof['name']}...")
+        QApplication.processEvents()
 
-        target_file_str = self.config.get('DATA', 'data_file', fallback=str(self.data_dir / "xsmb-2-digits.json"))
-        target_file = Path(target_file_str)
-        if not target_file.exists():
-            default_path = self.data_dir / "xsmb-2-digits.json"
-            if default_path.exists():
-                target_file = default_path
+        try:
+            custom_url = self.get_sync_url_for_lottery(lot_id)
+            res = sync_lottery_data(lot_id, self.data_dir, custom_url=custom_url)
+            cleanup_temp_files(self.data_dir)
 
-        sync_url = self.config.get('DATA', 'sync_url', fallback="https://raw.githubusercontent.com/junlangzi/Lottery-Predictor/refs/heads/main/data/xsmb-2-digits.json").strip()
-        if hasattr(self, 'sync_url_input') and self.sync_url_input and self.sync_url_input.text().strip():
-            sync_url = self.sync_url_input.text().strip()
-
-        # 1. Xác định ngày mới nhất hiện tại trong dữ liệu
-        today = datetime.date.today()
-        latest_date = None
-        if self.results:
-            latest_date = self.results[-1]['date']
-        elif target_file.exists():
-            try:
-                with open(target_file, 'r', encoding='utf-8') as f:
-                    tmp_data = json.load(f)
-                    if isinstance(tmp_data, list) and tmp_data:
-                        d_str = tmp_data[-1].get('date', '')[:10]
-                        latest_date = datetime.datetime.strptime(d_str, '%Y-%m-%d').date()
-            except Exception:
-                pass
-
-        days_diff = (today - latest_date).days if latest_date else 999
-
-        # 2. Nếu dữ liệu data cũ > 2 ngày (hoặc chưa có dữ liệu): tải trước từ GitHub
-        if days_diff > 2:
-            self.update_status("Dữ liệu cũ hơn 2 ngày, đang đồng bộ từ GitHub...")
-            QApplication.processEvents()
-            success = self._sync_from_github(target_file, sync_url)
-            if success:
+            if res.get('success'):
                 self.load_data()
                 self.reload_algorithms()
-                if self.optimizer_app_instance:
+                if hasattr(self, 'optimizer_app_instance') and self.optimizer_app_instance:
                     self.optimizer_app_instance.load_data()
-                latest_date = self.results[-1]['date'] if self.results else None
-                days_diff = (today - latest_date).days if latest_date else 999
-            else:
-                main_logger.warning("Không thể tải từ GitHub, tiếp tục kiểm tra...")
-
-        # 3. Nếu vẫn còn ngày trong quá khứ bị thiếu (ví dụ: thiếu ngày hôm qua)
-        if latest_date and (today - latest_date).days >= 2:
-            curr_date = latest_date + datetime.timedelta(days=1)
-            past_records = []
-            while curr_date < today:
-                self.update_status(f"Đang crawl kết quả ngày {curr_date.strftime('%d/%m/%Y')}...")
-                QApplication.processEvents()
-                rec = self._crawl_xsmb_result(curr_date)
-                if rec:
-                    past_records.append(rec)
-                curr_date += datetime.timedelta(days=1)
-
-            if past_records:
-                self._append_records_to_json_file(target_file, past_records)
-                self.load_data()
-                self.reload_algorithms()
-                if self.optimizer_app_instance:
-                    self.optimizer_app_instance.load_data()
-                latest_date = self.results[-1]['date'] if self.results else None
-                days_diff = (today - latest_date).days if latest_date else 999
-
-        # 4. Kiểm tra điều kiện theo quy tắc:
-        now = datetime.datetime.now()
-        drawing_cutoff = datetime.time(18, 45)
-
-        # 4.1. Đã có kết quả ngày hôm nay
-        if days_diff <= 0:
-            msg = f"Dữ liệu đã được cập nhật mới nhất (đã có kết quả ngày hôm nay: {latest_date.strftime('%d/%m/%Y')})."
-            self.update_status(msg)
-            if not is_auto:
-                QMessageBox.information(self, "Đã Cập Nhật Mới Nhất", msg)
-            return
-
-        # 4.2. Chậm hơn ngày hiện tại 1 ngày
-        if days_diff == 1:
-            if now.time() < drawing_cutoff:
-                # Từ 0 giờ đến 18h45: thông báo chờ quay thưởng
-                msg = (f"Chờ quay thưởng: Kết quả XSMB hôm nay ({today.strftime('%d/%m/%Y')}) sẽ mở thưởng từ 18h15 - 18h45.\n\n"
-                       f"Dữ liệu hiện tại đã đầy đủ đến ngày {latest_date.strftime('%d/%m/%Y')}." )
-                self.update_status(f"Chờ quay thưởng XSMB hôm nay ({today.strftime('%d/%m/%Y')} - sau 18h45)")
+                msg = res.get('message', f"Đồng bộ thành công {prof['name']}!")
+                self.update_status(msg)
                 if not is_auto:
-                    QMessageBox.information(self, "Chờ Quay Thưởng", msg)
-                return
+                    QMessageBox.information(self, "Đồng Bộ Thành Công", msg)
             else:
-                # Từ 18h45 đến 23h59p59s: xử lý đồng bộ trực tiếp
-                self.update_status(f"Đang đồng bộ trực tiếp kết quả XSMB ngày {today.strftime('%d/%m/%Y')} từ xoso.com.vn...")
-                QApplication.processEvents()
-                today_rec = self._crawl_xsmb_result(today)
-                if today_rec:
-                    self._append_records_to_json_file(target_file, [today_rec])
-                    self.load_data()
-                    self.reload_algorithms()
-                    if self.optimizer_app_instance:
-                        self.optimizer_app_instance.load_data()
-                    msg = f"Đã cập nhật kết quả XSMB ngày hôm nay ({today.strftime('%d/%m/%Y')}) thành công!"
-                    self.update_status(msg)
-                    if not is_auto:
-                        QMessageBox.information(self, "Đồng Bộ Thành Công", msg)
-                else:
-                    msg = (f"Chưa có kết quả đầy đủ cho ngày hôm nay ({today.strftime('%d/%m/%Y')}) trên hệ thống xoso.com.vn.\n\n"
-                           f"Vui lòng đợi vài phút để hệ thống cập nhật giải rồi bấm Sync lại!")
-                    self.update_status("Chưa có kết quả XSMB hôm nay trên máy chủ.")
-                    if not is_auto:
-                        QMessageBox.warning(self, "Chưa Có Kết Quả", msg)
-                return
-
-        # 4.3. Trường hợp vẫn chưa đồng bộ được do lỗi mạng hoặc file
-        msg = f"Dữ liệu hiện tại đến ngày {latest_date.strftime('%d/%m/%Y') if latest_date else 'chưa có'}. Vui lòng kiểm tra lại kết nối mạng."
-        self.update_status(msg)
-        if not is_auto:
-            QMessageBox.warning(self, "Thông Báo Đồng Bộ", msg)
+                msg = res.get('message', f"Không thể đồng bộ {prof['name']}.")
+                self.update_status(msg)
+                if not is_auto:
+                    QMessageBox.warning(self, "Lỗi Đồng Bộ", msg)
+        except Exception as e:
+            main_logger.error(f"Lỗi đồng bộ dữ liệu {lot_id}: {e}", exc_info=True)
+            self.update_status(f"Lỗi đồng bộ: {e}")
+            if not is_auto:
+                QMessageBox.critical(self, "Lỗi Đồng Bộ", f"Đã xảy ra lỗi khi đồng bộ:\n{e}")
 
     def perform_auto_sync_if_needed(self):
         """Kiểm tra điều kiện tự động đồng bộ khi khởi động."""
@@ -5803,7 +6908,26 @@ class LotteryPredictionApp(QMainWindow):
             main_logger.info("Tự động đồng bộ bị tắt trong cấu hình.")
             return
 
-        self.sync_data(is_auto=True)
+        main_logger.info("Bắt đầu tự động đồng bộ khởi động cho các loại xổ số đã chọn 'Auto'...")
+        auto_lids = [lid for lid in LOTTERY_ORDER if self.get_auto_sync_for_lottery(lid)]
+        if not auto_lids:
+            auto_lids = [getattr(self, 'current_lottery_type', 'xsmb')]
+
+        for lid in auto_lids:
+            try:
+                prof = LOTTERY_PROFILES.get(lid, LOTTERY_PROFILES['xsmb'])
+                main_logger.info(f"Tự động đồng bộ khởi động: {prof['name']}...")
+                custom_url = self.get_sync_url_for_lottery(lid)
+                sync_lottery_data(lid, self.data_dir, custom_url=custom_url)
+            except Exception as e:
+                main_logger.warning(f"Lỗi tự động đồng bộ khởi động cho {lid}: {e}")
+
+        cleanup_temp_files(self.data_dir)
+        self.load_data()
+        self.reload_algorithms()
+        if hasattr(self, 'optimizer_app_instance') and self.optimizer_app_instance:
+            self.optimizer_app_instance.load_data()
+        self.refresh_lottery_sync_table()
 
     def _restore_backup(self, backup_path: Path, target_path: Path):
         """Attempts to restore a data file from its backup."""
@@ -6188,6 +7312,42 @@ class LotteryPredictionApp(QMainWindow):
         state_text = "Bật" if new_main_state else "Tắt"
         main_logger.debug(f"Toggling algorithm '{algo_name}' to {state_text}")
 
+        # Cảnh báo nếu thuật toán không khớp với loại xổ số hiện tại
+        if new_main_state and not getattr(self, 'suppress_mismatch_warning', False):
+            algo_data = self.algorithms.get(algo_name)
+            algo_lot = detect_algorithm_lottery_type(algo_name, algo_data)
+            current_lot = getattr(self, 'current_lottery_type', 'xsmb')
+            if algo_lot != current_lot:
+                current_lot_name = LOTTERY_PROFILES[current_lot]['name']
+                algo_lot_name = LOTTERY_PROFILES[algo_lot]['name']
+                
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Warning)
+                msg_box.setWindowTitle("⚠️ Cảnh Báo Thuật Toán Khác Loại")
+                msg_box.setText(
+                    f"Thuật toán '{algo_name}' được thiết kế cho loại '{algo_lot_name}', "
+                    f"trong khi bạn đang chọn loại '{current_lot_name}'.\n\n"
+                    f"Bạn có chắc chắn muốn bật thuật toán này không?"
+                )
+                msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+                msg_box.setDefaultButton(QMessageBox.No)
+                chk_no_more = QCheckBox("Không hiển thị lại thông báo này")
+                msg_box.setCheckBox(chk_no_more)
+
+                reply = msg_box.exec_()
+                if chk_no_more.isChecked():
+                    self._save_suppress_mismatch_warning(True)
+
+                if reply != QMessageBox.Yes:
+                    try:
+                        chk_enable_widget.blockSignals(True)
+                        chk_enable_widget.setChecked(False)
+                        chk_enable_widget.blockSignals(False)
+                        self._update_dependent_weight_widgets(algo_name)
+                    except Exception:
+                        pass
+                    return
+
         try:
             self._update_dependent_weight_widgets(algo_name)
 
@@ -6461,8 +7621,19 @@ class LotteryPredictionApp(QMainWindow):
 
         min_date_dt = self.results[0]['date']
         max_date_dt = self.results[-1]['date']
+        
+        cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+        prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+        next_draw_dt = get_next_draw_date(max_date_dt, cur_lot)
+        
+        # Nếu là ô chọn ngày dự đoán, cho phép chọn tới ngày quay tiếp theo
+        if target_line_edit == self.selected_date_edit:
+            max_selectable_dt = next_draw_dt
+        else:
+            max_selectable_dt = max_date_dt
+
         min_qdate = QDate(min_date_dt.year, min_date_dt.month, min_date_dt.day)
-        max_qdate = QDate(max_date_dt.year, max_date_dt.month, max_date_dt.day)
+        max_qdate = QDate(max_selectable_dt.year, max_selectable_dt.month, max_selectable_dt.day)
 
         current_text = target_line_edit.text()
         current_qdate = QDate.currentDate()
@@ -6477,7 +7648,7 @@ class LotteryPredictionApp(QMainWindow):
             current_qdate = max_qdate
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Chọn Ngày")
+        dialog.setWindowTitle(f"Chọn Ngày - {prof['name']}")
         dialog.setModal(True)
         dialog_layout = QVBoxLayout(dialog)
 
@@ -6505,7 +7676,6 @@ class LotteryPredictionApp(QMainWindow):
             main_logger.warning(f"Could not set calendar minimum width, setting dialog minimum: {e_cal_size}")
             dialog.setMinimumWidth(500)
 
-
         button_box = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         button_box.accepted.connect(dialog.accept)
         button_box.rejected.connect(dialog.reject)
@@ -6514,8 +7684,40 @@ class LotteryPredictionApp(QMainWindow):
         if dialog.exec_() == QDialog.Accepted:
             selected_qdate = calendar.selectedDate()
             selected_date_obj = selected_qdate.toPyDate()
-            selected_date_str = selected_date_obj.strftime('%d/%m/%Y')
 
+            all_res_dates = [r['date'] for r in self.results]
+            all_res_set = set(all_res_dates)
+
+            is_perf_or_ana = (
+                target_line_edit in (getattr(self, 'perf_start_date_edit', None), getattr(self, 'perf_end_date_edit', None)) or
+                target_line_edit in (getattr(self, 'ana_start_date', None), getattr(self, 'ana_end_date', None))
+            )
+
+            if is_perf_or_ana and all_res_dates:
+                if selected_date_obj not in all_res_set:
+                    snapped_dt = min(all_res_dates, key=lambda d: abs((d - selected_date_obj).days))
+                    QMessageBox.information(
+                        self,
+                        "Chọn Ngày Có Kết Quả",
+                        f"Ngày {selected_date_obj:%d/%m/%Y} không có kỳ mở thưởng trong dữ liệu.\n\n"
+                        f"Hệ thống đã tự động chọn ngày có kết quả gần nhất: {snapped_dt:%d/%m/%Y}."
+                    )
+                    selected_date_obj = snapped_dt
+            else:
+                # Kiểm tra xem ngày chọn có phải ngày quay thưởng hợp lệ không
+                if not is_valid_draw_date(selected_date_obj, cur_lot):
+                    snapped_dt = get_next_draw_date(selected_date_obj, cur_lot)
+                    if snapped_dt > max_selectable_dt:
+                        snapped_dt = get_prev_draw_date(selected_date_obj, cur_lot)
+                    QMessageBox.information(
+                        self,
+                        "Lịch Quay Thưởng",
+                        f"Ngày {selected_date_obj:%d/%m/%Y} không phải ngày quay của {prof['name']} ({prof.get('draw_schedule', '')}).\n\n"
+                        f"Hệ thống đã tự động chuyển sang ngày quay gần nhất: {snapped_dt:%d/%m/%Y}."
+                    )
+                    selected_date_obj = snapped_dt
+
+            selected_date_str = selected_date_obj.strftime('%d/%m/%Y')
             target_line_edit.setText(selected_date_str)
 
             if target_line_edit == self.selected_date_edit:
@@ -6532,6 +7734,14 @@ class LotteryPredictionApp(QMainWindow):
         """Selects the previous available day in the results."""
         if not self.selected_date or not self.results: return
         try:
+            if self.selected_date > self.results[-1]['date']:
+                prev_date = self.results[-1]['date']
+                self.selected_date = prev_date
+                if hasattr(self, 'selected_date_edit'):
+                    self.selected_date_edit.setText(prev_date.strftime('%d/%m/%Y'))
+                self.update_status(f"Đã chọn ngày: {prev_date:%d/%m/%Y}")
+                return
+
             current_index = -1
             for i, r in enumerate(self.results):
                 if r['date'] == self.selected_date:
@@ -6544,6 +7754,16 @@ class LotteryPredictionApp(QMainWindow):
                 if hasattr(self, 'selected_date_edit'):
                      self.selected_date_edit.setText(previous_date.strftime('%d/%m/%Y'))
                 self.update_status(f"Đã chọn ngày: {previous_date:%d/%m/%Y}")
+            elif current_index == -1:
+                prev_entries = [r['date'] for r in self.results if r['date'] < self.selected_date]
+                if prev_entries:
+                    prev_date = prev_entries[-1]
+                    self.selected_date = prev_date
+                    if hasattr(self, 'selected_date_edit'):
+                        self.selected_date_edit.setText(prev_date.strftime('%d/%m/%Y'))
+                    self.update_status(f"Đã chọn ngày: {prev_date:%d/%m/%Y}")
+                else:
+                    self.update_status("Đang ở ngày đầu tiên trong dữ liệu.")
             else:
                 self.update_status("Đang ở ngày đầu tiên trong dữ liệu.")
         except Exception as e:
@@ -6554,6 +7774,7 @@ class LotteryPredictionApp(QMainWindow):
         """Selects the next available day in the results."""
         if not self.selected_date or not self.results: return
         try:
+            cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
             current_index = -1
             for i, r in enumerate(self.results):
                 if r['date'] == self.selected_date:
@@ -6566,8 +7787,14 @@ class LotteryPredictionApp(QMainWindow):
                 if hasattr(self, 'selected_date_edit'):
                      self.selected_date_edit.setText(next_date.strftime('%d/%m/%Y'))
                 self.update_status(f"Đã chọn ngày: {next_date:%d/%m/%Y}")
+            elif current_index == len(self.results) - 1:
+                next_draw = get_next_draw_date(self.results[-1]['date'], cur_lot)
+                self.selected_date = next_draw
+                if hasattr(self, 'selected_date_edit'):
+                    self.selected_date_edit.setText(next_draw.strftime('%d/%m/%Y'))
+                self.update_status(f"Đã chọn kỳ quay tiếp theo: {next_draw:%d/%m/%Y}")
             else:
-                self.update_status("Đang ở ngày cuối cùng trong dữ liệu.")
+                self.update_status("Đang ở ngày quay kế tiếp trong tương lai.")
         except Exception as e:
              main_logger.error(f"Error selecting next day: {e}")
 
@@ -6660,16 +7887,19 @@ class LotteryPredictionApp(QMainWindow):
             return
 
         next_day_actual_result, next_day_actual_date = None, None
-        next_day_dt = self.selected_date + datetime.timedelta(days=1)
-        try:
-            next_day_data_entry = next((r for r in self.results if r['date'] == next_day_dt), None)
-            if next_day_data_entry:
-                next_day_actual_result = next_day_data_entry['result']
-                next_day_actual_date = next_day_dt
-                main_logger.info(f"Found actual results for comparison date: {next_day_dt}")
-        except Exception as e:
-             main_logger.warning(f"Could not find or process results for comparison date {next_day_dt}: {e}")
-
+        # Nếu ngày đã chọn đã có kết quả trong dữ liệu (so sánh kiểm thử ngày quá khứ)
+        same_day_entry = next((r for r in self.results if r['date'] == self.selected_date), None)
+        if same_day_entry:
+            next_day_actual_result = same_day_entry['result']
+            next_day_actual_date = self.selected_date
+            main_logger.info(f"Found actual results for selected date: {self.selected_date}")
+        else:
+            # Nếu ngày chọn là ngày cơ sở trước đó, tìm kỳ quay kế tiếp trong lịch sử
+            next_draw_entry = next((r for r in self.results if r['date'] > self.selected_date), None)
+            if next_draw_entry:
+                next_day_actual_result = next_draw_entry['result']
+                next_day_actual_date = next_draw_entry['date']
+                main_logger.info(f"Found actual results for next draw: {next_day_actual_date}")
 
         active_algorithm_instances = {}
         for algo_name, algo_data in self.algorithms.items():
@@ -6681,6 +7911,41 @@ class LotteryPredictionApp(QMainWindow):
         if not active_algorithm_instances:
             QMessageBox.warning(self, "Không Có Thuật Toán", "Không có thuật toán nào được kích hoạt trong danh sách.")
             return
+
+        # Cảnh báo nếu có thuật toán đang bật không khớp với loại xổ số hiện tại
+        mismatched_algos = []
+        cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+        for a_name in active_algorithm_instances.keys():
+            a_data = self.algorithms.get(a_name)
+            a_type = detect_algorithm_lottery_type(a_name, a_data)
+            if a_type != cur_lot:
+                mismatched_algos.append((a_name, a_type))
+
+        if mismatched_algos and not getattr(self, 'suppress_mismatch_warning', False) and not getattr(self, '_session_mismatch_confirmed', False):
+            cur_name = LOTTERY_PROFILES[cur_lot]['name']
+            details_str = "\n".join([f"• {name} (Dành cho: {LOTTERY_PROFILES[t]['name']})" for name, t in mismatched_algos])
+            
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setWindowTitle("⚠️ Xác Nhận Thuật Toán Khác Loại")
+            msg_box.setText(
+                f"Phát hiện {len(mismatched_algos)} thuật toán đang bật không thuộc loại xổ số hiện tại ({cur_name}):\n\n"
+                f"{details_str}\n\n"
+                f"Bạn có muốn tiếp tục chạy dự đoán không?"
+            )
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.No)
+            chk_no_more = QCheckBox("Không hiển thị lại thông báo này")
+            msg_box.setCheckBox(chk_no_more)
+
+            reply = msg_box.exec_()
+            if chk_no_more.isChecked():
+                self._save_suppress_mismatch_warning(True)
+
+            if reply == QMessageBox.Yes:
+                self._session_mismatch_confirmed = True
+            else:
+                return
 
         num_active_algos = len(active_algorithm_instances)
         active_names_str = ', '.join(active_algorithm_instances.keys())
@@ -6752,16 +8017,23 @@ class LotteryPredictionApp(QMainWindow):
                 scores = {}
                 success = False
             else:
-                invalid_items = []
-                for k, v in scores.items():
-                    if not (isinstance(k, str) and len(k) == 2 and k.isdigit() and isinstance(v, (int, float))):
-                        invalid_items.append((k, v))
-                if invalid_items:
-                    prediction_logger.warning(f"[{thread_name}] Algorithm '{algo_name}' returned {len(invalid_items)} invalid score items (key not '00'-'99' or value not number).")
-                    scores = {k: v for k, v in scores.items() if (isinstance(k, str) and len(k) == 2 and k.isdigit() and isinstance(v, (int, float)))}
+                cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+                prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+                valid_int_set = set(prof.get('int_numbers', list(range(100))))
 
+                filtered_scores = {}
+                for k, v in scores.items():
+                    if isinstance(v, (int, float)):
+                        try:
+                            k_int = int(k)
+                            if k_int in valid_int_set:
+                                formatted_k = format_number_for_lottery(cur_lot, k_int)
+                                filtered_scores[formatted_k] = float(v)
+                        except (ValueError, TypeError):
+                            pass
+                scores = filtered_scores
                 success = True
-                prediction_logger.debug(f"[{thread_name}] Prediction successful for '{algo_name}'. Items: {len(scores)}")
+                prediction_logger.debug(f"[{thread_name}] Prediction successful for '{algo_name}'. Valid prize numbers: {len(scores)}")
 
         except Exception as e:
             prediction_logger.error(f"[{thread_name}] Error running predict() for algorithm '{algo_name}': {e}", exc_info=True)
@@ -6867,18 +8139,27 @@ class LotteryPredictionApp(QMainWindow):
                 return
 
             final_scores_list = []
+            cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+            prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+            valid_int_numbers = prof.get('int_numbers', list(range(100)))
+            valid_int_set = set(valid_int_numbers)
+
             try:
                 for num_str, score in final_scores_dict.items():
-                    if isinstance(num_str, str) and len(num_str) == 2 and num_str.isdigit() and isinstance(score, (int, float)):
-                         final_scores_list.append((int(num_str), float(score)))
-                    else:
-                        main_logger.warning(f"Skipping invalid item during final score list creation: {num_str}:{score}")
+                    try:
+                        num_int = int(num_str)
+                        if num_int in valid_int_set and isinstance(score, (int, float)):
+                            final_scores_list.append((num_int, float(score)))
+                        else:
+                            main_logger.warning(f"Bỏ qua số không thuộc giải thưởng {cur_lot}: {num_str}:{score}")
+                    except (ValueError, TypeError):
+                        pass
 
                 present_nums = {item[0] for item in final_scores_list}
                 min_score = min((item[1] for item in final_scores_list), default=0.0)
-                missing_score = min_score - 1000
+                missing_score = min_score - 1000.0
 
-                for i in range(100):
+                for i in valid_int_numbers:
                     if i not in present_nums:
                         final_scores_list.append((i, missing_score))
 
@@ -6886,7 +8167,7 @@ class LotteryPredictionApp(QMainWindow):
                 final_scores_list = self._apply_sorting_logic(
                     final_scores_list, sort_mode, self.predict_custom_sort_data
                 )
-                final_scores_list = final_scores_list[:100]
+                final_scores_list = final_scores_list[:len(valid_int_numbers)]
 
             except Exception as prep_err:
                  main_logger.error(f"Error preparing final score list for display: {prep_err}", exc_info=True)
@@ -6905,13 +8186,17 @@ class LotteryPredictionApp(QMainWindow):
 
     def combine_algorithm_scores(self, intermediate_results: dict) -> dict:
         """Combines prediction scores from multiple algorithms, applying weights from UI."""
+        cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+        prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+        valid_numbers = prof['numbers']
+
         if not intermediate_results:
             main_logger.warning("combine_algorithm_scores called with no intermediate results.")
-            return {f"{i:02d}": 100.0 for i in range(100)}
+            return {num_str: 100.0 for num_str in valid_numbers}
 
-        main_logger.info(f"Combining scores from {len(intermediate_results)} algorithm results (applying weights)...")
+        main_logger.info(f"Combining scores from {len(intermediate_results)} algorithm results for {prof['name']} (applying weights)...")
         BASE_SCORE = 100.0
-        combined_deltas = {f"{i:02d}": 0.0 for i in range(100)}
+        combined_deltas = {num_str: 0.0 for num_str in valid_numbers}
         valid_algo_count = 0
         algorithms_processed = []
 
@@ -6959,44 +8244,20 @@ class LotteryPredictionApp(QMainWindow):
             else:
                  main_logger.warning(f"UI data not found for '{algo_name}' when checking weight. Using 1.0.")
 
-            if apply_weight and weight_factor != 1.0:
-                main_logger.debug(f"Applying weight factor {weight_factor:.3f} to '{algo_name}'.")
-                temp_scores = {}
-                num_multiplied = 0
-                for num_str, delta_val in processed_scores_dict.items():
-                    if isinstance(num_str, str) and len(num_str) == 2 and num_str.isdigit() and isinstance(delta_val, (int, float)):
-                        try:
-                            multiplied_delta = float(delta_val) * weight_factor
-                            temp_scores[num_str] = multiplied_delta
-                            num_multiplied += 1
-                        except (ValueError, TypeError, OverflowError) as mult_err:
-                            main_logger.warning(f"Error multiplying delta '{delta_val}' by weight {weight_factor} for number '{num_str}' in '{algo_name}': {mult_err}. Keeping original delta.")
-                            temp_scores[num_str] = float(delta_val)
-                    else:
-                        pass
-                processed_scores_dict = temp_scores
-                main_logger.debug(f"Weighted scores calculated for {num_multiplied} numbers from '{algo_name}'.")
-
             numbers_processed_in_algo = 0
-            errors_in_algo = 0
-            for num_str, delta_val in processed_scores_dict.items():
-                if isinstance(num_str, str) and len(num_str) == 2 and num_str.isdigit() and isinstance(delta_val, (int, float)):
-                    try:
+            for num_raw, delta_val in processed_scores_dict.items():
+                try:
+                    num_int = int(num_raw)
+                    num_str = format_number_for_lottery(cur_lot, num_int)
+                    if num_str in combined_deltas:
                         delta_float = float(delta_val)
+                        if apply_weight and weight_factor != 1.0:
+                            delta_float *= weight_factor
                         combined_deltas[num_str] += delta_float
                         numbers_processed_in_algo += 1
-                    except (ValueError, TypeError):
-                        errors_in_algo += 1
-                        main_logger.warning(f"Could not convert delta '{delta_val}' to float for number '{num_str}' from {algo_name}.")
-                        continue
-                else:
-                     if isinstance(num_str, str) and num_str.isdigit():
-                          errors_in_algo += 1
-                          main_logger.warning(f"Invalid key format or non-numeric delta skipped from {algo_name}: key='{num_str}', value type={type(delta_val)}")
+                except (ValueError, TypeError):
+                    continue
 
-
-            if errors_in_algo > 0:
-                 main_logger.warning(f"Skipped {errors_in_algo} invalid key/value pairs from '{algo_name}'.")
             main_logger.debug(f"Added {numbers_processed_in_algo} valid deltas from '{algo_name}'.")
 
         if valid_algo_count == 0:
@@ -7007,7 +8268,7 @@ class LotteryPredictionApp(QMainWindow):
             return {num: BASE_SCORE for num in combined_deltas.keys()}
 
         final_scores = {num: round(BASE_SCORE + delta, 2) for num, delta in combined_deltas.items()}
-        main_logger.info(f"Successfully combined scores from {valid_algo_count} algorithms.")
+        main_logger.info(f"Successfully combined scores for {len(final_scores)} numbers from {valid_algo_count} algorithms.")
         return final_scores
 
     def _get_frequency_info(self, number_to_check: int, end_date_for_stats: datetime.date, periods: list[int], historical_data: list) -> dict:
@@ -7095,11 +8356,12 @@ class LotteryPredictionApp(QMainWindow):
         Generates a rich HTML tooltip for a predicted number cell.
         """
         
-        num_str_to_check_tooltip = f"{number_to_check:02d}"
+        cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+        num_str_to_check_tooltip = format_number_for_lottery(cur_lot, number_to_check)
 
         tooltip_lines = [
             f"<div style='font-family: {self.font_family_base}; font-size: {self.font_size_base-1}pt;'>",
-            f"<b>Số: {number_to_check:02d}</b> (Điểm tổng hợp: {combined_score:.1f})",
+            f"<b>Số: {num_str_to_check_tooltip}</b> (Điểm tổng hợp: {combined_score:.1f})",
             "<hr style='margin: 2px 0;'>"
         ]
 
@@ -7178,9 +8440,15 @@ class LotteryPredictionApp(QMainWindow):
             main_logger.error("display_prediction_results_qt called with invalid predictions.")
             return
 
+        cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+        prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+        valid_int_set = set(prof.get('int_numbers', list(range(100))))
+        sorted_predictions = [item for item in sorted_predictions if item[0] in valid_int_set]
+        win_info = evaluate_win(cur_lot, sorted_predictions, next_day_actual_results)
+
         try:
             dialog = QDialog(self)
-            dialog.setWindowTitle(f"Kết quả dự đoán - Ngày {self.selected_date:%d/%m/%Y}")
+            dialog.setWindowTitle(f"Kết quả dự đoán {prof['name']} - Ngày {self.selected_date:%d/%m/%Y}")
             dialog.resize(1250, 900)
             dialog.setMinimumSize(900, 700)
             dialog.setModal(False)
@@ -7193,23 +8461,30 @@ class LotteryPredictionApp(QMainWindow):
 
             header_widget = QWidget()
             header_layout = QHBoxLayout(header_widget)
-            header_layout.setContentsMargins(0,0,0,10)
+            header_layout.setContentsMargins(0, 0, 0, 10)
 
-            header_label = QLabel(f"Dự đoán dựa theo kết quả ngày: <b>{self.selected_date:%d/%m/%Y}</b>")
+            header_label = QLabel(f"Dự đoán <b>{prof['name']}</b> cho ngày: <b>{self.selected_date:%d/%m/%Y}</b>")
             header_label.setFont(self.get_qfont("title"))
             header_layout.addWidget(header_label)
             header_layout.addStretch(1)
 
             if next_day_date and next_day_actual_results:
+                is_win = win_info['is_win']
+                win_color = "#155724" if is_win else "#721c24"
+                win_bg = "#d4edda" if is_win else "#f8d7da"
+                win_border = "#c3e6cb" if is_win else "#f5c6cb"
+                badge_html = f"<span style='background-color: {win_bg}; color: {win_color}; border: 1px solid {win_border}; padding: 4px 10px; border-radius: 6px; font-weight: bold;'>{win_info['prize_detail']}</span>"
+                badge_label = QLabel(badge_html)
+                header_layout.addWidget(badge_label)
+
                 compare_label = QLabel(f"(So sánh KQ ngày: {next_day_date:%d/%m/%Y})")
                 compare_label.setStyleSheet("font-style: italic; color: #007BFF;")
                 header_layout.addWidget(compare_label)
             else:
-                no_compare_label = QLabel("(Không có KQ ngày sau để so sánh)")
+                no_compare_label = QLabel("(Chưa có kết quả để so sánh)")
                 no_compare_label.setStyleSheet("font-style: italic; color: #6c757d;")
                 header_layout.addWidget(no_compare_label)
             main_layout.addWidget(header_widget)
-
 
             scroll_area = QScrollArea()
             scroll_area.setWidgetResizable(True)
@@ -7220,21 +8495,11 @@ class LotteryPredictionApp(QMainWindow):
             table_layout = QGridLayout(grid_container_widget)
             table_layout.setSpacing(4)
 
+            actuals = win_info['actual_set']
+            spec = win_info['special_num']
 
-            actuals, spec = set(), -1
-            if next_day_actual_results and isinstance(next_day_actual_results, dict):
-                actuals = self.extract_numbers_from_result_dict(next_day_actual_results)
-                spec_val = next_day_actual_results.get('special', next_day_actual_results.get('dac_biet'))
-                if spec_val is not None:
-                    try:
-                        s_val = str(spec_val).strip()
-                        if len(s_val) >= 2 and s_val[-2:].isdigit(): spec = int(s_val[-2:])
-                        elif len(s_val) == 1 and s_val.isdigit(): spec = int(s_val)
-                    except (ValueError, TypeError): spec = -1
-
-
-            hit_bg_color = "#d4edda"; special_bg_color = "#fff3cd"; default_bg_color="#FFFFFF"
-            hit_border_color = "#7fbf7f"; special_border_color="#ffcf40"; default_border_color="#D0D0D0"
+            hit_bg_color = "#d4edda"; special_bg_color = "#fff3cd"; default_bg_color = "#FFFFFF"
+            hit_border_color = "#7fbf7f"; special_border_color = "#ffcf40"; default_border_color = "#D0D0D0"
 
             num_font = self.get_qfont("base")
             num_bold_font = self.get_qfont("bold")
@@ -7245,11 +8510,11 @@ class LotteryPredictionApp(QMainWindow):
 
             historical_data_for_tooltip = [r for r in self.results if r['date'] < self.selected_date]
 
-            num_cols = 10
+            num_cols = prof.get('num_cols', 10)
             for idx, (num, score) in enumerate(sorted_predictions):
                 row, col = divmod(idx, num_cols)
                 is_hit = num in actuals
-                is_spec = num == spec
+                is_spec = (spec is not None and num == spec)
 
                 cell_frame = QFrame()
                 cell_layout = QVBoxLayout(cell_frame)
@@ -7283,8 +8548,8 @@ class LotteryPredictionApp(QMainWindow):
                     }}
                 """)
 
-
-                label_num = QLabel(f"{num:02d}")
+                formatted_num = format_number_for_lottery(cur_lot, num)
+                label_num = QLabel(formatted_num)
                 label_num.setFont(current_num_font)
                 label_num.setStyleSheet(f"color: {current_num_color}; background-color: transparent;")
                 label_num.setAlignment(Qt.AlignCenter)
@@ -7306,7 +8571,6 @@ class LotteryPredictionApp(QMainWindow):
                 table_layout.setRowStretch(row, 1)
                 table_layout.setColumnStretch(col, 1)
 
-
             main_layout.addWidget(scroll_area, 1)
 
             legend_frame = QWidget()
@@ -7315,22 +8579,27 @@ class LotteryPredictionApp(QMainWindow):
             legend_layout.setSpacing(5)
             legend_layout.setVerticalSpacing(8)
 
-            legend_layout.addWidget(QLabel("<b>Chú thích:</b>"), 0, 0, 1, 3)
+            legend_layout.addWidget(QLabel(f"<b>Chú thích & Luật giải ({prof['name']}):</b>"), 0, 0, 1, 3)
 
             hit_color_box = QLabel()
             hit_color_box.setFixedSize(18, 18)
             hit_color_box.setStyleSheet(f"background-color: {hit_bg_color}; border: 1px solid {hit_border_color};")
             legend_layout.addWidget(hit_color_box, 1, 0, Qt.AlignTop)
-            legend_layout.addWidget(QLabel("Số trúng thưởng"), 1, 1, Qt.AlignTop)
+            legend_layout.addWidget(QLabel(f"Số trúng thưởng (Có {len(actuals)} số khớp trong kỳ)"), 1, 1, Qt.AlignTop)
 
             spec_color_box = QLabel()
             spec_color_box.setFixedSize(18, 18)
             spec_color_box.setStyleSheet(f"background-color: {special_bg_color}; border: 1px solid {special_border_color};")
             legend_layout.addWidget(spec_color_box, 2, 0, Qt.AlignTop)
-            legend_layout.addWidget(QLabel("Số trúng GĐB"), 2, 1, Qt.AlignTop)
+            spec_title = "Số đặc biệt (Jackpot 2 / GĐB)" if spec is not None else "Số đặc biệt"
+            legend_layout.addWidget(QLabel(spec_title), 2, 1, Qt.AlignTop)
+
+            info_rule = QLabel(f"• {prof['prize_name']}: {prof['desc']}")
+            info_rule.setStyleSheet("color: #0369a1; font-weight: 500;")
+            legend_layout.addWidget(info_rule, 3, 0, 1, 3)
 
             legend_layout.setColumnStretch(2, 1)
-            legend_layout.setRowStretch(3, 1)
+            legend_layout.setRowStretch(4, 1)
             main_layout.addWidget(legend_frame)
 
 
@@ -7402,31 +8671,92 @@ class LotteryPredictionApp(QMainWindow):
         if not active_inst:
             QMessageBox.warning(self, "Không Có Thuật Toán", "Vui lòng kích hoạt ít nhất một thuật toán để tính hiệu suất.")
             return
+
+        cur_lot = getattr(self, 'current_lottery_type', 'xsmb')
+        prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+
+        # Cảnh báo nếu có thuật toán đang bật không khớp với loại xổ số hiện tại
+        mismatched_algos = []
+        for a_name in active_inst.keys():
+            a_data = self.algorithms.get(a_name)
+            a_type = detect_algorithm_lottery_type(a_name, a_data)
+            if a_type != cur_lot:
+                mismatched_algos.append((a_name, a_type))
+
+        if mismatched_algos and not getattr(self, 'suppress_mismatch_warning', False) and not getattr(self, '_session_mismatch_confirmed', False):
+            cur_name = prof['name']
+            details_str = "\n".join([f"• {name} (Dành cho: {LOTTERY_PROFILES[t]['name']})" for name, t in mismatched_algos])
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Warning)
+            msg_box.setWindowTitle("⚠️ Xác Nhận Thuật Toán Khác Loại")
+            msg_box.setText(
+                f"Phát hiện {len(mismatched_algos)} thuật toán đang bật không thuộc loại xổ số hiện tại ({cur_name}):\n\n"
+                f"{details_str}\n\n"
+                f"Bạn có muốn tiếp tục tính hiệu suất không?"
+            )
+            msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+            msg_box.setDefaultButton(QMessageBox.No)
+            chk_no_more = QCheckBox("Không hiển thị lại thông báo này")
+            msg_box.setCheckBox(chk_no_more)
+            reply = msg_box.exec_()
+            if chk_no_more.isChecked():
+                self._save_suppress_mismatch_warning(True)
+            if reply != QMessageBox.Yes:
+                return
+
         active_names = list(active_inst.keys())
-        main_logger.info(f"Calculating performance from {start_d} to {end_d} for algorithms: {active_names}")
+        main_logger.info(f"Calculating performance from {start_d} to {end_d} for {prof['name']} with algorithms: {active_names}")
 
         try:
-            res_map = {r['date']: r['result'] for r in self.results}
-            hist_cache = {}
-            main_logger.debug("Building history cache for performance calculation...")
-            sorted_results_for_cache = sorted(self.results, key=lambda x: x['date'])
-            for i, r in enumerate(sorted_results_for_cache):
-                hist_cache[r['date']] = sorted_results_for_cache[:i]
-            main_logger.debug(f"History cache built: {len(hist_cache)} entries.")
+            sorted_results = sorted(self.results, key=lambda x: x['date'])
+            if len(sorted_results) < 2:
+                QMessageBox.warning(self, "Thiếu Dữ Liệu", "Cần ít nhất 2 kỳ quay trong dữ liệu để tính hiệu suất.")
+                return
 
-            predict_dates_in_range = [start_d + datetime.timedelta(days=i) for i in range((end_d - start_d).days + 1)]
-            valid_predict_dates = [
-                p_date for p_date in predict_dates_in_range
-                if p_date in hist_cache and (p_date + datetime.timedelta(days=1)) in res_map
+            min_d, max_d = sorted_results[0]['date'], sorted_results[-1]['date']
+            all_dates = [r['date'] for r in sorted_results]
+            all_dates_set = set(all_dates)
+
+            # Giới hạn trong khoảng dữ liệu có sẵn
+            start_d = max(start_d, min_d)
+            end_d = min(end_d, max_d)
+            if start_d > end_d:
+                QMessageBox.warning(self, "Ngoài Phạm Vi", f"Khoảng ngày chọn ({start_s} - {end_s}) không hợp lệ hoặc nằm ngoài dữ liệu ({min_d:%d/%m/%Y} - {max_d:%d/%m/%Y}).")
+                return
+
+            # Tự động chọn về ngày mở thưởng có kết quả gần nhất nếu ngày chọn không có kết quả
+            if start_d not in all_dates_set:
+                after_dates = [d for d in all_dates if d >= start_d]
+                start_d = after_dates[0] if after_dates else max_d
+            if end_d not in all_dates_set:
+                before_dates = [d for d in all_dates if d <= end_d]
+                end_d = before_dates[-1] if before_dates else min_d
+
+            if start_d > end_d:
+                start_d = min(all_dates, key=lambda d: abs((d - start_d).days))
+                end_d = start_d
+
+            # Cập nhật lại UI hiển thị ngày thực tế có kết quả
+            self.perf_start_date_edit.setText(start_d.strftime('%d/%m/%Y'))
+            self.perf_end_date_edit.setText(end_d.strftime('%d/%m/%Y'))
+            start_s = self.perf_start_date_edit.text()
+            end_s = self.perf_end_date_edit.text()
+
+            # Lấy danh sách các kỳ quay cần kiểm thử (index >= 1 để đảm bảo có lịch sử trước đó)
+            test_indices = [
+                i for i in range(1, len(sorted_results))
+                if start_d <= sorted_results[i]['date'] <= end_d
             ]
 
-            if not valid_predict_dates:
-                QMessageBox.information(self, "Không Đủ Dữ Liệu", "Không tìm thấy ngày nào hợp lệ có đủ dữ liệu lịch sử và kết quả ngày sau trong khoảng đã chọn.")
+            if not test_indices:
+                QMessageBox.information(self, "Không Đủ Dữ Liệu", "Không tìm thấy kỳ mở thưởng nào có đủ dữ liệu lịch sử trong khoảng đã chọn.")
                 self.update_status("Tính hiệu suất thất bại: không đủ dữ liệu.")
                 return
 
-            total_days_to_test = len(valid_predict_dates)
-            main_logger.info(f"Total valid days for performance test: {total_days_to_test} (From {valid_predict_dates[0]:%d/%m/%Y} to {valid_predict_dates[-1]:%d/%m/%Y})")
+            total_days_to_test = len(test_indices)
+            first_tested_date = sorted_results[test_indices[0]]['date']
+            last_tested_date = sorted_results[test_indices[-1]]['date']
+            main_logger.info(f"Total valid draw days for performance test: {total_days_to_test} (From {first_tested_date:%d/%m/%Y} to {last_tested_date:%d/%m/%Y})")
             date_range_str_for_status = f"{start_s} - {end_s}"
 
         except Exception as prep_err:
@@ -7439,7 +8769,7 @@ class LotteryPredictionApp(QMainWindow):
 
         try:
             self.perf_progress_frame.setVisible(True)
-            initial_status_text = f"Đang tính: ({date_range_str_for_status} / {total_days_to_test} ngày - 0%)"
+            initial_status_text = f"Đang tính: ({date_range_str_for_status} / {total_days_to_test} kỳ - 0%)"
             self.perf_status_label.setText(initial_status_text)
             self.perf_status_label.setObjectName("ProgressRunning")
             self.perf_status_label.style().unpolish(self.perf_status_label)
@@ -7471,7 +8801,7 @@ class LotteryPredictionApp(QMainWindow):
         main_logger.info("Starting performance calculation worker thread...")
         perf_thread = threading.Thread(
             target=self._performance_worker,
-            args=( active_inst, res_map, hist_cache, valid_predict_dates, start_s, end_s, total_days_to_test, perf_sort_mode, perf_custom_data ),
+            args=( active_inst, sorted_results, test_indices, start_s, end_s, total_days_to_test, perf_sort_mode, perf_custom_data, cur_lot ),
             name="PerfCalcWorker",
             daemon=True
         )
@@ -7480,19 +8810,27 @@ class LotteryPredictionApp(QMainWindow):
         if not self.performance_timer.isActive():
              self.performance_timer.start(self.performance_timer_interval)
 
-        self.update_status(f"Bắt đầu tính hiệu suất ({total_days_to_test} ngày)...")
+        self.update_status(f"Bắt đầu tính hiệu suất ({total_days_to_test} kỳ mở thưởng)...")
 
 
-    def _performance_worker(self, active_instances_main, results_map_main, history_cache_main,
-                           predict_dates_list_main, start_date_str_main, end_date_str_main, total_days_main,
-                           sort_mode, custom_sort_data):
-        """Worker thread for calculating combined performance (Tab Main)."""
+    def _performance_worker(self, active_instances_main, sorted_results_main, test_indices_main,
+                           start_date_str_main, end_date_str_main, total_days_main,
+                           sort_mode, custom_sort_data, cur_lot):
+        """Worker thread for calculating combined performance (Hỗ trợ tất cả 8 loại xổ số)."""
         perf_logger_main = logging.getLogger("MainTabPerfWorker")
-        perf_logger_main.info(f"MainTab PerfWorker started for {len(predict_dates_list_main)} days. Active Algos: {list(active_instances_main.keys())}")
+        perf_logger_main.info(f"MainTab PerfWorker started for {len(test_indices_main)} draws. Lottery: {cur_lot}. Active Algos: {list(active_instances_main.keys())}")
+
+        prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+        valid_int_numbers = prof.get('int_numbers', list(range(100)))
+        valid_int_set = set(valid_int_numbers)
 
         stats_main = {
+            'cur_lot': cur_lot,
             'total_days_tested': 0, 'hits_top_1': 0, 'hits_top_3': 0, 'hits_top_5': 0, 'hits_top_10': 0,
-            'special_hits_top_1': 0, 'special_hits_top_5': 0, 'special_hits_top_10': 0
+            'special_hits_top_1': 0, 'special_hits_top_5': 0, 'special_hits_top_10': 0,
+            'prize_wins': 0,
+            'match_counts': {},
+            'top_prize_events': []
         }
         errors_in_worker_main = 0
         date_range_str_for_status_main = f"{start_date_str_main} - {end_date_str_main}"
@@ -7502,49 +8840,53 @@ class LotteryPredictionApp(QMainWindow):
         perf_logger_main.debug(f"MainTab PerfWorker Throttling: Enabled={throttling_enabled_main_tab}, Duration={sleep_duration_main_tab}s")
 
         try:
-            for i_main, predict_dt_main in enumerate(predict_dates_list_main):
+            for i_main, idx_main in enumerate(test_indices_main):
                 try:
                     if throttling_enabled_main_tab and sleep_duration_main_tab > 0:
                         time.sleep(sleep_duration_main_tab)
 
-                    perf_logger_main.debug(f"MainTab PerfWorker processing predict_dt: {predict_dt_main}")
-                    check_dt_main = predict_dt_main + datetime.timedelta(days=1)
-                    actual_res_main = results_map_main.get(check_dt_main)
-                    hist_data_main = history_cache_main.get(predict_dt_main)
-
-                    if actual_res_main is None or hist_data_main is None:
-                        perf_logger_main.warning(f"MainTab PerfWorker skipping day {predict_dt_main}: Missing actual ({actual_res_main is None}) or history ({hist_data_main is None}).")
-                        errors_in_worker_main += 1
-                        continue
+                    target_entry = sorted_results_main[idx_main]
+                    target_dt_main = target_entry['date']
+                    actual_res_main = target_entry['result']
+                    hist_data_main = sorted_results_main[:idx_main]
 
                     day_results_main = {}
                     hist_copy_for_day_main = copy.deepcopy(hist_data_main)
 
                     for name_main, inst_main in active_instances_main.items():
                         try:
-                            day_results_main[name_main] = inst_main.predict(predict_dt_main, hist_copy_for_day_main)
+                            day_results_main[name_main] = inst_main.predict(target_dt_main, hist_copy_for_day_main)
                         except Exception as algo_e_main:
-                            perf_logger_main.error(f"MainTab PerfWorker error in {name_main}.predict() on {predict_dt_main}: {algo_e_main}", exc_info=False)
+                            perf_logger_main.error(f"MainTab PerfWorker error in {name_main}.predict() on {target_dt_main}: {algo_e_main}", exc_info=False)
                             day_results_main[name_main] = {}
                             errors_in_worker_main += 1
                     
                     comb_scores_main = self.combine_algorithm_scores(day_results_main)
                     if not comb_scores_main:
-                        perf_logger_main.warning(f"Combined scores empty for {predict_dt_main} in MainTab PerfWorker")
+                        perf_logger_main.warning(f"Combined scores empty for {target_dt_main} in MainTab PerfWorker")
                         errors_in_worker_main += 1
                         continue
                     
                     valid_preds_day_main = []
                     for n_str_m, s_val_m in comb_scores_main.items():
-                         if isinstance(n_str_m, str) and len(n_str_m)==2 and n_str_m.isdigit() and isinstance(s_val_m, (int,float)):
-                              try: valid_preds_day_main.append((int(n_str_m), float(s_val_m)))
-                              except (ValueError, TypeError): errors_in_worker_main += 1
-                         else: errors_in_worker_main += 1
+                        try:
+                            n_int = int(n_str_m)
+                            if n_int in valid_int_set and isinstance(s_val_m, (int, float)):
+                                valid_preds_day_main.append((n_int, float(s_val_m)))
+                        except (ValueError, TypeError):
+                            errors_in_worker_main += 1
                     
                     if not valid_preds_day_main:
-                        perf_logger_main.warning(f"No valid combined predictions for {predict_dt_main} (MainTab) after validation.")
+                        perf_logger_main.warning(f"No valid combined predictions for {target_dt_main} (MainTab) after validation.")
                         errors_in_worker_main += 1
                         continue
+
+                    present_nums = {p[0] for p in valid_preds_day_main}
+                    min_score = min((p[1] for p in valid_preds_day_main), default=0.0)
+                    missing_score = min_score - 1000.0
+                    for num_int in valid_int_numbers:
+                        if num_int not in present_nums:
+                            valid_preds_day_main.append((num_int, missing_score))
                     
                     try:
                         sorted_preds_main = self._apply_sorting_logic(
@@ -7554,40 +8896,48 @@ class LotteryPredictionApp(QMainWindow):
                         perf_logger_main.error(f"Error sorting in worker: {sort_err}. Using default sort.")
                         sorted_preds_main = sorted(valid_preds_day_main, key=lambda x: x[1], reverse=True)
 
-                    actual_set_main = self.extract_numbers_from_result_dict(actual_res_main)
+                    actual_set_main, actual_spec_main = extract_numbers_for_lottery_with_special(cur_lot, actual_res_main)
                     if not actual_set_main:
-                        perf_logger_main.warning(f"Could not extract actual numbers for check_dt {check_dt_main} (MainTab)")
+                        perf_logger_main.warning(f"Could not extract actual numbers for date {target_dt_main} ({cur_lot})")
                         errors_in_worker_main += 1
                         continue
-
-                    spec_val_main = actual_res_main.get('special', actual_res_main.get('dac_biet'))
-                    actual_spec_main = -1
-                    if spec_val_main is not None:
-                         try:
-                             s_main = str(spec_val_main).strip()
-                             if len(s_main) >= 2 and s_main[-2:].isdigit(): actual_spec_main = int(s_main[-2:])
-                             elif len(s_main) == 1 and s_main.isdigit(): actual_spec_main = int(s_main)
-                         except (ValueError, TypeError): actual_spec_main = -1
 
                     pred_top_1_main_num = sorted_preds_main[0][0] if sorted_preds_main else -1
                     pred_top_3_main_set = {p[0] for p in sorted_preds_main[:3]}
                     pred_top_5_main_set = {p[0] for p in sorted_preds_main[:5]}
                     pred_top_10_main_set = {p[0] for p in sorted_preds_main[:10]}
 
-                    if pred_top_1_main_num != -1 and pred_top_1_main_num in actual_set_main: stats_main['hits_top_1'] += 1
-                    if actual_set_main.intersection(pred_top_3_main_set): stats_main['hits_top_3'] += 1
-                    if actual_set_main.intersection(pred_top_5_main_set): stats_main['hits_top_5'] += 1
-                    if actual_set_main.intersection(pred_top_10_main_set): stats_main['hits_top_10'] += 1
+                    if pred_top_1_main_num != -1 and pred_top_1_main_num in actual_set_main:
+                        stats_main['hits_top_1'] += 1
+                    if actual_set_main.intersection(pred_top_3_main_set):
+                        stats_main['hits_top_3'] += 1
+                    if actual_set_main.intersection(pred_top_5_main_set):
+                        stats_main['hits_top_5'] += 1
+                    if actual_set_main.intersection(pred_top_10_main_set):
+                        stats_main['hits_top_10'] += 1
 
-                    if actual_spec_main != -1:
-                        if pred_top_1_main_num == actual_spec_main: stats_main['special_hits_top_1'] += 1
-                        if actual_spec_main in pred_top_5_main_set: stats_main['special_hits_top_5'] += 1
-                        if actual_spec_main in pred_top_10_main_set: stats_main['special_hits_top_10'] += 1
+                    if actual_spec_main is not None and actual_spec_main != -1:
+                        if pred_top_1_main_num == actual_spec_main:
+                            stats_main['special_hits_top_1'] += 1
+                        if actual_spec_main in pred_top_5_main_set:
+                            stats_main['special_hits_top_5'] += 1
+                        if actual_spec_main in pred_top_10_main_set:
+                            stats_main['special_hits_top_10'] += 1
+
+                    # Đánh giá theo quy cách giải thưởng xổ số
+                    win_eval = evaluate_win(cur_lot, sorted_preds_main, actual_res_main)
+                    if win_eval.get('is_win'):
+                        stats_main['prize_wins'] += 1
+                        p_detail = win_eval.get('prize_detail', '')
+                        stats_main['top_prize_events'].append(f"{target_dt_main:%d/%m/%Y}: {p_detail}")
+
+                    m_count = win_eval.get('match_count', 0)
+                    stats_main['match_counts'][m_count] = stats_main['match_counts'].get(m_count, 0) + 1
                     
                     stats_main['total_days_tested'] += 1
 
                 except Exception as day_e_main:
-                    perf_logger_main.error(f"MainTab PerfWorker unexpected error processing day {predict_dt_main}: {day_e_main}", exc_info=True)
+                    perf_logger_main.error(f"MainTab PerfWorker unexpected error processing draw index {idx_main}: {day_e_main}", exc_info=True)
                     errors_in_worker_main += 1
                 
                 if (i_main + 1) % 5 == 0 or (i_main + 1) == total_days_main:
@@ -7606,7 +8956,7 @@ class LotteryPredictionApp(QMainWindow):
                 except Exception as q_put_err_main_fin: perf_logger_main.error(f"Error putting finished payload to MainTab queue: {q_put_err_main_fin}")
             else: perf_logger_main.warning("MainTab perf_queue not found, cannot send finished signal.")
 
-            perf_logger_main.info(f"MainTab PerfWorker finished. Days successfully tested: {stats_main['total_days_tested']}, Total Errors: {errors_in_worker_main}")
+            perf_logger_main.info(f"MainTab PerfWorker finished. Draws successfully tested: {stats_main['total_days_tested']}, Total Errors: {errors_in_worker_main}")
 
         except Exception as worker_err_main_critical:
             perf_logger_main.critical(f"MainTab PerfWorker failed critically: {worker_err_main_critical}", exc_info=True)
@@ -7725,7 +9075,11 @@ class LotteryPredictionApp(QMainWindow):
                                 fmt = self.perf_text_formats.get(fmt_name, self.perf_text_formats["normal"])
                                 cursor.insertText(text, fmt)
 
-                            insert_perf_text("=== KẾT QUẢ HIỆU SUẤT KẾT HỢP ===\n", "section_header")
+                            cur_lot = stats.get('cur_lot', getattr(self, 'current_lottery_type', 'xsmb'))
+                            prof = LOTTERY_PROFILES.get(cur_lot, LOTTERY_PROFILES['xsmb'])
+
+                            insert_perf_text(f"=== KẾT QUẢ HIỆU SUẤT KẾT HỢP - {prof['name'].upper()} ===\n", "section_header")
+                            insert_perf_text(f"Giai đoạn: {date_range_str_final} ({total_tested} kỳ mở thưởng)\n")
 
                             algo_list_str = f"Thuật toán ({len(active_algo_details)}): {', '.join(active_algo_details)}"
                             max_len = 80
@@ -7735,22 +9089,53 @@ class LotteryPredictionApp(QMainWindow):
                             if errors > 0: insert_perf_text(f"Số lỗi gặp phải: {errors}\n", "error")
 
                             insert_perf_text("\n--- Tỷ lệ trúng (Ít nhất 1 số trong Top) ---\n")
-                            acc1=(stats['hits_top_1']/total_tested*100)if total_tested else 0
-                            acc3=(stats['hits_top_3']/total_tested*100)if total_tested else 0
-                            acc5=(stats['hits_top_5']/total_tested*100)if total_tested else 0
-                            acc10=(stats['hits_top_10']/total_tested*100)if total_tested else 0
+                            acc1 = (stats['hits_top_1']/total_tested*100) if total_tested else 0
+                            acc3 = (stats['hits_top_3']/total_tested*100) if total_tested else 0
+                            acc5 = (stats['hits_top_5']/total_tested*100) if total_tested else 0
+                            acc10 = (stats['hits_top_10']/total_tested*100) if total_tested else 0
                             insert_perf_text(f"Top 1 : {stats['hits_top_1']:>4} / {total_tested:<4} ({acc1:6.1f}%)\n")
                             insert_perf_text(f"Top 3 : {stats['hits_top_3']:>4} / {total_tested:<4} ({acc3:6.1f}%)\n")
                             insert_perf_text(f"Top 5 : {stats['hits_top_5']:>4} / {total_tested:<4} ({acc5:6.1f}%)\n")
-                            insert_perf_text(f"Top 10: {stats['hits_top_10']:>4} / {total_tested:<4} ({acc10:6.1f}%)\n\n")
+                            insert_perf_text(f"Top 10: {stats['hits_top_10']:>4} / {total_tested:<4} ({acc10:6.1f}%)\n")
 
-                            insert_perf_text("--- Tỷ lệ trúng GĐB (Trong Top) ---\n")
-                            s_acc1=(stats['special_hits_top_1']/total_tested*100)if total_tested else 0
-                            s_acc5=(stats['special_hits_top_5']/total_tested*100)if total_tested else 0
-                            s_acc10=(stats['special_hits_top_10']/total_tested*100)if total_tested else 0
-                            insert_perf_text(f"Top 1 : {stats['special_hits_top_1']:>4} / {total_tested:<4} ({s_acc1:6.1f}%)\n")
-                            insert_perf_text(f"Top 5 : {stats['special_hits_top_5']:>4} / {total_tested:<4} ({s_acc5:6.1f}%)\n")
-                            insert_perf_text(f"Top 10: {stats['special_hits_top_10']:>4} / {total_tested:<4} ({s_acc10:6.1f}%)\n")
+                            has_spec = (stats.get('special_hits_top_1', 0) > 0 or 
+                                        stats.get('special_hits_top_5', 0) > 0 or 
+                                        stats.get('special_hits_top_10', 0) > 0 or 
+                                        cur_lot in ('xsmb', 'power_655', 'power_535'))
+                            if has_spec:
+                                s_title = "GĐB" if cur_lot == 'xsmb' else "Số Đặc Biệt"
+                                insert_perf_text(f"\n--- Tỷ lệ trúng {s_title} (Trong Top) ---\n")
+                                s_acc1 = (stats['special_hits_top_1']/total_tested*100) if total_tested else 0
+                                s_acc5 = (stats['special_hits_top_5']/total_tested*100) if total_tested else 0
+                                s_acc10 = (stats['special_hits_top_10']/total_tested*100) if total_tested else 0
+                                insert_perf_text(f"Top 1 : {stats['special_hits_top_1']:>4} / {total_tested:<4} ({s_acc1:6.1f}%)\n")
+                                insert_perf_text(f"Top 5 : {stats['special_hits_top_5']:>4} / {total_tested:<4} ({s_acc5:6.1f}%)\n")
+                                insert_perf_text(f"Top 10: {stats['special_hits_top_10']:>4} / {total_tested:<4} ({s_acc10:6.1f}%)\n")
+
+                            if cur_lot != 'xsmb':
+                                prize_name = prof.get('prize_name', 'Giải thưởng')
+                                eval_picks = prof.get('eval_picks', 3)
+                                min_matches = prof.get('min_matches', 1)
+                                prize_wins = stats.get('prize_wins', 0)
+                                p_pct = (prize_wins / total_tested * 100) if total_tested else 0
+                                insert_perf_text(f"\n--- Tỷ lệ đạt giải theo thể thức {prof['name']} ---\n")
+                                insert_perf_text(f"Tiêu chuẩn: Top {eval_picks} số (Trúng từ ≥{min_matches} số: {prize_name})\n")
+                                insert_perf_text(f"Tổng số kỳ trúng giải: {prize_wins:>4} / {total_tested:<4} ({p_pct:6.1f}%)\n")
+
+                                match_counts = stats.get('match_counts', {})
+                                if match_counts:
+                                    insert_perf_text("Phân bố số lượng số trùng trong kỳ:\n")
+                                    for m_num in sorted(match_counts.keys(), reverse=True):
+                                        if m_num > 0:
+                                            cnt = match_counts[m_num]
+                                            m_pct = (cnt / total_tested * 100) if total_tested else 0
+                                            insert_perf_text(f"  • Trùng {m_num} số: {cnt:>4} kỳ ({m_pct:5.1f}%)\n")
+
+                                top_prizes = stats.get('top_prize_events', [])
+                                if top_prizes:
+                                    insert_perf_text(f"\nCác kỳ trúng giải gần nhất:\n")
+                                    for p_evt in top_prizes[-5:]:
+                                        insert_perf_text(f"  ✓ {p_evt}\n")
 
                         except Exception as text_err:
                             main_logger.error(f"Error updating performance text area: {text_err}")
