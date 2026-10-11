@@ -1,389 +1,727 @@
-<!DOCTYPE html>
-<html lang="vi">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hướng Dẫn Sử Dụng </title>
-    <!-- Nhúng FontAwesome (Icon) -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <style>
-        /* --- CÀI ĐẶT CHUNG & MÀU SẮC (Theme Windows 11/Modern) --- */
-        :root {
-            --primary: #0078d4;       /* Xanh chủ đạo */
-            --primary-dark: #005a9e;
-            --success: #28a745;       /* Xanh lá (Thành công/Chạy) */
-            --warning: #ffc107;       /* Vàng (Cảnh báo/Lưu ý) */
-            --danger: #dc3545;        /* Đỏ (Lỗi/Dừng) */
-            --info: #17a2b8;          /* Xanh lơ (Thông tin) */
-            --bg-body: #f3f4f6;
-            --bg-card: #ffffff;
-            --text-main: #333;
-            --text-muted: #666;
-            --border-radius: 8px;
-            --shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: var(--bg-body);
-            color: var(--text-main);
-            line-height: 1.6;
-            margin: 0;
-            padding: 20px;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 0 auto;
-        }
-
-        /* --- HEADER --- */
-        header {
-            background: var(--bg-card);
-            padding: 40px;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow);
-            text-align: center;
-            border-bottom: 5px solid var(--primary);
-            margin-bottom: 30px;
-        }
-
-        header h1 {
-            margin: 0;
-            color: var(--primary);
-            font-size: 2.5rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-        }
-
-        header .version {
-            background: var(--info);
-            color: white;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 0.9rem;
-            vertical-align: middle;
-            margin-left: 10px;
-        }
-
-        /* --- ALERT BOX --- */
-        .alert {
-            padding: 20px;
-            border-radius: var(--border-radius);
-            margin-bottom: 30px;
-            display: flex;
-            align-items: center;
-            box-shadow: var(--shadow);
-        }
-        .alert-warning {
-            background-color: #fff3cd;
-            border-left: 6px solid var(--warning);
-            color: #856404;
-        }
-        .alert i { font-size: 2rem; margin-right: 20px; }
-
-        /* --- NAVIGATION GRID --- */
-        .nav-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 20px;
-            margin-bottom: 40px;
-        }
-
-        .nav-card {
-            background: var(--bg-card);
-            padding: 25px;
-            border-radius: var(--border-radius);
-            box-shadow: var(--shadow);
-            transition: transform 0.2s;
-            cursor: pointer;
-            border-top: 3px solid transparent;
-        }
-        .nav-card:hover {
-            transform: translateY(-5px);
-            border-top-color: var(--primary);
-        }
-        .nav-card h3 { margin-top: 0; color: var(--primary-dark); }
-        .nav-card i { font-size: 2rem; color: var(--primary); margin-bottom: 10px; display: block; }
-
-        /* --- ACCORDION (NỘI DUNG CHI TIẾT) --- */
-        .section-title {
-            color: var(--primary-dark);
-            border-bottom: 2px solid #ddd;
-            padding-bottom: 10px;
-            margin-top: 50px;
-            margin-bottom: 20px;
-        }
-
-        .accordion {
-            background-color: var(--bg-card);
-            color: var(--text-main);
-            cursor: pointer;
-            padding: 18px;
-            width: 100%;
-            text-align: left;
-            border: none;
-            outline: none;
-            transition: 0.4s;
-            border-bottom: 1px solid #eee;
-            font-size: 1.1rem;
-            font-weight: 600;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .accordion:first-of-type { border-top-left-radius: var(--border-radius); border-top-right-radius: var(--border-radius); }
-        .accordion:last-of-type { border-bottom: none; border-bottom-left-radius: var(--border-radius); border-bottom-right-radius: var(--border-radius); }
-        .accordion.active, .accordion:hover { background-color: #eef7ff; color: var(--primary); }
-        .accordion:after { content: '\f078'; font-family: "Font Awesome 6 Free"; font-weight: 900; color: #777; }
-        .accordion.active:after { transform: rotate(180deg); }
-
-        .panel {
-            padding: 0 25px;
-            background-color: #fff;
-            max-height: 0;
-            overflow: hidden;
-            transition: max-height 0.3s ease-out;
-            border-left: 4px solid var(--primary);
-        }
-        .panel-content { padding: 20px 0; }
-
-        /* --- HELPER CLASSES --- */
-        .badge {
-            display: inline-block;
-            padding: 3px 8px;
-            border-radius: 4px;
-            font-size: 0.85em;
-            font-weight: bold;
-            color: white;
-            margin: 0 2px;
-        }
-        .bg-blue { background-color: var(--primary); }
-        .bg-green { background-color: var(--success); }
-        .bg-orange { background-color: #fd7e14; }
-        .bg-red { background-color: var(--danger); }
-        
-        .tip-box {
-            background-color: #d1ecf1;
-            color: #0c5460;
-            padding: 10px;
-            border-radius: 5px;
-            margin: 10px 0;
-            font-size: 0.95em;
-        }
-        code {
-            background-color: #f8f9fa;
-            color: #e83e8c;
-            padding: 2px 4px;
-            border-radius: 4px;
-            font-family: Consolas, monospace;
-        }
-        ul, ol { padding-left: 20px; }
-        li { margin-bottom: 8px; }
-
-        footer {
-            text-align: center;
-            margin-top: 50px;
-            padding: 20px;
-            color: var(--text-muted);
-            border-top: 1px solid #ddd;
-        }
-    </style>
-</head>
-<body>
-
-<div class="container">
-    <header>
-      <center>  <h2><i class="fas fa-chart-line"></i> Lottery Predictor <span class="version"></span></h2>
-         </center>
-    </header>
-
-    <div class="alert alert-warning">
-        <i class="fas fa-exclamation-triangle"></i>
-        <div>
-            <strong>MIỄN TRỪ TRÁCH NHIỆM:</strong><br>
-            Phần mềm này được phát triển cho mục đích <strong>học tập lập trình</strong>. Tác giả không khuyến khích và không chịu trách nhiệm về bất kỳ hành vi sử dụng phần mềm vào mục đích cá cược hoặc đánh bạc trái phép. Vui lòng tuân thủ pháp luật tại nơi cư trú.
-        </div>
-    </div>
-
-    <!-- MAIN FEATURES GRID -->
-    <br>
-
-  	<h2 class="section-title"><i class="fas fa-book-open"></i> <center>Hướng Dẫn Chi Tiết</center></h2> <br>
-
-    <!-- ACCORDION 1: TAB MAIN -->
-
-    <button class="accordion"><i class="fas fa-play-circle" style="margin-right:10px"></i><h3> 1. Tab Main (Dự Đoán Hàng Ngày)</h3></button>
-    <div class="panel">
-        <div class="panel-content">
-            <p>Đây là nơi bạn thực hiện công việc chính: Dự đoán số cho ngày hôm nay hoặc tương lai.</p>
-            <ol>
-                <li><strong>Đồng bộ dữ liệu:</strong> Nhấn nút <span class="badge bg-blue">Sync 🔄</span> để tải kết quả xổ số mới nhất từ Server về máy.</li>
-                <li><strong>Chọn ngày:</strong> Sử dụng biểu tượng <i class="fas fa-calendar-alt"></i> để chọn ngày muốn dự đoán.
-                    <div class="tip-box"><i class="fas fa-info-circle"></i> <b>Mẹo:</b> Bạn có thể chọn ngày trong quá khứ để kiểm tra xem thuật toán dự đoán đúng hay sai (Backtest).</div>
-                </li>
-                <li><strong>Chọn thuật toán:</strong> Tích chọn <i class="far fa-check-square"></i> các thuật toán bạn muốn sử dụng ở danh sách bên trái.</li>
-                <li><strong>Cấu hình Hệ số (Trọng số):</strong>
-                    <ul>
-                        <li>Tích vào ô "Hệ số" và nhập số (ví dụ: <code>1.5</code>, <code>2.0</code>).</li>
-                        <li><em>Ý nghĩa:</em> Nếu bạn tin tưởng thuật toán A hơn thuật toán B, hãy tăng hệ số cho A. Điểm số của A sẽ được nhân lên, ảnh hưởng nhiều hơn đến kết quả cuối cùng.</li>
-                    </ul>
-                </li>
-                <li><strong>Chạy dự đoán:</strong> Nhấn <span class="badge bg-blue">Dự Đoán</span>. Chờ thanh tiến trình chạy xong.</li>
-                <li><strong>Xem kết quả:</strong> Bảng kết quả hiện ra danh sách 100 số (00-99) kèm điểm số.
-                    <ul>
-                        <li><span class="badge bg-green">Màu xanh</span>: Số trúng (nếu xem ngày quá khứ).</li>
-                        <li><span class="badge bg-orange">Màu vàng</span>: Số trúng giải đặc biệt.</li>
-                        <li>Rê chuột vào ô số để xem chi tiết điểm thành phần từ từng thuật toán.</li>
-                    </ul>
-                </li>
-            </ol>
-        </div>
-    </div>
-<br>
-    <!-- ACCORDION 2: OPTIMIZER & AI -->
-
-    
-    <button class="accordion"><i class="fas fa-microchip" style="margin-right:10px"></i> <h3>2. Tab Tối Ưu (Optimizer & AI & Đánh Giá)</h3></button>
-    <div class="panel">
-        <div class="panel-content">
-            <p>Tab này chứa các công cụ nâng cao dành cho người muốn nghiên cứu sâu.</p>
-            
-            <h4>a. Tab Con "Thuật Toán" (Quản lý)</h4>
-            <ul>
-                <li>Xem danh sách thuật toán trên máy (Local) và trên Server (Online).</li>
-                <li>Nhấn <span class="badge bg-blue">⬇ Tải về</span> hoặc <span class="badge bg-green">⬆ Cập nhật</span> để lấy thuật toán mới nhất.</li>
-            </ul>
-
-            <h4>b. Tab Con "Đánh Giá 📊" (Evaluation) - <span style="color:red">Quan trọng</span></h4>
-            <p>Giúp bạn biết thuật toán nào đang hiệu quả trong thời gian gần đây.</p>
-            <ul>
-                <li><strong>Cách dùng:</strong> Chọn các thuật toán -> Chọn số kỳ đánh giá (Vd: 12 kỳ ~ 1 năm) -> Nhấn <span class="badge bg-blue">🚀 BẮT ĐẦU ĐÁNH GIÁ</span>.</li>
-                <li><strong>Kết quả:</strong>
-                    <ul>
-                        <li><strong>Bảng độ chính xác:</strong> Cho biết thuật toán đưa số trúng vào Top 1, Top 3, Top 10 bao nhiêu phần trăm.</li>
-                        <li><strong>Heatmap (Bản đồ nhiệt):</strong> Ô màu đậm là vị trí (Rank) mà thuật toán thường xuyên dự đoán đúng. Ví dụ: Nếu ô <code>00</code> màu đỏ đậm, nghĩa là số có điểm cao nhất (Rank 1) thường xuyên trúng.</li>
-                        <li><strong>Xuất File:</strong> Nhấn <span class="badge bg-blue">💾 Xuất File Sắp Xếp</span> để tạo file <code>.txt</code> dùng để sắp xếp lại kết quả dự đoán ở Tab Main.</li>
-                    </ul>
-                </li>
-            </ul>
-
-            <h4>c. Tab Con "Tạo Thuật Toán 🧠" (Gemini AI)</h4>
-            <p>Tự động viết code thuật toán mới bằng ngôn ngữ tự nhiên.</p>
-            <ul>
-                <li>Nhập <strong>API Key</strong> của Google Gemini.</li>
-                <li>Mô tả ý tưởng (Vd: <em>"Tìm số hay về vào thứ 2 và là lô rơi từ hôm qua"</em>).</li>
-                <li>Nhấn <strong>Tạo Thuật Toán</strong> -> AI sẽ viết code Python -> Nhấn <strong>Lưu</strong>.</li>
-            </ul>
-
-            <h4>d. Tab Con "Tối Ưu Hóa 🚀"</h4>
-            <p>Tìm bộ tham số (parameters) tốt nhất cho thuật toán.</p>
-            <ul>
-                <li><strong>Auto Hill Climb:</strong> Tự động tinh chỉnh tham số (tăng/giảm) để tìm điểm hiệu suất cao nhất.</li>
-                <li><strong>Tạo Bộ Tham Số:</strong> Chạy vét cạn (Brute-force) nhiều tổ hợp tham số để tìm bộ tốt nhất (tốn thời gian nhưng kỹ hơn).</li>
-            </ul>
-        </div>
-    </div>
-<br>
-    <!-- ACCORDION 3: SIMULATION -->
-    <button class="accordion"><i class="fas fa-gamepad" style="margin-right:10px"></i> <h3>3. Tab Chơi Thử (Simulation) </h3> <span style="color:red">Mới</span></button>
-    <div class="panel">
-        <div class="panel-content">
-            <p>Giả lập quá trình chơi trong quá khứ để kiểm tra chiến thuật quản lý vốn.</p>
-            <ol>
-                <li><strong>Cấu hình vốn:</strong> Nhập số vốn giả lập ban đầu (Vd: 10.000.000 vnđ).</li>
-                <li><strong>Chọn thời gian:</strong>
-                    <ul>
-                        <li><em>Theo khoảng ngày:</em> Từ ngày A đến ngày B.</li>
-                        <li><em>Theo số kỳ:</em> Chạy 10, 20 kỳ gần nhất.</li>
-                    </ul>
-                </li>
-                <li><strong>Chọn thuật toán:</strong> Chọn thuật toán dự đoán để làm cơ sở đặt cược.</li>
-                <li><strong>Cấu hình cách chơi (Strategy):</strong>
-                    <div class="tip-box">Đây là bước quan trọng nhất. Bạn định nghĩa sẽ đánh những số nào dựa trên bảng xếp hạng dự đoán.</div>
-                    <ul>
-                        <li><strong>Loại:</strong> Đề, Lô, Xiên 2, Xiên 3...</li>
-                        <li><strong>Vị trí (Rank):</strong> Nhập vị trí của các số trên bảng xếp hạng điểm số.
-                            <br><em>Ví dụ: Nhập <code>1, 2, 3</code> nghĩa là đánh 3 số có điểm cao nhất. Nhập <code>10, 20</code> nghĩa là đánh số đứng thứ 10 và thứ 20.</em></li>
-                        <li><strong>Điểm cược:</strong> Số điểm/tiền đánh cho mỗi con.</li>
-                    </ul>
-                </li>
-                <li><strong>Chạy mô phỏng:</strong> Nhấn <span class="badge bg-blue">▶ CHẠY MÔ PHỎNG</span>. Hệ thống sẽ chạy lại quá khứ, tính toán thắng thua từng ngày.</li>
-                <li><strong>Xem báo cáo:</strong> Khung bên phải sẽ hiện chi tiết lãi/lỗ từng ngày và tổng kết cuối cùng (Thắng lớn/Thua lỗ).</li>
-            </ol>
-        </div>
-    </div>
-    <br>
-
-    <!-- ACCORDION 4: KQXS TAB -->
-    <button class="accordion"><i class="fas fa-search" style="margin-right:10px"></i> <h3>4. Tab Xem KQXS (Thống Kê)</h3></button>
-    <div class="panel">
-        <div class="panel-content">
-            <p>Tra cứu nhanh kết quả và các thống kê cơ bản.</p>
-            <ul>
-                <li><strong>Xem kết quả:</strong> Chọn ngày để hiển thị bảng kết quả đầy đủ (Đặc biệt đến Giải 7).</li>
-                <li><strong>Thống kê tự động (Cột bên phải):</strong>
-                    <ul>
-                        <li><strong>Lô về nhiều nháy:</strong> Các số về 2, 3 lần trong ngày.</li>
-                        <li><strong>Lô rơi:</strong> Các số đã về hôm qua và nay về lại.</li>
-                        <li><strong>Top Gan lì:</strong> Những số lâu chưa về nhất tính đến ngày đang xem.</li>
-                        <li><strong>Đầu/Đuôi:</strong> Thống kê số lần xuất hiện của các đầu số (0-9) và đuôi số (0-9).</li>
-                    </ul>
-                </li>
-            </ul>
-        </div>
-    </div>
-<br>
-    <!-- ACCORDION 5: SETTINGS -->
-    <button class="accordion"><i class="fas fa-cogs" style="margin-right:10px"></i><h3> 5. Tab Cài Đặt (Settings)</h3></button>
-    <div class="panel">
-        <div class="panel-content">
-            <ul>
-                <li><strong>Dữ liệu:</strong> Đường dẫn file data và URL đồng bộ (Github Raw).</li>
-                <li><strong>Giao diện:</strong> Chỉnh kích thước cửa sổ, Font chữ.</li>
-                <li><strong>Hiệu năng CPU:</strong>
-                    <ul>
-                        <li><em>Bật điều tiết CPU:</em> Giúp phần mềm không chiếm dụng 100% CPU khi chạy các thuật toán nặng.</li>
-                        <li><em>Thời gian sleep:</em> Tăng số này (vd: 0.01) để máy mát hơn nhưng chạy chậm hơn.</li>
-                    </ul>
-                </li>
-                <li><strong>Cập nhật:</strong> Bật/Tắt tự động kiểm tra phiên bản mới khi mở app.</li>
-            </ul>
-        </div>
-    </div>
-
-<br><br>
-
-    <footer><center>
-        &copy; 2026 Lottery Predictor Open Source Project.<br>
-    
-    </footer></center>
-</div>
-
-<script>
-    // Script xử lý hiệu ứng đóng mở Accordion
-    var acc = document.getElementsByClassName("accordion");
-    var i;
-
-    for (i = 0; i < acc.length; i++) {
-        acc[i].addEventListener("click", function() {
-            // Đóng tất cả các panel khác (tùy chọn, bỏ dòng này nếu muốn mở nhiều cái cùng lúc)
-            var current = document.getElementsByClassName("active");
-            if (current.length > 0 && current[0] !== this) {
-                current[0].nextElementSibling.style.maxHeight = null;
-                current[0].classList.remove("active");
-            }
-
-            this.classList.toggle("active");
-            var panel = this.nextElementSibling;
-            if (panel.style.maxHeight) {
-                panel.style.maxHeight = null;
-            } else {
-                panel.style.maxHeight = panel.scrollHeight + "px";
-            } 
-        });
-    }
-</script>
-
-</body>
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cẩm Nang Hướng Dẫn Sử Dụng - Lottery Predictor v6.1.0</title>
+    <!-- Nhúng FontAwesome (Icon) -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        /* --- CÀI ĐẶT CHUNG & BẢNG MÀU CHUẨN HIỆN ĐẠI --- */
+        :root {
+            --primary: #0284c7;       /* Xanh biển chủ đạo */
+            --primary-dark: #0369a1;
+            --primary-light: #e0f2fe;
+            --emerald: #059669;       /* Xanh ngọc thành công */
+            --emerald-light: #d1fae5;
+            --amber: #d97706;         /* Vàng hổ phách cảnh báo */
+            --amber-light: #fef3c7;
+            --rose: #e11d48;          /* Đỏ hoa hồng lỗi/quan trọng */
+            --rose-light: #ffe4e6;
+            --purple: #7c3aed;        /* Tím AI & Tối ưu */
+            --purple-light: #ede9fe;
+            --bg-body: #f8fafc;
+            --bg-card: #ffffff;
+            --text-main: #0f172a;
+            --text-muted: #475569;
+            --border-color: #e2e8f0;
+            --border-radius: 10px;
+            --shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+            --shadow-md: 0 4px 6px -1px rgba(0,0,0,0.08), 0 2px 4px -1px rgba(0,0,0,0.04);
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
+            background-color: var(--bg-body);
+            color: var(--text-main);
+            line-height: 1.7;
+            margin: 0;
+            padding: 24px 16px;
+        }
+
+        .container {
+            max-width: 1180px;
+            margin: 0 auto;
+        }
+
+        /* --- HEADER BANNER --- */
+        header {
+            background: linear-gradient(135deg, #0284c7 0%, #0369a1 50%, #0f172a 100%);
+            color: #ffffff;
+            padding: 36px 30px;
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-md);
+            text-align: center;
+            margin-bottom: 25px;
+            position: relative;
+        }
+
+        header h1 {
+            margin: 0 0 10px 0;
+            font-size: 2.3rem;
+            letter-spacing: 0.5px;
+            font-weight: 800;
+        }
+
+        header p.subtitle {
+            margin: 0;
+            font-size: 1.1rem;
+            opacity: 0.95;
+            font-weight: 400;
+        }
+
+        .badge-ver {
+            background-color: #10b981;
+            color: #ffffff;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 700;
+            display: inline-block;
+            margin-top: 10px;
+            letter-spacing: 0.5px;
+        }
+
+        /* --- QUICK NAVIGATION BAR --- */
+        .toc-bar {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius);
+            padding: 16px 20px;
+            margin-bottom: 30px;
+            box-shadow: var(--shadow-sm);
+        }
+        .toc-title {
+            font-weight: 700;
+            color: var(--primary-dark);
+            margin-bottom: 12px;
+            font-size: 1.05rem;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .toc-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .toc-link {
+            background: #f1f5f9;
+            color: #0369a1;
+            text-decoration: none;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 0.92rem;
+            font-weight: 600;
+            transition: all 0.2s;
+            border: 1px solid #cbd5e1;
+        }
+        .toc-link:hover {
+            background: var(--primary);
+            color: #ffffff;
+            border-color: var(--primary);
+            transform: translateY(-1px);
+        }
+
+        /* --- ALERT BOXES --- */
+        .alert {
+            padding: 16px 20px;
+            border-radius: var(--border-radius);
+            margin-bottom: 25px;
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+            border-left: 5px solid;
+            box-shadow: var(--shadow-sm);
+        }
+        .alert-warning {
+            background-color: var(--amber-light);
+            border-color: var(--amber);
+            color: #78350f;
+        }
+        .alert-info {
+            background-color: var(--primary-light);
+            border-color: var(--primary);
+            color: #075985;
+        }
+        .alert-success {
+            background-color: var(--emerald-light);
+            border-color: var(--emerald);
+            color: #065f46;
+        }
+        .alert-icon {
+            font-size: 1.6rem;
+            line-height: 1;
+            margin-top: 2px;
+        }
+
+        /* --- CONTENT CARDS --- */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: var(--border-radius);
+            box-shadow: var(--shadow-sm);
+            margin-bottom: 30px;
+            overflow: hidden;
+            transition: box-shadow 0.2s;
+        }
+        .card:hover {
+            box-shadow: var(--shadow-md);
+        }
+        .card-header {
+            padding: 18px 24px;
+            background: #f8fafc;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .card-header h2 {
+            margin: 0;
+            font-size: 1.35rem;
+            color: var(--primary-dark);
+            font-weight: 700;
+        }
+        .card-header i {
+            font-size: 1.4rem;
+            color: var(--primary);
+        }
+        .card-body {
+            padding: 24px;
+        }
+
+        /* --- SUB SECTIONS & TYPOGRAPHY --- */
+        h3 {
+            color: #1e293b;
+            font-size: 1.15rem;
+            margin-top: 24px;
+            margin-bottom: 12px;
+            padding-bottom: 6px;
+            border-bottom: 2px solid #f1f5f9;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        h4 {
+            color: #334155;
+            font-size: 1.05rem;
+            margin-top: 18px;
+            margin-bottom: 8px;
+        }
+        p {
+            margin: 0 0 12px 0;
+            color: var(--text-main);
+        }
+
+        /* --- BADGES & TAGS --- */
+        .badge {
+            display: inline-block;
+            padding: 3px 9px;
+            border-radius: 4px;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: white;
+            margin: 0 2px;
+            vertical-align: middle;
+        }
+        .bg-blue { background-color: var(--primary); }
+        .bg-green { background-color: var(--emerald); }
+        .bg-orange { background-color: var(--amber); }
+        .bg-red { background-color: var(--rose); }
+        .bg-purple { background-color: var(--purple); }
+        .bg-slate { background-color: #64748b; }
+
+        /* --- CALLOUT TIPS --- */
+        .tip-box {
+            background-color: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-left: 4px solid var(--emerald);
+            color: #166534;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin: 14px 0;
+            font-size: 0.95rem;
+        }
+        .tip-box b { color: #14532d; }
+
+        .note-box {
+            background-color: #eff6ff;
+            border: 1px solid #bfdbfe;
+            border-left: 4px solid var(--primary);
+            color: #1e40af;
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin: 14px 0;
+            font-size: 0.95rem;
+        }
+
+        code {
+            background-color: #f1f5f9;
+            color: #b91c1c;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: Consolas, Monaco, "Courier New", monospace;
+            font-size: 0.92em;
+            border: 1px solid #e2e8f0;
+        }
+
+        /* --- TABLES --- */
+        table.info-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 16px 0;
+            font-size: 0.95rem;
+            background: #ffffff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+        }
+        table.info-table th {
+            background-color: #0369a1;
+            color: #ffffff;
+            text-align: left;
+            padding: 12px 16px;
+            font-weight: 600;
+        }
+        table.info-table td {
+            padding: 11px 16px;
+            border-bottom: 1px solid #e2e8f0;
+        }
+        table.info-table tr:last-child td {
+            border-bottom: none;
+        }
+        table.info-table tr:nth-child(even) {
+            background-color: #f8fafc;
+        }
+
+        /* --- STEP LISTS --- */
+        ol.step-list {
+            padding-left: 24px;
+            margin: 12px 0;
+        }
+        ol.step-list > li {
+            margin-bottom: 14px;
+            padding-left: 6px;
+        }
+        ol.step-list > li strong {
+            color: #0f172a;
+        }
+        ul.bullet-list {
+            padding-left: 22px;
+            margin: 10px 0;
+        }
+        ul.bullet-list li {
+            margin-bottom: 8px;
+        }
+
+        /* --- FOOTER --- */
+        footer {
+            text-align: center;
+            margin-top: 50px;
+            padding: 24px 16px;
+            color: var(--text-muted);
+            border-top: 1px solid var(--border-color);
+            font-size: 0.95rem;
+        }
+        footer a {
+            color: var(--primary);
+            text-decoration: none;
+        }
+        footer a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <!-- HEADER -->
+    <header>
+        <h1><i class="fas fa-chart-line"></i> LOTTERY PREDICTOR</h1>
+        <p class="subtitle">Hệ Thống Phân Tích Xác Suất, Dự Đoán Đa Đài & Tối Ưu Thuật Toán Di Truyền AI</p>
+        <span class="badge-ver"><i class="fas fa-check-circle"></i> Phiên Bản 6.1.0 • Ngày 11/10/2026</span>
+    </header>
+
+    <!-- ALERT DISCLAIMER -->
+    <div class="alert alert-warning">
+        <div class="alert-icon"><i class="fas fa-shield-alt"></i></div>
+        <div>
+            <strong>KHUYẾN CÁO QUAN TRỌNG & MIỄN TRỪ TRÁCH NHIỆM:</strong><br>
+            Phần mềm được nghiên cứu và phát triển hoàn toàn vì mục đích <strong>học tập lập trình, khoa học dữ liệu và mô hình hóa xác suất thống kê</strong>. Tác giả không cổ súy, không khuyến khích và không chịu bất kỳ trách nhiệm nào đối với các hành vi sử dụng phần mềm vào mục đích cá cược hoặc cờ bạc trái phép. Vui lòng tuân thủ nghiêm ngặt quy định pháp luật tại nơi cư trú.
+        </div>
+    </div>
+
+    <!-- MỤC LỤC NHANH (QUICK NAV) -->
+    <div class="toc-bar">
+        <div class="toc-title"><i class="fas fa-list-ul"></i> MỤC LỤC HƯỚNG DẪN CHI TIẾT THEO CÁC CHỨC NĂNG:</div>
+        <div class="toc-links">
+            <a class="toc-link" href="#sec-overview"><i class="fas fa-cubes"></i> 1. Tổng Quan & 8 Đài Xổ Số</a>
+            <a class="toc-link" href="#sec-main"><i class="fas fa-play-circle"></i> 2. Tab Dự Đoán Hàng Ngày</a>
+            <a class="toc-link" href="#sec-kqxs"><i class="fas fa-search"></i> 3. Tab Xem Kết Quả & Phân Tích</a>
+            <a class="toc-link" href="#sec-optimizer"><i class="fas fa-microchip"></i> 4. Tab Tối Ưu & Đánh Giá</a>
+            <a class="toc-link" href="#sec-gemini"><i class="fas fa-brain"></i> 5. Tab AI Gemini Studio</a>
+            <a class="toc-link" href="#sec-simulation"><i class="fas fa-gamepad"></i> 6. Tab Chơi Thử & Quản Lý Vốn</a>
+            <a class="toc-link" href="#sec-settings"><i class="fas fa-sliders-h"></i> 7. Cài Đặt & Đồng Bộ Từng Đài</a>
+            <a class="toc-link" href="#sec-version-mgr"><i class="fas fa-code-branch"></i> 8. Công Cụ version.py & Sơ Đồ</a>
+            <a class="toc-link" href="#sec-faq"><i class="fas fa-question-circle"></i> 9. Mẹo & Câu Hỏi Thường Gặp</a>
+        </div>
+    </div>
+
+    <!-- PHẦN 1: TỔNG QUAN -->
+    <div class="card" id="sec-overview">
+        <div class="card-header">
+            <i class="fas fa-cubes"></i>
+            <h2>1. Tổng Quan Hệ Thống & Hỗ Trợ Toàn Diện 8 Đài Xổ Số</h2>
+        </div>
+        <div class="card-body">
+            <p><strong>Lottery Predictor v6.1.0</strong> được xây dựng trên nền tảng Python & PyQt5/PyQt6 hiện đại, kết hợp mô hình thuật toán di truyền từ Thiên Cơ Số PC AI Studio Pro. Hệ thống quản lý và xử lý dữ liệu chuẩn xác cho 8 loại hình xổ số phổ biến nhất:</p>
+            
+            <table class="info-table">
+                <thead>
+                    <tr>
+                        <th>Tên Đài / Loại Hình</th>
+                        <th>Ký Hiệu</th>
+                        <th>Miền Giá Trị</th>
+                        <th>Lịch Quay Thưởng & Đặc Tính</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Xổ Số Miền Bắc</strong></td>
+                        <td><span class="badge bg-blue">XSMB</span></td>
+                        <td>00 - 99 (100 số)</td>
+                        <td>Hàng ngày (18h15). 27 giải thưởng truyền thống.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Vietlott Mega 6/45</strong></td>
+                        <td><span class="badge bg-green">MEGA 6/45</span></td>
+                        <td>01 - 45 (45 số)</td>
+                        <td>Thứ 4, Thứ 6, Chủ Nhật (18h00). Trúng từ 3 đến 6 số.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Vietlott Power 6/55</strong></td>
+                        <td><span class="badge bg-orange">POWER 6/55</span></td>
+                        <td>01 - 55 (55 số)</td>
+                        <td>Thứ 3, Thứ 5, Thứ 7 (18h00). Trúng Jackpot 1 & Jackpot 2.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Vietlott Lotto 5/35</strong></td>
+                        <td><span class="badge bg-purple">LOTTO 5/35</span></td>
+                        <td>01 - 35 (35 số)</td>
+                        <td><strong>2 kỳ/ngày</strong> (Kỳ sáng & Kỳ tối). Bảo toàn trọn vẹn 864+ kỳ quay.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Vietlott Max 3D</strong></td>
+                        <td><span class="badge bg-blue">MAX 3D</span></td>
+                        <td>000 - 999 (00-99)</td>
+                        <td>Thứ 2, Thứ 4, Thứ 6 (18h00). Bộ số 3 chữ số cơ bản.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Vietlott Max 3D Pro</strong></td>
+                        <td><span class="badge bg-blue">MAX 3D PRO</span></td>
+                        <td>000 - 999 (00-99)</td>
+                        <td>Thứ 3, Thứ 5, Thứ 7 (18h00). Giải Đặc biệt theo bộ 2 dãy 3 số.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Vietlott Max 3D+</strong></td>
+                        <td><span class="badge bg-blue">MAX 3D+</span></td>
+                        <td>000 - 999 (00-99)</td>
+                        <td>Thứ 2, Thứ 4, Thứ 6 (18h00). Trúng kết hợp nhiều bộ số.</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Vietlott Keno</strong></td>
+                        <td><span class="badge bg-red">KENO</span></td>
+                        <td>01 - 80 (80 số)</td>
+                        <td>Quay liên tục hàng ngày từ 06h00 đến 21h50 (10 phút/kỳ).</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="tip-box">
+                <i class="fas fa-lightbulb"></i> <b>Cơ chế Tối ưu Đa Đài:</b> Khi bạn chuyển đổi đài xổ số trên giao diện, toàn bộ ma trận số, bảng kết quả, các thuật toán kiểm tra và thống kê sẽ tự động điều chỉnh tương ứng với đúng miền số và quy chuẩn của đài đó (ví dụ: chuyển 6/45 chỉ hiển thị 45 số từ 01-45, 5/35 chỉ hiển thị từ 01-35).
+            </div>
+        </div>
+    </div>
+
+    <!-- PHẦN 2: TAB MAIN -->
+    <div class="card" id="sec-main">
+        <div class="card-header">
+            <i class="fas fa-play-circle"></i>
+            <h2>2. Tab Dự Đoán Hàng Ngày (Main Tab)</h2>
+        </div>
+        <div class="card-body">
+            <p>Tab Dự Đoán là trung tâm điều hành chính của phần mềm. Tại đây bạn thực hiện các phân tích và dự báo cho ngày hôm nay hoặc bất kỳ kỳ quay nào trong quá khứ/tương lai.</p>
+
+            <ol class="step-list">
+                <li>
+                    <strong>Bước 1: Chọn Đài Xổ Số & Đồng bộ dữ liệu</strong>
+                    <ul class="bullet-list">
+                        <li>Chọn đài mong muốn tại hộp chọn <code>Loại Xổ Số</code> (XSMB, Mega 6/45, Power 6/55, Lotto 5/35...).</li>
+                        <li>Bấm nút <span class="badge bg-blue"><i class="fas fa-sync-alt"></i> Đồng Bộ</span> để tải kết quả quay thưởng mới nhất từ server về máy. Thanh trạng thái sẽ báo số kỳ đã nạp.</li>
+                    </ul>
+                </li>
+                <li>
+                    <strong>Bước 2: Chọn Ngày và Kỳ Quay Cần Dự Đoán</strong>
+                    <ul class="bullet-list">
+                        <li>Sử dụng ô chọn ngày hoặc các nút <span class="badge bg-slate">Hôm Nay</span>, <span class="badge bg-slate">◄ Kỳ Trước</span>, <span class="badge bg-slate">Kỳ Sau ►</span>.</li>
+                        <li><em>Lưu ý thông minh:</em> Nút Kỳ Trước / Kỳ Sau sẽ tự động nhảy theo đúng lịch quay của đài đang chọn (ví dụ Mega 6/45 chỉ nhảy giữa các ngày Thứ 4 - Thứ 6 - Chủ Nhật).</li>
+                        <li>Đối với các ngày trong quá khứ, chương trình sẽ tự động kích hoạt tính năng <strong>Backtest</strong> để bạn đối soát xem thuật toán dự đoán chính xác bao nhiêu số.</li>
+                    </ul>
+                </li>
+                <li>
+                    <strong>Bước 3: Lựa Chọn Thuật Toán & Gán Trọng Số (Weights)</strong>
+                    <ul class="bullet-list">
+                        <li>Tích chọn <i class="far fa-check-square"></i> các thuật toán bạn muốn phối hợp trong danh sách bên trái.</li>
+                        <li>Chương trình hỗ trợ cả <strong>File Python độc lập</strong> (`algorithms/*.py`) lẫn <strong>JSON Bundle</strong> (`.json`, `.lpa` từ Thiên Cơ Số).</li>
+                        <li><strong>Cấu hình Hệ số (Trọng số):</strong> Nhập giá trị vào ô "Hệ số" bên cạnh tên thuật toán (mặc định là <code>1.0</code>). Nếu thuật toán nào có phong độ trúng cao trong thời gian gần đây, bạn có thể tăng hệ số lên <code>1.5</code>, <code>2.0</code> hoặc <code>3.0</code> để điểm số của thuật toán đó chiếm ưu thế trong bảng xếp hạng cuối cùng.</li>
+                    </ul>
+                </li>
+                <li>
+                    <strong>Bước 4: Bấm "🚀 BẮT ĐẦU DỰ ĐOÁN"</strong>
+                    <ul class="bullet-list">
+                        <li>Hệ thống tính toán đa luồng song song, không làm đơ giao diện.</li>
+                        <li>Thanh tiến trình hiển thị tỷ lệ % hoàn thành và tốc độ xử lý.</li>
+                    </ul>
+                </li>
+                <li>
+                    <strong>Bước 5: Đọc Bảng Kết Quả & Tooltip Chi Tiết</strong>
+                    <ul class="bullet-list">
+                        <li>Bảng kết quả hiển thị các ô số tương ứng với điểm số tổng hợp.</li>
+                        <li><span class="badge bg-green">Ô Màu Xanh Lá</span>: Số trúng thưởng trong kỳ (khi xem lại quá khứ).</li>
+                        <li><span class="badge bg-orange">Ô Màu Vàng Kim</span>: Số trúng Giải Đặc Biệt / Jackpot.</li>
+                        <li><strong>Rê chuột vào ô số bất kỳ (Hover Tooltip):</strong> Cửa sổ nhỏ hiện lên giải trình chi tiết từng thuật toán đã cho con số đó bao nhiêu điểm thành phần, giúp bạn nắm bắt lý do vì sao con số đó đạt điểm cao.</li>
+                    </ul>
+                </li>
+            </ol>
+        </div>
+    </div>
+
+    <!-- PHẦN 3: TAB KQXS -->
+    <div class="card" id="sec-kqxs">
+        <div class="card-header">
+            <i class="fas fa-search"></i>
+            <h2>3. Tab Xem Kết Quả & Phân Tích Chuyên Sâu (KQXS)</h2>
+        </div>
+        <div class="card-body">
+            <p>Hỗ trợ tra cứu lịch sử kết quả xổ số chi tiết và bảng thống kê quy luật số học tự động:</p>
+
+            <h3><i class="fas fa-table"></i> Tra Cứu Kết Quả Chi Tiết</h3>
+            <ul class="bullet-list">
+                <li>Chọn ngày để hiển thị bảng mở thưởng hoàn chỉnh: Đầy đủ từ Giải Đặc Biệt đến Giải Bảy với XSMB; Bộ dãy 6 số với Mega 6/45 và Power 6/55 (kèm bóng số Jackpot 2); Bộ 5 số với Lotto 5/35.</li>
+                <li>Với các đài quay nhiều lần trong ngày (như Lotto 5/35), chương trình hiển thị rõ kỳ quay sáng và kỳ quay tối với mã kỳ quay (`id`) riêng biệt.</li>
+            </ul>
+
+            <h3><i class="fas fa-chart-pie"></i> Bảng Thống Kê Chuyên Sâu Tự Động (Cột Phải)</h3>
+            <ul class="bullet-list">
+                <li><strong>Top Gan Cực Đại:</strong> Danh sách những con số lâu chưa xuất hiện nhất tính đến thời điểm đang tra cứu, kèm số ngày chưa về.</li>
+                <li><strong>Lô Rơi / Số Lặp:</strong> Nhận diện các con số đã nổ ở kỳ quay liền trước và tiếp tục về lại ở kỳ quay hiện tại.</li>
+                <li><strong>Số Về Nhiều Nháy (Multi-hit):</strong> Thống kê các con số nổ từ 2, 3 lần trở lên trong cùng một kỳ quay.</li>
+                <li><strong>Thống Kê Đầu - Đuôi:</strong> Phân tích mật độ xuất hiện của các đầu số (0 đến 9) và đuôi số (0 đến 9), giúp phát hiện nhanh các đầu câm, đuôi câm.</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- PHẦN 4: TAB OPTIMIZER & EVALUATION -->
+    <div class="card" id="sec-optimizer">
+        <div class="card-header">
+            <i class="fas fa-microchip"></i>
+            <h2>4. Tab Tối Ưu Hóa & Đánh Giá Thuật Toán (Optimizer)</h2>
+        </div>
+        <div class="card-body">
+            <p>Tab Tối Ưu là công cụ khoa học dữ liệu mạnh mẽ giúp bạn đo lường hiệu quả thực tế của từng thuật toán trên dữ liệu lịch sử và tự động tinh chỉnh tham số tối ưu.</p>
+
+            <h3><i class="fas fa-poll"></i> 4.1. Đánh Giá Hiệu Suất (Evaluation & Backtest)</h3>
+            <p>Đo lường xác suất thuật toán đưa số trúng vào các nhóm đầu bảng (Top 1, Top 3, Top 5, Top 10):</p>
+            <ol class="step-list">
+                <li>Tích chọn các thuật toán cần đánh giá trong danh sách.</li>
+                <li>Chọn số kỳ kiểm tra (ví dụ: 30, 60, 90, 180 kỳ hoặc khoảng ngày cụ thể). <em>Chương trình tự động giới hạn chỉ chọn trong phạm vi ngày có kết quả thực tế của đài tương ứng, loại bỏ ngày không quay thưởng.</em></li>
+                <li>Bấm <span class="badge bg-blue">🚀 BẮT ĐẦU ĐÁNH GIÁ</span>.</li>
+                <li><strong>Đọc Bảng Độ Chính Xác:</strong>
+                    <ul class="bullet-list">
+                        <li><strong>Top 1 Hit Rate:</strong> Tỷ lệ con số đứng vị trí #1 đạt giải thưởng.</li>
+                        <li><strong>Top 3 / Top 5 / Top 10 Hit Rate:</strong> Tỷ lệ có ít nhất 1 hoặc nhiều con số trúng nằm trong nhóm dẫn đầu.</li>
+                    </ul>
+                </li>
+                <li><strong>Bản Đồ Nhiệt Heatmap:</strong> Thể hiện trực quan phân bố vị trí trúng thưởng (Rank 00 đến 99). Các ô có màu đỏ sẫm là những vị trí xếp hạng mà thuật toán thường xuyên đoán trúng nhất.</li>
+                <li><strong>Xuất File Cấu Hình Sắp Xếp:</strong> Bấm nút <span class="badge bg-green">💾 Xuất File Sắp Xếp (.txt)</span> để lưu lại thứ tự ưu tiên của thuật toán. Bạn có thể nạp file này tại Tab Dự Đoán để tái sử dụng.</li>
+            </ol>
+
+            <h3><i class="fas fa-cogs"></i> 4.2. Tối Ưu Hóa Tham Số Tự Động (Auto Optimization)</h3>
+            <ul class="bullet-list">
+                <li><strong>Leo Đồi Tự Động (Auto Hill Climbing):</strong> Tự động tăng/giảm từng tham số bên trong thuật toán theo từng bước nhỏ để tìm điểm có độ chính xác cao nhất trên lịch sử.</li>
+                <li><strong>Tìm Kiếm Lưới / Vét Cạn (Grid Search):</strong> Thử nghiệm tất cả các tổ hợp tham số có thể để tìm ra bộ cấu hình tối ưu tuyệt đối (tối ưu toàn cục).</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- PHẦN 5: GEMINI AI STUDIO -->
+    <div class="card" id="sec-gemini">
+        <div class="card-header">
+            <i class="fas fa-brain"></i>
+            <h2>5. Tab Tạo Thuật Toán Bằng Trí Tuệ Nhân Tạo (Gemini AI Studio)</h2>
+        </div>
+        <div class="card-body">
+            <p>Tính năng độc quyền cho phép bạn biến bất kỳ ý tưởng soi cầu nào thành một thuật toán Python hoàn chỉnh chỉ bằng ngôn ngữ tiếng Việt hàng ngày mà không cần biết viết code:</p>
+
+            <ol class="step-list">
+                <li>
+                    <strong>Nhập Google Gemini API Key:</strong>
+                    <p>Lấy API Key miễn phí tại <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a> và dán vào ô "API Key". Key được lưu an toàn trên máy của bạn.</p>
+                </li>
+                <li>
+                    <strong>Chọn Model AI:</strong>
+                    <p>Bấm nút "Lấy Danh Sách Models" để cập nhật các model mới nhất: <code>gemini-1.5-flash</code> (nhanh, nhẹ), <code>gemini-1.5-pro</code> (suy luận sâu), hoặc <code>gemini-2.0-flash</code>.</p>
+                </li>
+                <li>
+                    <strong>Mô Tả Chiến Lược Bằng Tiếng Việt:</strong>
+                    <div class="note-box">
+                        <b>Ví dụ Prompt:</b> <em>"Viết thuật toán tính điểm ưu tiên cho các số có nhịp gan từ 12 đến 20 ngày. Nếu số đó từng về vào đúng thứ trong tuần hiện tại thì cộng thêm 1.5 điểm, và nếu số đó là lô rơi từ giải đặc biệt ngày hôm trước thì cộng thêm 2.0 điểm."</em>
+                    </div>
+                </li>
+                <li>
+                    <strong>Bấm "🧠 Tạo Thuật Toán":</strong>
+                    <p>AI sẽ phân tích, tự động kế thừa lớp chuẩn <code>BaseAlgorithm</code>, viết các hàm trích xuất kết quả, hàm tính điểm <code>predict()</code> và kiểm tra cú pháp Python (AST validation).</p>
+                </li>
+                <li>
+                    <strong>Kiểm Thử & Lưu:</strong>
+                    <p>Bạn có thể bấm "Chạy Thử" để kiểm tra xem code có báo lỗi không. Sau đó bấm "Lưu Thuật Toán" để lưu file <code>.py</code> trực tiếp vào thư mục <code>algorithms/</code>. Thuật toán mới sẽ lập tức xuất hiện ở Tab Dự Đoán!</p>
+                </li>
+            </ol>
+        </div>
+    </div>
+
+    <!-- PHẦN 6: TAB SIMULATION -->
+    <div class="card" id="sec-simulation">
+        <div class="card-header">
+            <i class="fas fa-gamepad"></i>
+            <h2>6. Tab Chơi Thử & Mô Phỏng Quản Lý Vốn (Simulation)</h2>
+        </div>
+        <div class="card-body">
+            <p>Công cụ mô phỏng giúp bạn trả lời câu hỏi: <em>"Nếu áp dụng thuật toán A với chiến thuật vào tiền B trong 3 tháng qua, số vốn sẽ tăng hay giảm?"</em></p>
+
+            <ol class="step-list">
+                <li><strong>Thiết lập Số Vốn Giả Lập:</strong> Nhập số tiền vốn ban đầu (ví dụ: <code>10.000.000 VNĐ</code>).</li>
+                <li><strong>Chọn Khoảng Thời Gian:</strong> Chọn chạy thử theo khoảng ngày (Từ ngày... Đến ngày...) hoặc theo số kỳ gần nhất (ví dụ: 30 kỳ, 50 kỳ).</li>
+                <li><strong>Chọn Thuật Toán Dự Đoán:</strong> Chọn thuật toán sẽ đóng vai trò là "người gợi ý số".</li>
+                <li><strong>Xây Dựng Chiến Lược Đặt Cược (Betting Strategy):</strong>
+                    <ul class="bullet-list">
+                        <li><strong>Hình thức cược:</strong> Đề, Lô (1 điểm = 23k, ăn 80k), Xiên 2, Xiên 3, hoặc Bao vé Vietlott.</li>
+                        <li><strong>Chọn Vị Trí (Rank Selection):</strong> Đặt cược cho những số đứng thứ mấy trên bảng xếp hạng của thuật toán.
+                            <br><em>Ví dụ: Nhập <code>1, 2, 3</code> nghĩa là đánh 3 con số có điểm dự đoán cao nhất. Nhập <code>1, 2</code> nghĩa là đánh cặp song thủ lô đứng đầu.</em></li>
+                        <li><strong>Phương Pháp Vào Tiền:</strong>
+                            <ul>
+                                <li><em>Đều tay (Flat Betting):</em> Mỗi ngày đánh số tiền cố định.</li>
+                                <li><em>Gấp thếp (Martingale):</em> Nhân đôi tiền cược sau mỗi ngày thua (có giới hạn số ngày gấp).</li>
+                                <li><em>Tỷ lệ Kelly:</em> Tự động cân đối tỷ lệ cược theo xác suất trúng thống kê.</li>
+                            </ul>
+                        </li>
+                    </ul>
+                </li>
+                <li><strong>Bấm "▶ CHẠY MÔ PHỎNG":</strong> Hệ thống chạy ngược quá khứ từng ngày, tự động tính tiền bỏ ra, tiền trúng và số dư còn lại.</li>
+                <li><strong>Báo Cáo Toàn Diện:</strong>
+                    <ul class="bullet-list">
+                        <li><strong>Biểu Đồ Tăng Trưởng Vốn (Equity Curve):</strong> Thể hiện trực quan đường dốc lên (lãi) hoặc đi xuống (lỗ).</li>
+                        <li><strong>Bảng Lịch Sử Từng Kỳ:</strong> Ngày cược, các số đã đánh, số trúng, tiền thu về, lãi/lỗ trong ngày.</li>
+                        <li><strong>Các Chỉ Số Hiệu Suất:</strong> Tổng lãi ròng, tỷ lệ ROI (Return on Investment), Tỷ lệ ngày thắng (Win Rate), và Sụt giảm vốn tối đa (Max Drawdown).</li>
+                    </ul>
+                </li>
+            </ol>
+        </div>
+    </div>
+
+    <!-- PHẦN 7: CÀI ĐẶT & ĐỒNG BỘ TỪNG ĐÀI -->
+    <div class="card" id="sec-settings">
+        <div class="card-header">
+            <i class="fas fa-sliders-h"></i>
+            <h2>7. Tab Cài Đặt (Settings) & Cơ Chế Đồng Bộ Từng Đài Độc Lập</h2>
+        </div>
+        <div class="card-body">
+            <p>Hệ thống cấu hình mở rộng cho phép tinh chỉnh toàn diện ứng dụng theo nhu cầu cá nhân:</p>
+
+            <h3><i class="fas fa-network-wired"></i> Bảng Đồng Bộ Đa Đài (Centralized Sync Manager)</h3>
+            <ul class="bullet-list">
+                <li><strong>Đồng Bộ Thủ Công & Tự Động Riêng Từng Đài:</strong> Bảng danh sách 8 đài hiển thị đầy đủ tên đài, file lưu trữ local, số bản ghi đã lưu, ô tích tự động đồng bộ khi mở app, và nút bấm đồng bộ ngay cho từng đài.</li>
+                <li><strong>Tùy Biến Link Đồng Bộ (Custom Sync URL):</strong> Bạn có thể nhấp đúp vào ô link để thay đổi nguồn tải (tải từ GitHub cá nhân, mirror dự phòng hoặc server API riêng).</li>
+                <li><strong>Nút Khôi Phục Mặc Định:</strong> Dễ dàng khôi phục lại toàn bộ link đồng bộ của cả 8 đài về URL GitHub chính thức với 1 click.</li>
+            </ul>
+
+            <h3><i class="fas fa-tachometer-alt"></i> Điều Tiết Hiệu Năng CPU & Bộ Nhớ</h3>
+            <ul class="bullet-list">
+                <li><strong>Bật Điều Tiết CPU (CPU Throttling):</strong> Ngăn chặn việc chạy các thuật toán di truyền phức tạp chiếm dụng 100% CPU làm đơ máy hoặc nóng máy.</li>
+                <li><strong>Thời Gian Sleep Giữa Các Bước:</strong> Tùy chỉnh khoảng nghỉ (ví dụ: <code>0.005s</code> - <code>0.02s</code>) để máy luôn mát mẻ và đa nhiệm mượt mà.</li>
+            </ul>
+
+            <h3><i class="fas fa-palette"></i> Tùy Chỉnh Giao Diện</h3>
+            <ul class="bullet-list">
+                <li>Tùy chỉnh cỡ chữ (Font size) cho các bảng số, log thông báo và mã nguồn.</li>
+                <li>Khôi phục kích thước cửa sổ và vị trí mặc định.</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- PHẦN 8: CÔNG CỤ VERSION.PY VÀ SƠ ĐỒ KIẾN TRÚC -->
+    <div class="card" id="sec-version-mgr">
+        <div class="card-header">
+            <i class="fas fa-code-branch"></i>
+            <h2>8. Công Cụ Quản Lý Phiên Bản version.py & Sơ Đồ Kiến Trúc</h2>
+        </div>
+        <div class="card-body">
+            <p>Để đảm bảo chương trình luôn chạy đồng bộ, không bị lỗi thiếu file hay lệch phiên bản giữa <code>main.py</code> và các module con trong <code>modules/</code>, hệ thống trang bị cơ chế tự động kiểm soát kiến trúc:</p>
+
+            <h3><i class="fas fa-sitemap"></i> 8.1. Sơ Đồ Kiến Trúc Hệ Thống (APP_ARCHITECTURE_MANIFEST)</h3>
+            <ul class="bullet-list">
+                <li>Quy định toàn bộ danh mục tập tin bắt buộc: 10 core modules, các thuật toán nền tảng, công cụ và cẩm nang.</li>
+                <li><strong>Khi khởi động:</strong> Ứng dụng quét toàn bộ file trong sơ đồ.
+                    <ul>
+                        <li>Nếu thiếu file $\rightarrow$ Tự động kết nối GitHub và tải về bù.</li>
+                        <li>Nếu file module có dòng <code># Version: ...</code> thấp hơn version của <code>main.py</code> $\rightarrow$ Tự động đồng bộ cập nhật từ GitHub.</li>
+                        <li>Nếu mọi file đã đủ và trùng version $\rightarrow$ Khởi động tức thì (0 delay, 0 tốn băng thông).</li>
+                    </ul>
+                </li>
+            </ul>
+
+            <h3><i class="fas fa-rocket"></i> 8.2. Công Cụ Độc Lập version.py</h3>
+            <p>Mỗi khi bạn sửa code, thêm tính năng mới hoặc muốn phát hành bản cập nhật:</p>
+            <ol class="step-list">
+                <li><strong>Kích đúp chuột</strong> vào file <code>version.py</code> ở thư mục gốc (hoặc chạy lệnh <code>python version.py</code>).</li>
+                <li>Cửa sổ đồ họa sẽ hiển thị phiên bản hiện tại.</li>
+                <li>Chọn phiên bản mới (có sẵn nút <code>+0.0.1 (Patch)</code>, <code>+0.1.0 (Minor)</code>, <code>+1.0.0 (Major)</code>).</li>
+                <li>Chọn ngày cập nhật và nhập nội dung ghi chú thay đổi (changelog).</li>
+                <li>Bấm nút <strong>"🚀 CẬP NHẬT & ĐỒNG BỘ VERSION NGAY"</strong>.</li>
+                <li><em>Kết quả:</em> Công cụ sẽ tự động cập nhật 2 dòng đầu tiên (<code># Version: ...</code> và <code># Date: ...</code>) của <code>main.py</code> và toàn bộ các file trong <code>modules/</code> chỉ trong tích tắc!</li>
+            </ol>
+        </div>
+    </div>
+
+    <!-- PHẦN 9: MẸO & FAQ -->
+    <div class="card" id="sec-faq">
+        <div class="card-header">
+            <i class="fas fa-question-circle"></i>
+            <h2>9. Mẹo Sử Dụng & Xử Lý Sự Cố Thường Gặp</h2>
+        </div>
+        <div class="card-body">
+            <h3><i class="fas fa-star"></i> Mẹo Hay Dành Cho Người Nghiên Cứu</h3>
+            <ul class="bullet-list">
+                <li><strong>Phối hợp đa thuật toán:</strong> Không nên chỉ dựa vào 1 thuật toán duy nhất. Hãy kết hợp từ 3 đến 5 thuật toán có nguyên lý khác nhau (ví dụ: 1 thuật toán tần suất + 1 thuật toán gan + 1 thuật toán chu kỳ) và gán trọng số phù hợp.</li>
+                <li><strong>Tận dụng Backtest:</strong> Trước khi tin tưởng một bộ số, hãy thử chạy dự đoán cho 5 đến 10 kỳ gần nhất trong quá khứ để xem phong độ thực tế của thuật toán trong giai đoạn hiện tại.</li>
+                <li><strong>Kiểm soát vốn nghiêm ngặt:</strong> Trong cá cược hay đầu tư xác suất, chiến thuật quản lý vốn chiếm 70% khả năng sống sót lâu dài. Hãy luôn kiểm tra chiến lược tại Tab Simulation trước khi đưa ra quyết định.</li>
+            </ul>
+
+            <h3><i class="fas fa-wrench"></i> Xử Lý Sự Cố Thường Gặp</h3>
+            <ul class="bullet-list">
+                <li><strong>Lỗi "Không đủ dữ liệu để tính hiệu suất":</strong> Kiểm tra xem đài bạn chọn đã có đủ số kỳ quay hay chưa. Nếu đài mới hoặc số kỳ quá ít, hãy giảm số kỳ đánh giá (ví dụ từ 90 kỳ xuống 30 kỳ) và bấm Đồng Bộ lại dữ liệu.</li>
+                <li><strong>Lỗi mạng khi đồng bộ GitHub:</strong> Kiểm tra kết nối Internet hoặc tường lửa. Chương trình đã tích hợp sẵn CDN dự phòng (jsdelivr), nếu GitHub bị chặn máy vẫn có thể tải bình thường.</li>
+                <li><strong>Nút bấm trong Cài đặt bị che chữ:</strong> Đã được tối ưu hóa tự động điều chỉnh độ rộng linh hoạt trên mọi độ phân giải màn hình từ HD đến 4K.</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- FOOTER -->
+    <footer>
+        <p>&copy; 2026 <strong>Lottery Predictor Open Source Project</strong> • Tái cấu trúc & Nâng cấp v6.1.0</p>
+        <p>Phát triển vì mục đích học thuật, khoa học dữ liệu và mô hình hóa xác suất thống kê.</p>
+    </footer>
+</div>
+
+</body>
 </html>
