@@ -1,6 +1,12 @@
 # Update list
 
 
+### 11/10/2026
+
+**Update ver 6.1.0**
+
+Cập nhật chương trình hỗ trợ các loại xổ số vietlott
+
 
 ### 04/10/2026
 
