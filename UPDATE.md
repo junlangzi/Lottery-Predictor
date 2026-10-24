@@ -1,5 +1,14 @@
 # Update list
 
+### 24/10/2026
+
+
+Chương trình sẽ dừng cập nhật và xoá khỏi dự án vào ngày 24/10/2026 bởi vì hành vi dự đoán xổ số là hành vi vi phạm pháp luật.
+
+Theo Nghị định 389/2026/NĐ-CP của Chính phủ (có hiệu lực từ ngày 30/11/2026), hành vi cung cấp thông tin dự đoán trước kết quả xổ số sẽ bị xử phạt hành chính với các mức cụ thể như sau:
+
+Đối với cá nhân: Phạt tiền từ 80 triệu đồng đến 100 triệu đồng.
+Đối với tổ chức: Phạt tiền từ 160 triệu đồng đến 200 triệu đồng.
 
 ### 11/10/2026
 
