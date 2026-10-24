@@ -1,9 +1,11 @@
-# Version: 6.2.0
+# Version: 6.2.0 - EOL
 # Date: 24/10/2026
 # -*- coding: utf-8 -*-
 # Module: modules/update_workers.py
 # Contains: GuideSyncWorker, UpdateCheckWorker, PerformUpdateWorker
 
+import sys
+import os
 import logging
 import shutil
 import datetime
@@ -220,8 +222,8 @@ class PerformUpdateWorker(QObject):
                 current_script_to_replace_path = app_dir / target_filename_from_ui
                 self.logger.warning(f"Ứng dụng đóng gói. Sẽ cố gắng cập nhật file tại: {current_script_to_replace_path}")
             else:
-                running_main_py_path = Path(__file__).resolve()
-                current_script_to_replace_path = running_main_py_path.parent / target_filename_from_ui
+                base_dir = getattr(app, 'base_dir', Path(__file__).resolve().parent.parent)
+                current_script_to_replace_path = Path(base_dir) / target_filename_from_ui
             
             self.logger.info(f"Đường dẫn file đích để cập nhật: {current_script_to_replace_path}")
 
