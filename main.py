@@ -1,4 +1,4 @@
-# Version: 6.2.0 - EOL
+# Version: 6.2.0
 # Date: 24/10/2026
 # Update: Dừng cập nhật và xoá khỏi dự án từ ngày 24/10/2026 do hành vi dự đoán xổ số vi phạm Nghị định 389/2026/NĐ-CP.
 
