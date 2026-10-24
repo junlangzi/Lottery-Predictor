@@ -134,7 +134,7 @@ def get_current_app_version() -> str:
                     return line.split(":", 1)[1].strip()
     except Exception:
         pass
-    return "6.2.0 - EOL"
+    return "6.2.0"
 
 
 def get_current_app_date() -> str:
@@ -703,7 +703,7 @@ from modules.lottery_support import (
 class LotteryPredictionApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Thiên Cơ Số ☯︎ (v6.2.0 - EOL)")
+        self.setWindowTitle("Thiên Cơ Số ☯︎ (v6.2.0)")
         main_logger.info("Initializing LotteryPredictionApp (PyQt5)...")
         self.signalling_log_handler = None
         self.root_logger_instance = None
@@ -1217,7 +1217,7 @@ class LotteryPredictionApp(QMainWindow):
 
         self.top_status_toolbar.addWidget(QLabel("  "))
 
-        self.top_version_label = QLabel("Phiên bản: 6.2.0 - EOL")
+        self.top_version_label = QLabel("Phiên bản: 6.2.0")
         self.top_version_label.setObjectName("TopVersionLabel")
         self.top_status_toolbar.addWidget(self.top_version_label)
 
