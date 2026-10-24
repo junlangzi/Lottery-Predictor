@@ -1,5 +1,5 @@
-# Version: 6.1.0
-# Date: 11/10/2026
+# Version: 6.2.0 - EOL
+# Date: 24/10/2026
 # -*- coding: utf-8 -*-
 """
 modules/lottery_support.py
@@ -626,10 +626,18 @@ def sync_lottery_data(lottery_id: str, data_dir: Path | str, force_github: bool 
     try:
         if lid == "xsmb":
             res = sync.sync_xsmb(data_dir=target_data_dir, force_github=force_github, custom_url=custom_url)
-            result_info["success"] = res.get("status") in ("success", "up_to_date")
-            result_info["message"] = res.get("message", "Đồng bộ XSMB hoàn tất")
-            result_info["records"] = res.get("total_records", 0)
-            result_info["last_date"] = res.get("latest_date", "")
+            msg = res.get("message", "Đồng bộ XSMB hoàn tất")
+            cnt = res.get("records") or res.get("total_records", 0)
+            is_ok = bool(
+                res.get("success")
+                or res.get("status") in ("success", "up_to_date")
+                or "thành công" in str(msg).lower()
+                or (cnt > 0)
+            )
+            result_info["success"] = is_ok
+            result_info["message"] = msg
+            result_info["records"] = cnt
+            result_info["last_date"] = str(res.get("last_date") or res.get("latest_date") or "")
         else:
             res_df = sync.smart_sync(lid, data_dir=target_data_dir, force_github=force_github, custom_url=custom_url)
             last_dt = sync.get_last_date(lid, data_dir=target_data_dir)
