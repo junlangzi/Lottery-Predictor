@@ -12,12 +12,7 @@
 >
 > Toàn bộ mã nguồn và dữ liệu của dự án được lưu trữ chỉ nhằm mục đích nghiên cứu học thuật, tham khảo thuật toán tối ưu hóa di truyền (Genetic Algorithms) và xử lý dữ liệu thống kê khoa học. Người dùng tự chịu mọi trách nhiệm pháp lý nếu sử dụng phần mềm sai mục đích.
 
----
 
-# Thiên Cơ Số ☯︎ - PC AI Genetic Studio Pro (v6.2.0 - EOL)
-**Tác giả & Phát triển:** Thiên cơ số Studio  
-**Phiên bản:** v6.2.0 - EOL (Ngày phát hành: 24/10/2026)  
-**Nền tảng:** Python 3.10+ | PyQt6 (Modern Fusion Slate UI)  
 
 ---
 
