@@ -1,5 +1,5 @@
-# Version: 6.1.0
-# Date: 11/10/2026
+# Version: 6.2.0 - EOL
+# Date: 24/10/2026
 # -*- coding: utf-8 -*-
 # Module: modules/update_workers.py
 # Contains: GuideSyncWorker, UpdateCheckWorker, PerformUpdateWorker
@@ -7,6 +7,7 @@
 import logging
 import shutil
 import datetime
+import re
 from pathlib import Path
 from packaging.version import parse as parse_version
 
@@ -28,18 +29,29 @@ class GuideSyncWorker(QObject):
 
     @pyqtSlot()
     def run_sync(self):
-        import requests
+        import re
         try:
             self.progress_signal.emit("Đang khởi tạo thư mục...")
-            if self.guide_dir.exists():
-                shutil.rmtree(self.guide_dir)
             self.guide_dir.mkdir(parents=True, exist_ok=True)
 
             self.progress_signal.emit("Đang tải danh mục hướng dẫn...")
-            response = requests.get(self.index_url, timeout=15)
-            response.raise_for_status()
-            index_content = response.text
-            
+            index_content = None
+            try:
+                import requests
+                response = requests.get(self.index_url, timeout=15)
+                response.raise_for_status()
+                index_content = response.text
+            except Exception as e_req:
+                import urllib.request, ssl
+                try: ctx = ssl.create_default_context()
+                except Exception: ctx = ssl._create_unverified_context()
+                req = urllib.request.Request(self.index_url, headers={'User-Agent': 'LotteryPredictor-GuideSync/6.1.0'})
+                with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+                    index_content = r.read().decode('utf-8', errors='replace')
+
+            if not index_content:
+                raise ValueError("Nội dung danh mục index rỗng.")
+
             index_path = self.guide_dir / "index.txt"
             index_path.write_text(index_content, encoding='utf-8')
 
@@ -51,16 +63,37 @@ class GuideSyncWorker(QObject):
                 self.progress_signal.emit(f"Đang tải mục {i+1}/{total}: {info}...")
                 
                 try:
-                    sub_res = requests.get(link, timeout=15)
-                    sub_res.raise_for_status()
-                    content = sub_res.text
-                    
-                    safe_id = "".join(c for c in g_id if c.isalnum() or c in ('-','_'))
-                    file_path = self.guide_dir / f"{safe_id}.txt"
-                    file_path.write_text(content, encoding='utf-8')
+                    content = None
+                    try:
+                        import requests
+                        sub_res = requests.get(link, timeout=15)
+                        sub_res.raise_for_status()
+                        content = sub_res.text
+                    except Exception:
+                        import urllib.request, ssl
+                        try: ctx = ssl.create_default_context()
+                        except Exception: ctx = ssl._create_unverified_context()
+                        req = urllib.request.Request(link, headers={'User-Agent': 'LotteryPredictor-GuideSync/6.1.0'})
+                        with urllib.request.urlopen(req, timeout=15, context=ctx) as r:
+                            content = r.read().decode('utf-8', errors='replace')
+
+                    if content:
+                        safe_id = "".join(c for c in g_id if c.isalnum() or c in ('-','_'))
+                        file_path = self.guide_dir / f"{safe_id}.txt"
+                        file_path.write_text(content, encoding='utf-8')
+                        if safe_id == "1" or i == 0:
+                            (self.guide_dir / "guide.txt").write_text(content, encoding='utf-8')
                     
                 except Exception as e:
                     self.logger.error(f"Lỗi tải mục {info}: {e}")
+
+            # Đảm bảo file guide.html ở thư mục gốc được copy sang guide/guide.html nếu có
+            root_html = self.base_dir / "guide.html"
+            if root_html.exists():
+                try:
+                    shutil.copy2(root_html, self.guide_dir / "guide.html")
+                except Exception:
+                    pass
 
             self.finished_signal.emit(True, "Đồng bộ hoàn tất!")
 
