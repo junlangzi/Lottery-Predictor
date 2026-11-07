@@ -202,6 +202,7 @@ APP_ARCHITECTURE_MANIFEST = {
         ("modules/update_workers.py",  "Update & Guide Sync",      "Worker cập nhật phần mềm và đồng bộ cẩm nang", True),
         ("modules/json_bundle.py",     "JSON Bundle Executor",     "Nạp và thực thi các bundle thuật toán Thiên Cơ Số", True),
         ("modules/lottery_support.py", "Multi-Lottery Support",    "Cấu hình 8 đài xổ số, trích xuất giải và kiểm tra trúng", True),
+        ("modules/sync.py",            "Data Sync Engine",         "Bộ máy đồng bộ dữ liệu thông minh KQXS (XSMB & Vietlott)", True),
     ],
     # ── 2. THUẬT TOÁN NỀN TẢNG & MẪU ──────────────────────────────────────────
     "algorithms": [
@@ -381,8 +382,8 @@ def check_and_download_required_files():
         if app:
             app.processEvents()
 
-        # Riêng modules/lottery_support.py: Nếu là file mở rộng nội bộ chưa đẩy lên GitHub upstream
-        if rel_path == "modules/lottery_support.py" and target_path.exists():
+        # Riêng modules/lottery_support.py & modules/sync.py: Nếu là file mở rộng nội bộ chưa đẩy lên GitHub upstream
+        if rel_path in ("modules/lottery_support.py", "modules/sync.py") and target_path.exists():
             try:
                 txt = target_path.read_text(encoding="utf-8", errors="replace")
                 lines = txt.splitlines(keepends=True)
@@ -399,7 +400,7 @@ def check_and_download_required_files():
                 if app: app.processEvents()
                 continue
             except Exception as e_hdr:
-                main_logger.debug(f"Cập nhật header lottery_support.py: {e_hdr}")
+                main_logger.debug(f"Cập nhật header {rel_path}: {e_hdr}")
 
         main_logger.info(f"Đang tải ({idx}/{len(files_to_sync)}): {rel_path}...")
 
@@ -457,9 +458,9 @@ def check_and_download_required_files():
                 break
 
         if not downloaded and is_critical:
-            # Nếu lottery_support.py lỗi download nhưng backup có -> khôi phục từ backup
-            if rel_path == "modules/lottery_support.py" and (backup_dir / "lottery_support.py").exists():
-                shutil.copy2(backup_dir / "lottery_support.py", target_path)
+            # Nếu lottery_support.py hoặc sync.py lỗi download nhưng backup có -> khôi phục từ backup
+            if rel_path in ("modules/lottery_support.py", "modules/sync.py") and (backup_dir / Path(rel_path).name).exists():
+                shutil.copy2(backup_dir / Path(rel_path).name, target_path)
                 success_count += 1
             else:
                 failed_critical.append(rel_path)
@@ -469,13 +470,14 @@ def check_and_download_required_files():
         if app:
             app.processEvents()
 
-    # Bảo đảm lottery_support.py luôn nguyên vẹn
-    lottery_supp = modules_dir / "lottery_support.py"
-    if not lottery_supp.exists() and (backup_dir / "lottery_support.py").exists():
-        try:
-            shutil.copy2(backup_dir / "lottery_support.py", lottery_supp)
-        except Exception:
-            pass
+    # Bảo đảm lottery_support.py và sync.py luôn nguyên vẹn
+    for _supp_name in ("lottery_support.py", "sync.py"):
+        _supp_file = modules_dir / _supp_name
+        if not _supp_file.exists() and (backup_dir / _supp_name).exists():
+            try:
+                shutil.copy2(backup_dir / _supp_name, _supp_file)
+            except Exception:
+                pass
 
     if not failed_critical:
         try:
@@ -636,6 +638,7 @@ def _safe_import_modules():
         "modules/news_widget.py":    ("modules.news_widget",    ["NewsFetcherWorker", "ScrollingNewsWidget"]),
         "modules/update_workers.py": ("modules.update_workers", ["GuideSyncWorker", "UpdateCheckWorker", "PerformUpdateWorker"]),
         "modules/json_bundle.py":    ("modules.json_bundle",    ["JsonBundleAlgorithm", "is_json_bundle_file"]),
+        "modules/sync.py":           ("modules.sync",           ["smart_sync", "sync_xsmb"]),
     }
     _results = {}
     for _rel_path, (_mod_name, _symbols) in _module_map.items():
@@ -651,6 +654,14 @@ def _safe_import_modules():
             except (ImportError, ModuleNotFoundError) as _e:
                 if _attempt == 0:
                     main_logger.warning(f"Thiếu module '{_mod_name}', đang tải bổ sung...")
+                    if _rel_path == "modules/sync.py":
+                        _bk = base_dir / "cache" / f"modules_backup_{main_ver_str}" / "sync.py"
+                        if not _bk.exists():
+                            for _alt in (base_dir / "cache").glob("modules_backup_*/sync.py"):
+                                _bk = _alt; break
+                        if _bk.exists():
+                            shutil.copy2(_bk, base_dir / _rel_path)
+                            continue
                     if _download_missing_module(_rel_path):
                         # Xóa cache để import lại sạch
                         for _k in list(sys.modules.keys()):
@@ -690,7 +701,10 @@ UpdateCheckWorker         = _imported["UpdateCheckWorker"]
 PerformUpdateWorker       = _imported["PerformUpdateWorker"]
 JsonBundleAlgorithm       = _imported["JsonBundleAlgorithm"]
 is_json_bundle_file       = _imported["is_json_bundle_file"]
+smart_sync                = _imported.get("smart_sync")
+sync_xsmb                 = _imported.get("sync_xsmb")
 
+from modules import sync as sync_engine
 from modules.lottery_support import (
     LOTTERY_PROFILES, LOTTERY_ORDER, get_lottery_profile,
     get_lottery_prefix, get_data_filepath, format_number_for_lottery,
