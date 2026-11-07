@@ -615,29 +615,44 @@ def sync_lottery_data(lottery_id: str, data_dir: Path | str, force_github: bool 
     target_data_dir.mkdir(parents=True, exist_ok=True)
     lid = str(lottery_id or "xsmb").strip().lower()
 
-    # Nạp module sync từ thư mục gốc nếu cần
-    parent_dir = Path(__file__).resolve().parent.parent.parent
-    if str(parent_dir) not in sys.path:
-        sys.path.insert(0, str(parent_dir))
+    # Nạp module sync từ các thư mục khả dĩ
+    current_file = Path(__file__).resolve()
+    candidate_dirs = [
+        current_file.parent,                         # KQXS/modules/
+        current_file.parent.parent,                  # KQXS/
+        current_file.parent.parent.parent,           # E:\Code python/
+        current_file.parent.parent.parent / "Thien co so", # E:\Code python\Thien co so/
+    ]
+    for d in candidate_dirs:
+        if d.exists() and str(d) not in sys.path:
+            sys.path.insert(0, str(d))
 
-    import sync
+    try:
+        from modules import sync
+    except ImportError:
+        try:
+            import sync
+        except ImportError:
+            import importlib.util
+            _sync_path = current_file.parent / "sync.py"
+            _spec = importlib.util.spec_from_file_location("modules.sync", _sync_path)
+            sync = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(sync)
 
     result_info = {"success": False, "message": "", "records": 0, "last_date": ""}
     try:
         if lid == "xsmb":
             res = sync.sync_xsmb(data_dir=target_data_dir, force_github=force_github, custom_url=custom_url)
-            msg = res.get("message", "Đồng bộ XSMB hoàn tất")
-            cnt = res.get("records") or res.get("total_records", 0)
-            is_ok = bool(
+            result_info["success"] = bool(
                 res.get("success")
                 or res.get("status") in ("success", "up_to_date")
-                or "thành công" in str(msg).lower()
-                or (cnt > 0)
+                or "thành công" in str(res.get("message", "")).lower()
+                or (res.get("records", 0) > 0)
+                or (res.get("total_records", 0) > 0)
             )
-            result_info["success"] = is_ok
-            result_info["message"] = msg
-            result_info["records"] = cnt
-            result_info["last_date"] = str(res.get("last_date") or res.get("latest_date") or "")
+            result_info["message"] = res.get("message", "Đồng bộ XSMB hoàn tất")
+            result_info["records"] = res.get("records", res.get("total_records", 0))
+            result_info["last_date"] = str(res.get("last_date", res.get("latest_date", "")))
         else:
             res_df = sync.smart_sync(lid, data_dir=target_data_dir, force_github=force_github, custom_url=custom_url)
             last_dt = sync.get_last_date(lid, data_dir=target_data_dir)
